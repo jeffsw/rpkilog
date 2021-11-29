@@ -1,0 +1,11 @@
+[build-system]
+requires = ['setuptools', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[lambda_zipper]
+local_dependency = [
+]
+zip_omit = [
+    "^botocore",
+    "^boto3",
+]
