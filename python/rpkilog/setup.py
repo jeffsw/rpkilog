@@ -17,6 +17,7 @@ setup(
         'netaddr',
         'psutil',
         'requests',
+        'pyyaml',
     ],
     entry_points = {
         'console_scripts': [
