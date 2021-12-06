@@ -257,8 +257,8 @@ class ArchiveSiteCrawler():
         realtime_elapsed = realtime_final - realtime_initial
         try:
             import psutil
-            memory_use_rss = psutil.Process().memory_info().rss
-            logging.info(F'RAM memory_use_rss_mb={memory_use_rss}')
+            memory_use_rss_mb = psutil.Process().memory_info().rss / 1048576
+            logging.info(F'RAM memory_use_rss_mb={memory_use_rss_mb:.0f}')
         except:
             logger.warning(F'Unable to invoke psutil.Process().memory_info() to get RAM use.')
         logging.info(F'TIMES usr={times.user} sys={times.system} realtime={realtime_elapsed.total_seconds()}')
