@@ -1,0 +1,36 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:GetObjectTagging",
+                "s3:ListBucket",
+                "s3:PutObject",
+                "s3:PutObjectAcl",
+                "s3:PutObjectRetention",
+                "s3:PutObjectTagging"
+            ],
+            "Resource": [
+                "arn:aws:s3:::rpkilog-snapshot-mirror",
+                "arn:aws:s3:::rpkilog-snapshot-mirror/*",
+                "arn:aws:s3:::rpkilog-snapshot-summary",
+                "arn:aws:s3:::rpkilog-snapshot-summary/*",
+                "arn:aws:s3:::rpkilog-diff",
+                "arn:aws:s3:::rpkilog-diff/*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:*:*"
+            ]
+        }
+    ]
+}
