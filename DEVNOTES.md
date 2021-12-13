@@ -27,6 +27,7 @@ contains the same data schema as vrps.json:
 		{ "asn": 15562, "ski": "BE889B55D0B737397D75C49F485B858FA98AD11F", "pubkey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4FxJr0n2bux1uX1Evl+QWwZYvIadPjLuFX2mxqKuAGUhKnr7VLLDgrE++l9p5eH2kWTNVAN22FUU3db/RKpE2w==", "ta": "ripe", "expires": 1668013483 }
 	],
 }
+```
 
 # VRP Cache diffs we generate 
 

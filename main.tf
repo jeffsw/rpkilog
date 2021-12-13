@@ -130,8 +130,10 @@ resource "aws_lambda_function" "snapshot_ingest" {
     filename = "misc/terraform_lambda_placeholder_python.zip"
     role = aws_iam_role.lambda_snapshot_ingest.arn
     runtime = "python3.9"
-    handler = "rpkilog.IngestTar.aws_lambda_entry_point"
-    memory_size = 1024
+    handler = "rpkilog.ingest_tar.aws_lambda_entry_point"
+    # 1769 MB gives you 1 vCPU according to docs: https://docs.aws.amazon.com/lambda/latest/dg/configuration-function-common.html#configuration-memory-console
+    memory_size = 1769
+    timeout = 300
     environment {
         variables = {
             snapshot_bucket = aws_s3_bucket.rpkilog_snapshot.id
@@ -218,6 +220,9 @@ resource "aws_instance" "util1" {
     vpc_security_group_ids = [
         aws_security_group.util_vm.id
     ]
+    lifecycle {
+        ignore_changes = [ user_data ]
+    }
 }
 
 resource "aws_route53_zone" "rpkilog_com" {

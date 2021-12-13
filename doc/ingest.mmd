@@ -1,0 +1,75 @@
+sequenceDiagram
+    autonumber
+
+    participant supervisor
+    participant lambda
+    participant rpki_archive
+    participant s3
+    participant es
+
+    Note right of supervisor: get rpki archive tgz files
+    supervisor-->>lambda: invoke archive_site_crawler
+    activate lambda
+    lambda->s3: list rpki-snapshot and rpki-snapshot-summary buckets
+    activate s3
+    s3->>lambda: tgz and json files
+    deactivate s3
+    lambda->>rpki_archive: web crawl: list files after given date
+    activate rpki_archive
+    rpki_archive->>lambda: list of files
+    loop tgz_download
+        rpki_archive->>lambda: new tgz file(s)
+        deactivate rpki_archive
+        lambda->>s3: upload new tgz file(s) to rpkilog-snapshot bucket
+        activate s3
+    end
+    deactivate lambda
+
+    Note right of supervisor: extract JSON summaries
+    s3-->>supervisor: S3 EVENT: new file arrived in rpkilog-snapshot bucket
+    deactivate s3
+    activate supervisor
+    supervisor->>lambda: invoke snapshot_ingest
+    activate lambda
+    deactivate supervisor
+    Note right of lambda: extract JSON summary file
+    lambda->>s3: upload JSON summary file to rpkilog-snapshot-summary bucket
+    activate s3
+    deactivate lambda
+
+    Note right of supervisor: use JSON summary to generate VRP cache diff
+    s3-->>supervisor: S3 EVENT: new file arrived in rpkilog-snapshot-summary bucket
+    deactivate s3
+    activate supervisor
+    supervisor->>lambda: invoke vrp_diff
+    deactivate supervisor
+    activate lambda
+    s3->>lambda: list files in rpkilog-snapshot-summary bucket
+    s3->>lambda: get newly-arrived JSON summary file
+    s3->>lambda: get previous JSON summary file by date
+    Note right of lambda: de-compress files
+    Note right of lambda: generate VRP cache diff
+    lambda->>s3: upload <newly-arrived-date>.vrpdiff.json.gz
+    activate s3
+    deactivate lambda
+
+    Note right of supervisor: insert VrpDiff objects into ElasticSearch
+    s3-->>supervisor: S3 EVENT: new file arrived in rpkilog-diff bucket
+    deactivate s3
+    activate supervisor
+    supervisor->>lambda: invoke vrp_diff_insert
+    deactivate supervisor
+    activate lambda
+    loop
+        Note right of lambda: Typically thousands of diff-records.<br>Insert 100 to 1000 at once.
+        lambda->>es: bulk insert
+        activate es
+        alt
+            es->>lambda: 429 TOO_MANY_REQUESTS
+            Note right of lambda: Watch for error TOO_MANY_REQUESTS.<br>Delay and retry as needed.
+        else
+            es->>lambda: SUCCESS
+        end
+        deactivate es
+    end
+    deactivate lambda

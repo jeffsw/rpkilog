@@ -37,11 +37,16 @@ class IngestTar():
 
     @classmethod
     def aws_lambda_entry_point(cls, event, context):
-        logging.basicConfig()
+        logging.basicConfig(
+            level='INFO',
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         s3 = boto3.client('s3')
         dst_bucket = os.getenv('snapshot_summary_bucket')
         src_bucket = event['Records'][0]['s3']['bucket']['name']
         s3_obj_key = event['Records'][0]['s3']['object']['key']
+        logging.info(F'Invoked for src_bucket={src_bucket} s3_obj_key={s3_obj_key}')
         rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.(tar|tgz)$', s3_obj_key)
         if rem:
             dst_file_name = F'{rem.group("datetime")}.json'
@@ -98,3 +103,6 @@ class IngestTar():
 
         json_file_path = cls.extract_useful_json(input_tar=args['input_tar'], json_data_dir=config['json_data_dir'])
         logging.info(F'Extracted JSON data to {json_file_path}')
+
+def aws_lambda_entry_point(event, context):
+    IngestTar.aws_lambda_entry_point(event, context)
