@@ -31,7 +31,6 @@ provider "aws" {
 resource "aws_key_pair" "jeffsw" {
     key_name = "jeffsw-boomer"
     tags = {
-        tf_managed = "main"
         user = "jeffsw"
     }
     public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC4k8nVaS9Ns+8jZ1C97eUcOvkFw6NOXS8e4xxG6XEH1l9PDluOCxAqgCvdKxX9ZhFvwW1SCSWuN95WrM7u/9p0flOX7DZFYld053ClWxMZZ4ZtKj8XWnmDU4LLXSmUWaKddW9pHZHvxfEFu+wCcnUiJM4NgS4owfaIGC3IOIXVrxsoNuoKyTQS9pRa5+3sMC3rHK8oWPkleJGO+cs8AxuetRtHS/ZHwshsyI27ROC/nIxZ7ZeKXf3g/jxEpbxI9LNFnocuUmeoNpndBFYND1ujwiHZvoWxx4ByiTRDNJDHJWdnJpz8rOmnoHeHFqV8F/I5CRG9Dh7aq5vd9LWdrkqb jeffsw6@gmail.com boomer 2013-05-28"
@@ -39,6 +38,15 @@ resource "aws_key_pair" "jeffsw" {
 
 ##############################
 # IAM roles
+
+resource "aws_iam_role" "ec2_cron1" {
+    name = "ec2_cron1"
+    assume_role_policy = file("aws_iam/ec2_generic_assume_role.json")
+    inline_policy {
+        name = "ec2_cron1"
+        policy = file("aws_iam/ec2_cron1.json")
+    }
+}
 
 resource "aws_iam_role" "lambda_archive_site_crawler" {
     name = "lambda_archive_site_crawler"
@@ -58,6 +66,15 @@ resource "aws_iam_role" "lambda_snapshot_ingest" {
     }
 }
 
+resource "aws_iam_role" "lambda_vrp_cache_diff" {
+    name = "lambda_vrp_cache_diff"
+    assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
+    inline_policy {
+        name = "lambda_vrp_cache_diff"
+        policy = file("aws_iam/lambda_vrp_cache_diff.json")
+    }
+}
+
 ##############################
 # VPCs
 
@@ -65,13 +82,93 @@ resource "aws_default_vpc" "default" {
 }
 
 ##############################
+# Get default security group of default VPC
+resource "aws_default_security_group" "default" {
+    vpc_id = aws_default_vpc.default.id
+}
+
+##############################
+# Get subnets of default VPC
+data "aws_subnet_ids" "default" {
+    vpc_id = aws_default_vpc.default.id
+}
+
+##############################
+# Security Groups
+resource "aws_security_group" "allow_nfs" {
+    name = "allow_nfs"
+    description = "Allow NFS traffic.  This is for EFS Mount Targets."
+    vpc_id = aws_default_vpc.default.id
+    egress {
+        from_port = 0
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+        ipv6_cidr_blocks = ["::/0"]
+    }
+    ingress {
+        description = "NFS"
+        cidr_blocks = [ "0.0.0.0/0" ]
+        ipv6_cidr_blocks = [ "::/0" ]
+        from_port = 2049
+        protocol = "tcp"
+        to_port = 2049
+        self = true
+    }
+    ingress {
+        description = "NFS"
+        cidr_blocks = [ "0.0.0.0/0" ]
+        ipv6_cidr_blocks = [ "::/0" ]
+        from_port = 2049
+        protocol = "udp"
+        to_port = 2049
+        self = true
+    }
+}
+
+##############################
+# VPC Gateway Endpoint so Lambda-in-VPC can access S3
+# Alternatives to this are a NAT Gateway or an Interface VPC Endpoint
+# However, this older VPC Gateway Endpoint has no associated usage costs.
+resource "aws_vpc_endpoint" "default_vpc_s3_endpoint" {
+    vpc_id = aws_default_vpc.default.id
+    service_name = "com.amazonaws.us-east-1.s3"
+    vpc_endpoint_type = "Gateway"
+    route_table_ids = [ aws_default_vpc.default.default_route_table_id ]
+}
+
+##############################
 # EFS filesystems
 
 resource "aws_efs_file_system" "rpki_archive" {
     creation_token = "rpki_archive"
-
 }
-#TODO: EFS mount targets in each subnet
+
+#Terraform produces spurious "changes made outside of Terraform" whenever the amount of data stored in
+#an EFS filesystem changes between terraform invocations.  Ignore these spurious notices.
+#See also: https://github.com/hashicorp/terraform/issues/28803
+resource "aws_efs_access_point" "rpki_archive" {
+    file_system_id = aws_efs_file_system.rpki_archive.id
+    posix_user {
+        uid = 0
+        gid = 0
+    }
+    root_directory {
+        path = "/"
+        creation_info {
+            owner_gid = 0
+            owner_uid = 0
+            permissions = 777
+        }
+    }
+}
+
+resource "aws_efs_mount_target" "rpki_archive" {
+    for_each = data.aws_subnet_ids.default.ids
+    file_system_id = aws_efs_file_system.rpki_archive.id
+    subnet_id = each.value
+    security_groups = [ aws_security_group.allow_nfs.id ]
+}
 
 ##############################
 # s3 buckets
@@ -110,6 +207,7 @@ resource "aws_lambda_function" "archive_site_crawler" {
     runtime = "python3.9"
     handler = "rpkilog.ArchiveSiteCrawler.aws_lambda_entry_point"
     memory_size = 256
+    timeout = 240
     environment {
         variables = {
             s3_snapshot_bucket_name = aws_s3_bucket.rpkilog_snapshot.id
@@ -127,22 +225,35 @@ resource "aws_lambda_function" "archive_site_crawler" {
 
 resource "aws_lambda_function" "snapshot_ingest" {
     function_name = "snapshot_ingest"
-    filename = "misc/terraform_lambda_placeholder_python.zip"
+    #This placeholder file is required on the first invocation of terraform, or it will fail because
+    #the file doesn't exist yet (we just created the bucket, after all).
+    #After that, we prefer to use s3_bucket and s3_key.
+    #TODO: Find a work-around for this dumpster fire.
+    #filename = "misc/terraform_lambda_placeholder_python.zip"
+    s3_bucket = "rpkilog-artifact"
+    s3_key = "lambda_snapshot_ingest.zip"
     role = aws_iam_role.lambda_snapshot_ingest.arn
     runtime = "python3.9"
     handler = "rpkilog.ingest_tar.aws_lambda_entry_point"
     # 1769 MB gives you 1 vCPU according to docs: https://docs.aws.amazon.com/lambda/latest/dg/configuration-function-common.html#configuration-memory-console
     memory_size = 1769
-    timeout = 300
+    timeout = 100
     environment {
         variables = {
             snapshot_bucket = aws_s3_bucket.rpkilog_snapshot.id
             snapshot_summary_bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
+            snapshot_summary_dir = "/mnt/rpki_archive/snapshot_summary"
+            snapshot_tmp_dir = "/mnt/rpki_archive/snapshot"
         }
     }
-    #TODO: add file_system_config.
-    # See https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function
-    # under heading Lambda File Systems
+    file_system_config {
+        arn = aws_efs_access_point.rpki_archive.arn
+        local_mount_path = "/mnt/rpki_archive"
+    }
+    vpc_config {
+        subnet_ids = [ for x in data.aws_subnet_ids.default.ids : x ]
+        security_group_ids = [ aws_default_security_group.default.id ]
+    }
     lifecycle {
         # Never update the lambda deployment package.  We use another tool for that, not Terraform.
         ignore_changes = [ filename ]
@@ -154,6 +265,38 @@ resource "aws_lambda_permission" "snapshot_ingest" {
     function_name = aws_lambda_function.snapshot_ingest.id
     principal = "s3.amazonaws.com"
     source_arn = aws_s3_bucket.rpkilog_snapshot.arn
+}
+resource "aws_lambda_function_event_invoke_config" "snapshot_ingest" {
+    function_name = aws_lambda_function.snapshot_ingest.function_name
+    maximum_retry_attempts = 0
+}
+
+resource "aws_lambda_function" "vrp_cache_diff" {
+    function_name = "vrp_cache_diff"
+    filename = "misc/terraform_lambda_placeholder_python.zip"
+    role = aws_iam_role.lambda_vrp_cache_diff.arn
+    runtime = "python3.9"
+    handler = "rpkilog.vrp_diff.aws_lambda_entry_point"
+    memory_size = 1769
+    timeout = 300
+    environment {
+        variables = {
+            diff_bucket = aws_s3_bucket.rpkilog_diff.id
+        }
+    }
+    #TODO: add file_system_config
+    lifecycle {
+        # Never update the lambda deployment package.  We use another tool for that, not Terraform.
+        ignore_changes = [ filename ]
+    }
+}
+
+resource "aws_lambda_permission" "vrp_cache_diff" {
+    statement_id = "AllowExecutionFromS3Bucket"
+    action = "lambda:InvokeFunction"
+    function_name = aws_lambda_function.vrp_cache_diff.id
+    principal = "s3.amazonaws.com"
+    source_arn = aws_s3_bucket.rpkilog_snapshot_summary.arn
 }
 
 ##############################
@@ -171,8 +314,24 @@ resource "aws_s3_bucket_notification" "snapshot_ingest" {
     ]
 }
 
+resource "aws_s3_bucket_notification" "vrp_cache_diff" {
+    bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
+    lambda_function {
+        lambda_function_arn = aws_lambda_function.vrp_cache_diff.arn
+        events = [ "s3:ObjectCreated:*" ]
+    }
+    depends_on = [
+        aws_lambda_permission.vrp_cache_diff
+    ]
+}
+
 ##############################
-# EC2 AMIs, Security Groups, and Instances
+# EC2 AMIs, Security Groups, Instance Profiles, and Instances
+
+resource "aws_iam_instance_profile" "cron1" {
+    name = "cron1"
+    role = aws_iam_role.ec2_cron1.name
+}
 
 data "aws_ami" "ubuntu_x86" {
     owners = ["099720109477"] # Canonical official Ubuntu AMIs
@@ -181,6 +340,25 @@ data "aws_ami" "ubuntu_x86" {
         name = "name"
         values = [
             "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
+        ]
+    }
+    filter {
+        name = "root-device-type"
+        values = [ "ebs" ]
+    }
+    filter {
+        name = "virtualization-type"
+        values = [ "hvm" ]
+    }
+}
+
+data "aws_ami" "rpkilog_ubuntu2004" {
+    owners = ["054500078560"] # rpkilog account
+    most_recent = true
+    filter {
+        name = "name"
+        values = [
+            "rpkilog"
         ]
     }
     filter {
@@ -212,11 +390,21 @@ resource "aws_security_group" "util_vm" {
     }
 }
 
-resource "aws_instance" "util1" {
+# This EC2 instance is setup to be capable of running cron jobs similar to our lambda jobs.
+# See #2 for details: https://github.com/jeffsw/rpkilog/issues/2
+resource "aws_instance" "cron1" {
+    tags = {
+        Name = "cron1"
+    }
     instance_type = "t3.nano"
-    ami = data.aws_ami.ubuntu_x86.id
+    iam_instance_profile = aws_iam_instance_profile.cron1.name
+    ami = data.aws_ami.rpkilog_ubuntu2004.id
     key_name = "jeffsw-boomer"
-    user_data = file("vm_provisioner/util.sh")
+    user_data = <<EOF
+#!/bin/bash
+echo cron1 > /etc/hostname
+hostname cron1
+EOF
     vpc_security_group_ids = [
         aws_security_group.util_vm.id
     ]
@@ -229,12 +417,12 @@ resource "aws_route53_zone" "rpkilog_com" {
     name = "rpkilog.com"
 }
 
-resource "aws_route53_record" "util1" {
+resource "aws_route53_record" "cron1" {
     zone_id = aws_route53_zone.rpkilog_com.zone_id
-    name = "util1.rpkilog.com"
+    name = "cron1.rpkilog.com"
     type = "A"
     ttl = 300
     records = [
-        aws_instance.util1.public_ip
+        aws_instance.cron1.public_ip
     ]
 }

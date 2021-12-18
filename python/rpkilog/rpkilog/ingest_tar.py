@@ -8,7 +8,8 @@ import tarfile
 import yaml
 
 config = dict()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
+logger.setLevel('INFO')
 
 class IngestTar():
 
@@ -42,32 +43,49 @@ class IngestTar():
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
+        logging.info('test info level')
+        logging.error('Creating s3 client')
         s3 = boto3.client('s3')
+        tmp_dir=Path(os.getenv('snapshot_tmp_dir') or '/tmp')
+        logging.error(F'Trying to create snapshot_tmp_dir {tmp_dir}')
+        try:
+            os.mkdir(tmp_dir)
+        except FileExistsError as e:
+            logging.info(e)
+            pass
+        snapshot_summary_dir=Path(os.getenv('snapshot_summary_dir') or '/tmp')
+        logging.error(F'Trying to create summary directory {snapshot_summary_dir}')
+        try:
+            os.mkdir(snapshot_summary_dir)
+        except FileExistsError:
+            pass
+        logging.error('Getting dst_bucket from env')
         dst_bucket = os.getenv('snapshot_summary_bucket')
+        logging.error('Getting src_bucket')
         src_bucket = event['Records'][0]['s3']['bucket']['name']
+        logging.error('Getting s3_obj_key')
         s3_obj_key = event['Records'][0]['s3']['object']['key']
-        logging.info(F'Invoked for src_bucket={src_bucket} s3_obj_key={s3_obj_key}')
+        logging.error(F'Invoked for src_bucket={src_bucket} s3_obj_key={s3_obj_key}')
         rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.(tar|tgz)$', s3_obj_key)
-        if rem:
-            dst_file_name = F'{rem.group("datetime")}.json'
-        else:
+        if not rem:
             raise ValueError(F'Unexpected input file name didnt match our regex: {s3_obj_key}')
         tar_file_basename = Path(s3_obj_key).name
-        tar_file_path = Path('/tmp', tar_file_basename)
+        tar_file_path = Path(tmp_dir, tar_file_basename)
         s3.download_file(
             Bucket=src_bucket,
             Key=s3_obj_key,
             Filename=str(tar_file_path),
         )
-        logging.info(F'Downloaded file {s3_obj_key}')
-        json_file_path = cls.extract_useful_json(input_tar=tar_file_path, json_data_dir=Path('/tmp'))
-        logging.info(F'Extracted JSON data to {json_file_path}')
+        logging.error(F'Downloaded file {s3_obj_key}')
+        json_file_path = cls.extract_useful_json(input_tar=tar_file_path, json_data_dir=snapshot_summary_dir)
+        logging.error(F'Extracted JSON data to {json_file_path}')
         s3.upload_file(
             Filename=str(json_file_path),
             Bucket=dst_bucket,
             Key=json_file_path.name,
         )
-        logging.info(F'Uploaded to s3://{dst_bucket}/{json_file_path.name}')
+        logging.error(F'Uploaded to s3://{dst_bucket}/{json_file_path.name}')
+        os.remove(tar_file_path)
 
     @classmethod
     def cli_entry_point(cls):
@@ -105,4 +123,5 @@ class IngestTar():
         logging.info(F'Extracted JSON data to {json_file_path}')
 
 def aws_lambda_entry_point(event, context):
-    IngestTar.aws_lambda_entry_point(event, context)
+    retval = IngestTar.aws_lambda_entry_point(event, context)
+    return retval

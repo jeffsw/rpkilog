@@ -8,6 +8,7 @@ TODO: Move to its own module.
 '''
 import argparse
 import boto3
+import bz2
 from datetime import datetime, timedelta
 import dateutil
 from html.parser import HTMLParser
@@ -20,10 +21,11 @@ import re
 import requests
 from pathlib import Path
 import re
+import tarfile
 from urllib.parse import urlparse
 import urllib.request
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 class MyHTMLParser(HTMLParser):
     '''
@@ -59,6 +61,45 @@ class ArchiveSiteCrawler():
     '''
     Web-crawl an RPKI archive site.  Retrieve TAR files we haven't previously downloaded (by comparing)
     '''
+
+    @classmethod
+    def extract_matching_file_from_tar(
+        cls,
+        input_tar:Path,
+        output_dir:Path,
+        find_file_re:str=None,
+        bzip_result_file:bool=True,
+    ) -> Path:
+        '''
+        Extract file matching find_file_re from given TAR file.  Name the resulting file based on contatenation
+        of the regex match groups.  Optionally, bzip the file and add '.bz2' to the filename.
+
+        Returns a Path object to the resulting file on disk.
+        '''
+        if find_file_re==None: find_file_re=r'^rpki-(\d{8}T\d{6}Z)/output/rpki-client(.json)$'
+        logger.info(F'Extracting useful JSON data from {input_tar}')
+        tf = tarfile.open(name=input_tar, mode='r')
+        for member in tf.getmembers():
+            if not member.isfile():
+                continue
+            rem = re.match(find_file_re, member.name)
+            if not rem:
+                continue
+            result_file_name = ''.join(rem.groups())
+            if not len(result_file_name):
+                raise ValueError(F'Matching file {member.name} has no regex groups matching. Need those for filename.')
+            ef = tf.extractfile(member)
+            if bzip_result_file:
+                result_path = Path(output_dir, result_file_name, '.bz2')
+                output_file = bz2.open(result_path, mode='xb')
+            else:
+                result_path = Path(output_dir, result_file_name)
+                output_file = open(result_path, 'xb')
+            output_file.write(ef.read())
+            output_file.close()
+            return result_path
+        else:
+            raise KeyError(F'No matching file found in TAR file {input_tar}')
 
     @classmethod
     def fetch_day_urls_from_month_page(cls, month_page_url:str, site_root:str, start_date:datetime) -> set:
@@ -233,7 +274,11 @@ class ArchiveSiteCrawler():
     @classmethod
     def cli_entry_point(cls):
         realtime_initial = datetime.utcnow()
-        logging.basicConfig(level='INFO')
+        logging.basicConfig(
+            level='INFO',
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--debug', action='store_true', help='Break into pdb after parsing arguments')
         ap.add_argument('--s3-snapshot-bucket-name', help='S3 bucket for uploading RPKI TAR files')
@@ -258,10 +303,10 @@ class ArchiveSiteCrawler():
         try:
             import psutil
             memory_use_rss_mb = psutil.Process().memory_info().rss / 1048576
-            logging.info(F'RAM memory_use_rss_mb={memory_use_rss_mb:.0f}')
+            logger.info(F'RAM memory_use_rss_mb={memory_use_rss_mb:.0f}')
         except:
             logger.warning(F'Unable to invoke psutil.Process().memory_info() to get RAM use.')
-        logging.info(F'TIMES usr={times.user} sys={times.system} realtime={realtime_elapsed.total_seconds()}')
+        logger.info(F'TIMES usr={times.user} sys={times.system} realtime={realtime_elapsed.total_seconds()}')
 
     @classmethod
     def wrapped_entry_point(
@@ -290,7 +335,9 @@ class ArchiveSiteCrawler():
         In ascending date-based order, download any TAR files we haven't previously processed,
         except TAR files with a datetime-based filename before start_date.
 
-        After downloading each TAR, upload it to the s3_snapshot_bucket.
+        After downloading each TAR, upload it to the s3_snapshot_bucket_name.
+
+        Extract relevant JSON summary from each TAR and upload that to the s3_snapshot_summary_bucket_name.
 
         Abort if a download fails, or if an upload fails, to avoid skipping any files.
         '''
@@ -303,6 +350,7 @@ class ArchiveSiteCrawler():
         s3 = boto3.client('s3')
         already_have_by_datetime = dict()
         uploaded = list()
+
         snapshot_bucket = boto3.resource('s3').Bucket(s3_snapshot_bucket_name)
         snapshots = set()
         for buckobj in snapshot_bucket.objects.all():
@@ -312,6 +360,7 @@ class ArchiveSiteCrawler():
                 already_have_by_datetime[rem.group('datetime')] = buckobj
             else:
                 logger.warning('UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
+
         summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
         summaries = set()
         for buckobj in summary_bucket.objects.all():
@@ -322,7 +371,6 @@ class ArchiveSiteCrawler():
             else:
                 logger.warning('UNMATCHED key in summary bucket {summary_bucket} : {buckobj.key}')
         logger.info(F'LISTED {len(snapshots)} snapshots and {len(summaries)} summaires in S3 buckets.')
-        # figure out what snapshots we already have (in S3) based on the datetime-like filenames
 
         # get the list of all rpki tar files, after start_date, from the specified rpki archive site
         archive_site_available_tar_file_urls = cls.fetch_tar_urls_from_archive_site(
@@ -333,7 +381,7 @@ class ArchiveSiteCrawler():
         
         # Iterate over available rpki tar files.
         # Determine which ones we don't already have.  Download those from archive and re-upload to snapshot bucket.
-        # Stop if we're within 10s of job_deadline (lambda runtime might be exhausted if we download many big files.)
+        # Stop if we're within 60s of job_deadline (lambda runtime might be exhausted because the downloads are slow.)
         for available_tar_url in sorted(archive_site_available_tar_file_urls):
             rem = re.search(r'(?P<filename>rpki-(?P<datetime>\d{8}T\d{6})Z\.tgz)$', available_tar_url)
             if not rem:
@@ -363,8 +411,19 @@ class ArchiveSiteCrawler():
                 Bucket=s3_snapshot_bucket_name,
                 Key=destination_filename,
             )
-            logging.info(F'UPLOADED s3://{s3_snapshot_bucket_name}/{destination_filename}')
             uploaded.append(destination_filename)
+            logger.info(F'EXTRACTING useful summary file from tar')
+            json_file_path = cls.extract_matching_file_from_tar(
+                input_tar=retrieved_filename,
+                output_dir=Path('/tmp'),
+            )
             os.remove(retrieved_filename)
+            logger.info(F'UPLOADING extracted file {json_file_path.name} to {s3_snapshot_summary_bucket_name}')
+            s3.upload_file(
+                Filename=str(json_file_path),
+                Bucket=s3_snapshot_summary_bucket_name,
+                Key=json_file_path.name,
+            )
+            os.remove(json_file_path)
 
         return uploaded
