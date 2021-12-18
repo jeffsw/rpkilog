@@ -176,9 +176,15 @@ class VrpDiff():
         Returns result metadata.
         '''
         # load JSON data from both files
-        old_file = open(old_file_path)
+        if old_file_path.suffix == '.bz2':
+            old_file = bz2.open(old_file_path)
+        else:
+            old_file = open(old_file_path)
         old_data = json.load(old_file)
-        new_file = open(new_file_path)
+        if new_file_path.suffix == '.bz2':
+            new_file = bz2.open(new_file_path)
+        else:
+            new_file = open(new_file_path)
         new_data = json.load(new_file)
         # open the output file
         if output_file_path.suffix == '.bz2':

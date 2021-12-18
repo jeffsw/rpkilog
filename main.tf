@@ -77,7 +77,6 @@ resource "aws_iam_role" "lambda_vrp_cache_diff" {
 
 ##############################
 # VPCs
-
 resource "aws_default_vpc" "default" {
 }
 
@@ -138,15 +137,14 @@ resource "aws_vpc_endpoint" "default_vpc_s3_endpoint" {
 }
 
 ##############################
-# EFS filesystems
-
+# EFS filesystems, access points, mount targets
+#Terraform produces spurious "changes made outside of Terraform" whenever the amount of data stored in
+#an EFS filesystem changes between terraform invocations.  Ignore these spurious notices.
+#See also: https://github.com/hashicorp/terraform/issues/28803
 resource "aws_efs_file_system" "rpki_archive" {
     creation_token = "rpki_archive"
 }
 
-#Terraform produces spurious "changes made outside of Terraform" whenever the amount of data stored in
-#an EFS filesystem changes between terraform invocations.  Ignore these spurious notices.
-#See also: https://github.com/hashicorp/terraform/issues/28803
 resource "aws_efs_access_point" "rpki_archive" {
     file_system_id = aws_efs_file_system.rpki_archive.id
     posix_user {
@@ -172,7 +170,6 @@ resource "aws_efs_mount_target" "rpki_archive" {
 
 ##############################
 # s3 buckets
-
 resource "aws_s3_bucket" "rpkilog_artifact" {
     bucket = "rpkilog-artifact"
     acl = "private"
@@ -196,84 +193,41 @@ resource "aws_s3_bucket" "rpkilog_diff" {
 ##############################
 # lambda functions & permissions
 
-resource "aws_lambda_function" "archive_site_crawler" {
-    # Uncomment to deploy to AWS near the archive josephine.sobornost.net
-    # I found running in us-east-1 fast enough, and it's probably cheaper than downloading in eu than
-    # uploading to a remote S3 bucket
-    #provider = aws.eu-central-1
-    function_name = "archive_site_crawler"
-    filename = "misc/terraform_lambda_placeholder_python.zip"
-    role = aws_iam_role.lambda_archive_site_crawler.arn
-    runtime = "python3.9"
-    handler = "rpkilog.ArchiveSiteCrawler.aws_lambda_entry_point"
-    memory_size = 256
-    timeout = 240
-    environment {
-        variables = {
-            s3_snapshot_bucket_name = aws_s3_bucket.rpkilog_snapshot.id
-            s3_snapshot_summary_bucket_name = aws_s3_bucket.rpkilog_snapshot_summary.id
-            site_root = "http://josephine.sobornost.net/josephine.sobornost.net/rpkidata/"
-            job_max_downloads = 2
-        }
-    }
-    #TODO: add file_system_config
-    lifecycle {
-        # Never update the lambda deployment package.  We use another tool for that, not Terraform.
-        ignore_changes = [ filename ]
-    }
-}
-
-resource "aws_lambda_function" "snapshot_ingest" {
-    function_name = "snapshot_ingest"
-    #This placeholder file is required on the first invocation of terraform, or it will fail because
-    #the file doesn't exist yet (we just created the bucket, after all).
-    #After that, we prefer to use s3_bucket and s3_key.
-    #TODO: Find a work-around for this dumpster fire.
-    #filename = "misc/terraform_lambda_placeholder_python.zip"
-    s3_bucket = "rpkilog-artifact"
-    s3_key = "lambda_snapshot_ingest.zip"
-    role = aws_iam_role.lambda_snapshot_ingest.arn
-    runtime = "python3.9"
-    handler = "rpkilog.ingest_tar.aws_lambda_entry_point"
-    # 1769 MB gives you 1 vCPU according to docs: https://docs.aws.amazon.com/lambda/latest/dg/configuration-function-common.html#configuration-memory-console
-    memory_size = 1769
-    timeout = 100
-    environment {
-        variables = {
-            snapshot_bucket = aws_s3_bucket.rpkilog_snapshot.id
-            snapshot_summary_bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
-            snapshot_summary_dir = "/mnt/rpki_archive/snapshot_summary"
-            snapshot_tmp_dir = "/mnt/rpki_archive/snapshot"
-        }
-    }
-    file_system_config {
-        arn = aws_efs_access_point.rpki_archive.arn
-        local_mount_path = "/mnt/rpki_archive"
-    }
-    vpc_config {
-        subnet_ids = [ for x in data.aws_subnet_ids.default.ids : x ]
-        security_group_ids = [ aws_default_security_group.default.id ]
-    }
-    lifecycle {
-        # Never update the lambda deployment package.  We use another tool for that, not Terraform.
-        ignore_changes = [ filename ]
-    }
-}
-resource "aws_lambda_permission" "snapshot_ingest" {
-    statement_id = "AllowExecutionFromS3Bucket"
-    action = "lambda:InvokeFunction"
-    function_name = aws_lambda_function.snapshot_ingest.id
-    principal = "s3.amazonaws.com"
-    source_arn = aws_s3_bucket.rpkilog_snapshot.arn
-}
-resource "aws_lambda_function_event_invoke_config" "snapshot_ingest" {
-    function_name = aws_lambda_function.snapshot_ingest.function_name
-    maximum_retry_attempts = 0
-}
+#Temporarily moved into cron1 EC2 VM
+# resource "aws_lambda_function" "archive_site_crawler" {
+#     # Uncomment to deploy to AWS near the archive josephine.sobornost.net
+#     # I found running in us-east-1 fast enough, and it's probably cheaper than downloading in eu than
+#     # uploading to a remote S3 bucket
+#     #provider = aws.eu-central-1
+#     function_name = "archive_site_crawler"
+#     filename = "misc/terraform_lambda_placeholder_python.zip"
+#     role = aws_iam_role.lambda_archive_site_crawler.arn
+#     runtime = "python3.9"
+#     handler = "rpkilog.ArchiveSiteCrawler.aws_lambda_entry_point"
+#     memory_size = 256
+#     timeout = 240
+#     environment {
+#         variables = {
+#             s3_snapshot_bucket_name = aws_s3_bucket.rpkilog_snapshot.id
+#             s3_snapshot_summary_bucket_name = aws_s3_bucket.rpkilog_snapshot_summary.id
+#             site_root = "http://josephine.sobornost.net/josephine.sobornost.net/rpkidata/"
+#             job_max_downloads = 2
+#         }
+#     }
+#     #TODO: add file_system_config
+#     lifecycle {
+#         # Never update the lambda deployment package.  We use another tool for that, not Terraform.
+#         ignore_changes = [ filename ]
+#     }
+# }
 
 resource "aws_lambda_function" "vrp_cache_diff" {
     function_name = "vrp_cache_diff"
-    filename = "misc/terraform_lambda_placeholder_python.zip"
+    #TERRAFORM_FIRST needs an empty zip file here to succeed.
+    #Once we have setup a CI/CD pipeline from our git repo, this might be fixable.
+    #filename = "misc/terraform_lambda_placeholder_python.zip"
+    s3_bucket = "rpkilog-artifact"
+    s3_key = "lambda_vrp_cache_diff.zip"
     role = aws_iam_role.lambda_vrp_cache_diff.arn
     runtime = "python3.9"
     handler = "rpkilog.vrp_diff.aws_lambda_entry_point"
@@ -281,16 +235,23 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     timeout = 300
     environment {
         variables = {
+            snapshot_summary_bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
             diff_bucket = aws_s3_bucket.rpkilog_diff.id
         }
     }
-    #TODO: add file_system_config
+    # file_system_config {
+    #     arn = aws_efs_access_point.rpki_archive.arn
+    #     local_mount_path = "/mnt/rpki_archive"
+    # }
+    # vpc_config {
+    #     subnet_ids = [ for x in data.aws_subnet_ids.default.ids : x ]
+    #     security_group_ids = [ aws_default_security_group.default.id ]
+    # }
     lifecycle {
         # Never update the lambda deployment package.  We use another tool for that, not Terraform.
         ignore_changes = [ filename ]
     }
 }
-
 resource "aws_lambda_permission" "vrp_cache_diff" {
     statement_id = "AllowExecutionFromS3Bucket"
     action = "lambda:InvokeFunction"
@@ -298,22 +259,13 @@ resource "aws_lambda_permission" "vrp_cache_diff" {
     principal = "s3.amazonaws.com"
     source_arn = aws_s3_bucket.rpkilog_snapshot_summary.arn
 }
+resource "aws_lambda_function_event_invoke_config" "vrp_cache_diff" {
+    function_name = aws_lambda_function.vrp_cache_diff.function_name
+    maximum_retry_attempts = 0
+}
 
 ##############################
 # s3 bucket notifications
-
-resource "aws_s3_bucket_notification" "snapshot_ingest" {
-    bucket = aws_s3_bucket.rpkilog_snapshot.id
-    lambda_function {
-        lambda_function_arn = aws_lambda_function.snapshot_ingest.arn
-        events = [ "s3:ObjectCreated:*" ]
-        #filter_prefix = "/incoming"
-    }
-    depends_on = [
-        aws_lambda_permission.snapshot_ingest
-    ]
-}
-
 resource "aws_s3_bucket_notification" "vrp_cache_diff" {
     bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
     lambda_function {
@@ -326,13 +278,14 @@ resource "aws_s3_bucket_notification" "vrp_cache_diff" {
 }
 
 ##############################
-# EC2 AMIs, Security Groups, Instance Profiles, and Instances
-
+# EC2 Instance Profiles
 resource "aws_iam_instance_profile" "cron1" {
     name = "cron1"
     role = aws_iam_role.ec2_cron1.name
 }
 
+##############################
+# EC2 AMIs
 data "aws_ami" "ubuntu_x86" {
     owners = ["099720109477"] # Canonical official Ubuntu AMIs
     most_recent = true
@@ -371,6 +324,8 @@ data "aws_ami" "rpkilog_ubuntu2004" {
     }
 }
 
+##############################
+# EC2 Security Groups
 resource "aws_security_group" "util_vm" {
     name = "util_vm"
     description = "Allow SSH access"
@@ -389,6 +344,9 @@ resource "aws_security_group" "util_vm" {
         ipv6_cidr_blocks = ["::/0"]
     }
 }
+
+##############################
+# EC2 Instances
 
 # This EC2 instance is setup to be capable of running cron jobs similar to our lambda jobs.
 # See #2 for details: https://github.com/jeffsw/rpkilog/issues/2
@@ -413,6 +371,8 @@ EOF
     }
 }
 
+##############################
+# Route53
 resource "aws_route53_zone" "rpkilog_com" {
     name = "rpkilog.com"
 }
