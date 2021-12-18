@@ -393,7 +393,7 @@ class ArchiveSiteCrawler():
                 # we've previously downloaded this tar from the archive site
                 continue
             # new tar we need from archive site
-            if job_deadline!=None and datetime.utcnow() < job_deadline:
+            if job_deadline!=None and job_deadline < datetime.utcnow():
                 # We're past the deadline.  Could run out of lambda execution time.  Stop here.
                 logger.warn(F'JOB_DEADLINE reached.')
                 break
