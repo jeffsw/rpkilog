@@ -37,6 +37,16 @@ resource "aws_key_pair" "jeffsw" {
 }
 
 ##############################
+# Certificates
+# This needs to be manually created.
+# When ready to create certs as part of terraform workflow, see this helpful example:
+# https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate_validation
+data "aws_acm_certificate" "es_prod" {
+    domain = "es-prod.rpkilog.com"
+    statuses = [ "ISSUED" ]
+}
+
+##############################
 # IAM roles
 
 resource "aws_iam_role" "ec2_cron1" {
@@ -76,6 +86,29 @@ resource "aws_iam_role" "lambda_vrp_cache_diff" {
 }
 
 ##############################
+# IAM users
+resource "aws_iam_user" "jeffsw" {
+    name = "jeffsw"
+}
+
+##############################
+# IAM groups
+resource "aws_iam_group" "superusers" {
+    name = "superusers"
+}
+resource "aws_iam_group_membership" "superusers" {
+    name = "superusers"
+    group = aws_iam_group.superusers.name
+    users = [
+        aws_iam_user.jeffsw.name
+    ]
+}
+resource "aws_iam_group_policy_attachment" "superusers" {
+    group = aws_iam_group.superusers.name
+    policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+##############################
 # VPCs
 resource "aws_default_vpc" "default" {
 }
@@ -94,6 +127,26 @@ data "aws_subnet_ids" "default" {
 
 ##############################
 # Security Groups
+resource "aws_security_group" "https_allow" {
+    name = "https_allow"
+    description = "Allow HTTPS traffic from anywhere."
+    vpc_id = aws_default_vpc.default.id
+    egress {
+        from_port = 0
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+        ipv6_cidr_blocks = ["::/0"]
+    }
+    ingress {
+        description = "HTTPS"
+        cidr_blocks = [ "0.0.0.0/0" ]
+        ipv6_cidr_blocks = [ "::/0" ]
+        from_port = 0
+        protocol = "tcp"
+        to_port = 443
+    }
+}
 resource "aws_security_group" "allow_nfs" {
     name = "allow_nfs"
     description = "Allow NFS traffic.  This is for EFS Mount Targets."
@@ -368,6 +421,70 @@ EOF
     ]
     lifecycle {
         ignore_changes = [ user_data ]
+    }
+}
+
+##############################
+# ElasticSearch / OpenSearch
+# Managing ES with Terraform is quite buggy.  Went through several permutations of config before working
+# around this issue: https://github.com/hashicorp/terraform-provider-aws/issues/13552
+resource "aws_elasticsearch_domain" "prod" {
+    domain_name = "prod"
+    elasticsearch_version = "7.10"
+    access_policies = <<POLICY
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "AllowAnythingInOurAccount",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "AWS": [
+                            "arn:aws:iam::054500078560:root"
+                        ]
+                    },
+                    "Action": [
+                        "es:*"
+                    ],
+                    "Resource": "arn:aws:es:::*"
+                }
+            ]
+        }
+POLICY
+    advanced_security_options {
+        enabled = true
+        master_user_options {
+            master_user_arn = aws_iam_user.jeffsw.arn
+        }
+    }
+    cluster_config {
+        # Instance types: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/supported-instance-types.html
+        instance_type = "t3.medium.elasticsearch"
+        instance_count = 1
+        zone_awareness_enabled = false
+    }
+    domain_endpoint_options {
+        custom_endpoint_enabled = true
+        custom_endpoint = "es-prod.rpkilog.com"
+        custom_endpoint_certificate_arn = data.aws_acm_certificate.es_prod.arn
+        enforce_https = true
+        # AWS API error w/o tls_security_policy because tf seemed to set it to an empty string
+
+        tls_security_policy = "Policy-Min-TLS-1-2-2019-07"
+    }
+    ebs_options {
+        ebs_enabled = true
+        volume_size = 10
+        volume_type = "gp2" # gp3 not supported by current version of aws_elasticsearch_domain
+    }
+    encrypt_at_rest {
+        enabled = true
+    }
+    node_to_node_encryption {
+        enabled = true
+    }
+    snapshot_options {
+        automated_snapshot_start_hour = 4
     }
 }
 
