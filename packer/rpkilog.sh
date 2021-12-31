@@ -5,16 +5,23 @@
 apt-get -y update
 apt-get -y upgrade
 apt-get -y install \
+  awscli \
   binutils \
   curl \
   git \
+  ipython3 \
+  mlocate \
   nfs-common \
   python3-pip \
+  unzip \
+  zip \
 
 ##############################
 # Python
 pip3 install \
   botocore \
+  boto3 \
+  bcdoc \
 
 ##############################
 # ssh
@@ -47,6 +54,14 @@ mkdir /rpki_archive
 echo "fs-092450c25ba029d1b.efs.us-east-1.amazonaws.com:/ /rpki_archive nfs4 nfsvers=4,rsize=1048576,wsize=1048576,hard,timeo=60,noresvport 0 2" >> /etc/fstab
 
 ##############################
+# AWS CLI
+pushd /usr/local/src
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+./aws/install
+popd
+
+##############################
 # rpkilog python from github
 pip3 install "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpkilog"
 
@@ -55,8 +70,7 @@ pip3 install "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpki
 groupadd crawler --gid 500
 adduser --uid 500 --gid 500 --disabled-password crawler
 cat <<EOF > /etc/cron.d/crawler
-#5,15,25,35,45,55 * * * * crawler \
-rpkilog-archive-site-crawler \
+#5,15,25,35,45,55 * * * * rpkilog-archive-site-crawler \
 --s3-snapshot-bucket-name rpkilog-snapshot \
 --s3-snapshot-summary-bucket-name rpkilog-snapshot-summary \
 --site-root http://josephine.sobornost.net/josephine.sobornost.net/rpkidata/ \

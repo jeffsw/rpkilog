@@ -26,6 +26,10 @@ provider "aws" {
 }
 
 ##############################
+# Caller
+data "aws_caller_identity" "current" {}
+
+##############################
 # SSH key-pairs
 
 resource "aws_key_pair" "jeffsw" {
@@ -48,7 +52,6 @@ data "aws_acm_certificate" "es_prod" {
 
 ##############################
 # IAM roles
-
 resource "aws_iam_role" "ec2_cron1" {
     name = "ec2_cron1"
     assume_role_policy = file("aws_iam/ec2_generic_assume_role.json")
@@ -56,6 +59,130 @@ resource "aws_iam_role" "ec2_cron1" {
         name = "ec2_cron1"
         policy = file("aws_iam/ec2_cron1.json")
     }
+}
+
+data "aws_iam_policy" "AmazonOpenSearchServiceCognitoAccess" {
+    name = "AmazonOpenSearchServiceCognitoAccess"
+}
+resource "aws_iam_role" "es_master" {
+    name = "es_master"
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+            },
+            "Action": "sts:AssumeRole"
+        },
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "cognito-identity.amazonaws.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.es.id}"
+                },
+                "ForAnyValue:StringLike": {
+                    "cognito-identity.amazonaws.com:amr": "authenticated"
+                }
+            }
+        }
+    ]
+}
+POLICY
+    inline_policy {
+        name = "es_master"
+        policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:*:*:*"
+            ]
+        }
+    ]
+}
+POLICY
+    }
+    depends_on = [
+        aws_cognito_identity_pool.es
+    ]
+}
+resource "aws_iam_role" "es_limited" {
+    name = "es_limited"
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Principal": {
+            "Federated": "cognito-identity.amazonaws.com"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+            "StringEquals": {
+                "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.es.id}"
+            },
+            "ForAnyValue:StringLike": {
+                "cognito-identity.amazonaws.com:amr": "authenticated"
+            }
+        }
+    }]
+}
+POLICY
+    inline_policy {
+        name = "es_limited"
+        policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:*:*:*"
+            ]
+        }
+    ]
+}
+POLICY
+    }
+    depends_on = [
+        aws_cognito_identity_pool.es
+    ]
+}
+
+resource "aws_iam_role" "es_cognito" {
+    name = "es_cognito"
+    managed_policy_arns = [
+        data.aws_iam_policy.AmazonOpenSearchServiceCognitoAccess.arn
+    ]
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "es.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+        }
+    ]
+}
+POLICY
 }
 
 resource "aws_iam_role" "lambda_archive_site_crawler" {
@@ -85,10 +212,68 @@ resource "aws_iam_role" "lambda_vrp_cache_diff" {
     }
 }
 
+resource "aws_iam_role" "lambda_diff_import" {
+    name = "lambda_diff_import"
+    assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
+    inline_policy {
+        name = "lambda_diff_import"
+        policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3Read",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:GetObjectTagging",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::rpkilog-snapshot-summary",
+                "arn:aws:s3:::rpkilog-snapshot-summary/*"
+            ]
+        },
+        {
+            "Sid": "ES",
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:*:*:*"
+            ]
+        },
+        {
+            "Sid": "Log",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:*:*"
+            ]
+        }
+    ]
+}
+POLICY
+    }
+}
+
 ##############################
 # IAM users
 resource "aws_iam_user" "jeffsw" {
     name = "jeffsw"
+}
+
+resource "aws_iam_user" "es_master" {
+    name = "es_master"
+}
+
+resource "aws_iam_user" "es_limited" {
+    name = "es_limited"
 }
 
 ##############################
@@ -106,6 +291,110 @@ resource "aws_iam_group_membership" "superusers" {
 resource "aws_iam_group_policy_attachment" "superusers" {
     group = aws_iam_group.superusers.name
     policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_iam_group_policy" "es_master" {
+    name = "es_master"
+    group = aws_iam_group.es_master.name
+    policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam:::role/es_master"
+        }
+    ]
+}
+POLICY
+}
+resource "aws_iam_group" "es_master" {
+    name = "es_master"
+}
+resource "aws_iam_group_membership" "es_master" {
+    name = "es_master"
+    group = aws_iam_group.es_master.name
+    users = [ aws_iam_user.es_master.name ]
+}
+
+resource "aws_iam_group_policy" "es_limited" {
+    name = "es_limited"
+    group = aws_iam_group.es_limited.name
+    policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam:::role/es_limited"
+        }
+    ]
+}
+POLICY
+}
+resource "aws_iam_group" "es_limited" {
+    name = "es_limited"
+}
+resource "aws_iam_group_membership" "es_limited" {
+    name = "es_limited"
+    group = aws_iam_group.es_limited.name
+    users = [ aws_iam_user.es_limited.name ]
+}
+
+##############################
+# Cognito
+resource "aws_cognito_user_pool" "es" {
+    name = "es"
+    username_attributes = [ "email" ]
+    admin_create_user_config {
+        allow_admin_create_user_only = true
+    }
+}
+resource "aws_cognito_user_pool_domain" "es" {
+    domain = "rpkilog-es"
+    user_pool_id = aws_cognito_user_pool.es.id
+}
+resource "aws_cognito_user_group" "es_master" {
+    name = "es_master"
+    user_pool_id = aws_cognito_user_pool.es.id
+    description = "Users given AllAccess within ES"
+    role_arn = aws_iam_role.es_master.arn
+}
+
+resource "aws_cognito_user_pool_client" "es" {
+    name = "es"
+    user_pool_id = aws_cognito_user_pool.es.id
+    # access_token_validity = 86400
+    # id_token_validity = 86400
+    # refresh_token_validity = 30
+    allowed_oauth_flows = [ "code" ]
+    allowed_oauth_scopes = [
+        "email",
+        "openid",
+        "phone",
+        "profile",
+    ]
+    prevent_user_existence_errors = "LEGACY"
+    supported_identity_providers = [ "COGNITO" ]
+}
+resource "aws_cognito_identity_pool" "es" {
+    identity_pool_name = "es"
+    allow_unauthenticated_identities = false
+    allow_classic_flow = false
+    cognito_identity_providers {
+        client_id = aws_cognito_user_pool_client.es.id
+        provider_name = aws_cognito_user_pool.es.endpoint
+        server_side_token_check = true
+    }
+}
+resource "aws_cognito_identity_pool_roles_attachment" "es" {
+    identity_pool_id = aws_cognito_identity_pool.es.id
+    roles = {
+        authenticated = aws_iam_role.es_master.arn
+        unauthenticated = aws_iam_role.es_limited.arn
+    }
 }
 
 ##############################
@@ -317,6 +606,36 @@ resource "aws_lambda_function_event_invoke_config" "vrp_cache_diff" {
     maximum_retry_attempts = 0
 }
 
+resource "aws_lambda_function" "diff_import" {
+    function_name = "diff_import"
+    s3_bucket = "rpkilog-artifact"
+    s3_key = "lambda_diff_import.zip"
+    role = aws_iam_role.lambda_diff_import.arn
+    runtime = "python3.9"
+    handler = "rpkilog.vrp_diff.aws_lambda_entry_point_import"
+    memory_size = 256
+    timeout = 300
+    environment {
+        variables = {
+            es_endpoint = aws_elasticsearch_domain.prod.endpoint
+        }
+    }
+    lifecycle {
+        ignore_changes = [ filename ]
+    }
+}
+resource "aws_lambda_permission" "diff_import" {
+    statement_id = "AllowExecutionFromS3Bucket"
+    action = "lambda:InvokeFunction"
+    function_name = aws_lambda_function.diff_import.id
+    principal = "s3.amazonaws.com"
+    source_arn = aws_s3_bucket.rpkilog_diff.arn
+}
+resource "aws_lambda_function_event_invoke_config" "diff_import" {
+    function_name = aws_lambda_function.diff_import.function_name
+    maximum_retry_attempts = 0
+}
+
 ##############################
 # s3 bucket notifications
 resource "aws_s3_bucket_notification" "vrp_cache_diff" {
@@ -407,7 +726,7 @@ resource "aws_instance" "cron1" {
     tags = {
         Name = "cron1"
     }
-    instance_type = "t3.nano"
+    instance_type = "t3.small"
     iam_instance_profile = aws_iam_instance_profile.cron1.name
     ami = data.aws_ami.rpkilog_ubuntu2004.id
     key_name = "jeffsw-boomer"
@@ -428,33 +747,41 @@ EOF
 # ElasticSearch / OpenSearch
 # Managing ES with Terraform is quite buggy.  Went through several permutations of config before working
 # around this issue: https://github.com/hashicorp/terraform-provider-aws/issues/13552
+
+#This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
     elasticsearch_version = "7.10"
+    # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+    # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
         {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Sid": "AllowAnythingInOurAccount",
-                    "Effect": "Allow",
-                    "Principal": {
-                        "AWS": [
-                            "arn:aws:iam::054500078560:root"
-                        ]
-                    },
-                    "Action": [
-                        "es:*"
-                    ],
-                    "Resource": "arn:aws:es:::*"
-                }
-            ]
+            "Effect": "Allow",
+            "Principal": { "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" },
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Principal": { "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" },
+            "Action": [
+                "*"
+            ],
+            "Resource": "*"
         }
+    ]
+}
 POLICY
     advanced_security_options {
         enabled = true
+        internal_user_database_enabled = false
         master_user_options {
-            master_user_arn = aws_iam_user.jeffsw.arn
+            master_user_arn = aws_iam_role.es_master.arn
         }
     }
     cluster_config {
@@ -463,13 +790,18 @@ POLICY
         instance_count = 1
         zone_awareness_enabled = false
     }
+    cognito_options {
+        enabled = true
+        user_pool_id = aws_cognito_user_pool.es.id
+        identity_pool_id = aws_cognito_identity_pool.es.id
+        role_arn = aws_iam_role.es_cognito.arn
+    }
     domain_endpoint_options {
         custom_endpoint_enabled = true
         custom_endpoint = "es-prod.rpkilog.com"
         custom_endpoint_certificate_arn = data.aws_acm_certificate.es_prod.arn
         enforce_https = true
         # AWS API error w/o tls_security_policy because tf seemed to set it to an empty string
-
         tls_security_policy = "Policy-Min-TLS-1-2-2019-07"
     }
     ebs_options {
@@ -486,6 +818,10 @@ POLICY
     snapshot_options {
         automated_snapshot_start_hour = 4
     }
+    depends_on = [
+        aws_cognito_identity_pool.es,
+        aws_cognito_user_pool.es
+    ]
 }
 
 ##############################
@@ -502,4 +838,12 @@ resource "aws_route53_record" "cron1" {
     records = [
         aws_instance.cron1.public_ip
     ]
+}
+
+resource "aws_route53_record" "es_prod" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name = "es-prod.rpkilog.com"
+    type = "CNAME"
+    ttl = 300
+    records = [ aws_elasticsearch_domain.prod.endpoint ]
 }

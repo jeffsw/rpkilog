@@ -90,7 +90,7 @@ class ArchiveSiteCrawler():
                 raise ValueError(F'Matching file {member.name} has no regex groups matching. Need those for filename.')
             ef = tf.extractfile(member)
             if bzip_result_file:
-                result_path = Path(output_dir, result_file_name, '.bz2')
+                result_path = Path(output_dir, result_file_name + '.bz2')
                 output_file = bz2.open(result_path, mode='xb')
             else:
                 result_path = Path(output_dir, result_file_name)

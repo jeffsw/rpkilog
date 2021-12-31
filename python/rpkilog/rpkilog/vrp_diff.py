@@ -12,8 +12,13 @@ from pathlib import Path
 import re
 import socket
 import sys
+import tempfile
 import time
+from urllib.parse import urlparse
+
+from elasticsearch import Elasticsearch, RequestsHttpConnection
 import netaddr
+from requests_aws4auth import AWS4Auth
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +166,68 @@ class VrpDiff():
             retstr += F', "new_roa": {self.new_roa.as_json_str()}'
         retstr += ' }'
         return retstr
+
+    def es_insert(self, es_client:Elasticsearch, index_name:str, dt:datetime):
+        '''
+        Insert object into given ElasticSearch index
+        '''
+        result = es_client.index(
+            index=index_name,
+            op_type='create',
+            body={
+                'observation_timestamp': dt.strftime('%Y%m%dT%H%M%SZ'),
+                'verb': self.verb,
+                'prefix': self.get_prefix(),
+                'maxLength': self.get_maxLength(),
+                'asn': self.get_asn(),
+                'ta': self.get_ta(),
+                'old_roa': self.old_roa,
+                'new_roa': self.new_roa,
+            }
+        )
+        return result
+
+    @classmethod
+    def from_json_obj(cls, j:dict):
+        '''
+        Instantiate a VrpDiff object from its JSON representation
+        '''
+        old_roa = j.get('old_roa', None)
+        new_roa = j.get('new_roa', None)
+        o = cls(cls, old_roa=old_roa, new_roa=new_roa)
+        return o
+
+    def get_asn(self):
+        if self.new_roa!=None:
+            return self.new_roa['asn']
+        elif self.old_roa!=None:
+            return self.old_roa['asn']
+        else:
+            raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
+
+    def get_maxLength(self):
+        if self.new_roa!=None:
+            return self.new_roa['maxLength']
+        elif self.old_roa!=None:
+            return self.old_roa['maxLength']
+        else:
+            raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
+
+    def get_prefix(self):
+        if self.new_roa!=None:
+            return self.new_roa['prefix']
+        elif self.old_roa!=None:
+            return self.old_roa['prefix']
+        else:
+            raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
+
+    def get_ta(self):
+        if self.new_roa!=None:
+            return self.new_roa['ta']
+        elif self.old_roa!=None:
+            return self.old_roa['ta']
+        else:
+            raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
 
     @classmethod
     def vrp_diff_from_files(
@@ -328,6 +395,64 @@ class VrpDiff():
         return retlist
 
     @classmethod
+    def es_create_diff_index_for_datetime(index_datetime:datetime, es_client:Elasticsearch) -> str:
+        '''
+        Ensure necessary index exists for vrp diff data created from new vrp cache at given datetime.
+        Returns the datetime-appropriate index name, e.g. '198110'.
+        '''
+        index_name = index_datetime.strftime('diff-%Y%m')
+        es_client.indices.create(
+            index=index_name,
+            body={
+                'settings': {
+                    'number_of_shards': 5,
+                },
+                'mappings': {
+                    'properties': {
+                        'observation_timestamp': {
+                            'type': 'date',
+                            'format': 'strict_date_time_no_millis'
+                        },
+                        'verb': { 'type': 'keyword' },
+                        'prefix': { 'type': 'ip_range' },
+                        'maxLength': { 'type': 'integer' },
+                        'asn': { 'type': 'long' },
+                        'ta': { 'type': 'keyword' },
+                        'old_roa': { 'type': 'object' },
+                        'new_roa': { 'type': 'object' },
+                    }
+                }
+            },
+            ignore=400,
+        )
+        return index_name
+
+    @classmethod
+    def get_es_client(cls, es_endpoint):
+        '''
+        Move this to a utility module?
+        '''
+        aws_credentials = boto3.Session().get_credentials()
+        aws_auth = AWS4Auth(
+            aws_credentials.access_key,
+            aws_credentials.secret_key,
+            'us-east-1',
+            'es',
+            aws_credentials.token,
+        )
+        es_url = urlparse(es_endpoint)
+        es_client = Elasticsearch(
+            hosts = [
+                {'host': es_url.hostname, 'port': es_url.port or 443},
+            ],
+            http_auth=aws_auth,
+            use_ssl=True,
+            verify_certs=True,
+            connection_class=RequestsHttpConnection,
+        )
+        return es_client
+
+    @classmethod
     def get_old_file_key_from_s3(cls, src_bucket_name:str, new_file_datetime:datetime) -> str:
         '''
         Given a new_file_datetime, list objects in the src_bucket and return key name of the previous
@@ -381,6 +506,23 @@ class VrpDiff():
         return metadata
 
     @classmethod
+    def aws_lambda_entry_point_import(cls, event, context):
+        logging.basicConfig(
+            level='INFO',
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
+        es_endpoint = os.getenv('es_endpoint')
+        src_s3_bucket_name = event['Records'][0]['s3']['bucket']['name']
+        src_s3_key = event['Records'][0]['s3']['object']['key']
+        result = cls.generic_entry_point_import(
+            es_endpoint=es_endpoint,
+            src_s3_bucket_name=src_s3_bucket_name,
+            src_s3_key=src_s3_key,
+        )
+        return result
+
+    @classmethod
     def cli_entry_point(cls):
         realtime_initial = time.time()
         logging.basicConfig(level='INFO')
@@ -404,6 +546,27 @@ class VrpDiff():
             realtime_initial=realtime_initial,
         )
         print(json.dumps(metadata))
+
+    @classmethod
+    def cli_entry_point_import(cls):
+        logging.basicConfig(level='INFO')
+        ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
+        ap.add_argument('--bucket', help='S3 bucket containing diff file')
+        ap.add_argument('--key', type=Path, help='S3 key of diff file')
+        ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
+        ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
+        ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
+        args = vars(ap.parse_args())
+        if 'debugger' in args:
+            import pdb
+            pdb.set_trace()
+        logger.setLevel(args.get('log_level', 'INFO'))
+        result = cls.generic_entry_point_import(
+            es_endpoint=args['es_endpoint'],
+            src_s3_bucket_name=args['bucket'],
+            src_s3_key=args['key']
+        )
+        print(json.dumps(result))
 
     @classmethod
     def generic_entry_point(
@@ -453,6 +616,56 @@ class VrpDiff():
         )
         return metadata
 
+    def generic_entry_point_import(
+        cls,
+        es_endpoint:str,
+        src_s3_bucket_name:str,
+        src_s3_key:str,
+    ):
+        '''
+        Invoked by cli_entry_point_import or aws_lambda_entry_point_import
+
+        Retrieve given vrp diff file from S3 and insert its records into ElasticSearch
+        '''
+        realtime_initial = time.time()
+        src_s3_path = Path(src_s3_key)
+        if not '.json' in src_s3_path.suffixes:
+            raise ValueError(F'Invoked upon upload of a file without .json in its Path().suffixes: {src_s3_path}')
+        s3 = boto3.client('s3')
+        tmpdir = tempfile.TemporaryDirectory()
+        diff_file_path = Path(tmpdir.name, src_s3_path.name)
+        rem = re.match(r'^(?P<datetime>\d{8}T\d{6}Z)', diff_file_path.name)
+        diff_datetime = dateutil.parser.parse(rem.group('datetime'))
+        es_client = cls.get_es_client(es_endpoint=es_endpoint)
+        es_index = cls.es_create_diff_index_for_datetime(index_datetime=diff_datetime, es_client=es_client)
+        s3.download_file(Bucket=src_s3_bucket_name, Key=src_s3_key, Filename=str(diff_file_path))
+        if diff_file_path.suffix == '.bz2':
+            diff_file = bz2.open(diff_file_path)
+        elif diff_file_path.suffix == '.json':
+            diff_file = open(diff_file_path)
+        else:
+            raise ValueError(F'Invoked upon a file with a Path().suffix I cannot open: {diff_file_path}')
+        diff_data = json.load(diff_file)
+        records_inserted = 0
+        for vrp_diff_record in diff_data['vrp_diffs']:
+            vrp_diff_obj = VrpDiff.from_json_obj(vrp_diff_record)
+            vrp_diff_obj.es_insert(
+                diff_datetime=diff_datetime,
+                es_client=es_client,
+                es_index=es_index,
+            )
+            records_inserted += 1
+        runtime = time.time() - realtime_initial
+        retdict = {
+            'records_inserted': records_inserted,
+            'runtime': runtime,
+        }
+        return retdict
+
 def aws_lambda_entry_point(event, context):
     retval = VrpDiff.aws_lambda_entry_point(event, context)
+    return retval
+
+def aws_lambda_entry_point_import(event, context):
+    retval = VrpDiff.aws_lambda_entry_point_import(event, context)
     return retval

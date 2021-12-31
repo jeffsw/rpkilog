@@ -1,0 +1,32 @@
+flowchart LR
+    aws_acm_certificate.es_prod
+    aws_cognito_identity_pool.es
+    aws_cognito_identity_pool_roles_attachment.es
+    aws_elasticsearch_domain.prod
+    aws_iam_policy.AmazonOpenSearchServiceCognitoAccess
+    aws_iam_role.es_cognito
+    aws_iam_role.es_master
+    aws_iam_role.es_limited
+    aws_cognito_user_pool.es
+    aws_cognito_user_pool_domain.es
+    %% AWS ES seems to configure these resources itself, as well as the Hosted UI.
+    aws_cognito_user_pool_client.es([aws_cognito_user_pool_client.es])
+
+    aws_elasticsearch_domain.prod --> aws_acm_certificate.es_prod
+    aws_elasticsearch_domain.prod --> aws_cognito_identity_pool.es
+    aws_elasticsearch_domain.prod --> aws_cognito_user_pool.es
+    aws_elasticsearch_domain.prod -- cognito_options.role_arn  --> aws_iam_role.es_cognito
+    aws_elasticsearch_domain.prod -- master_user --> aws_iam_role.es_master
+
+    aws_cognito_identity_pool.es -- region, user pool ID, app client ID --> aws_cognito_user_pool.es
+
+    aws_cognito_identity_pool_roles_attachment.es --> aws_cognito_identity_pool.es
+    aws_cognito_identity_pool_roles_attachment.es -- authenticated --> aws_iam_role.es_master
+    aws_cognito_identity_pool_roles_attachment.es -- unauthenticated --> aws_iam_role.es_limited
+
+    aws_cognito_user_pool_domain.es --- aws_cognito_user_pool.es
+
+    aws_iam_role.es_cognito --> aws_iam_policy.AmazonOpenSearchServiceCognitoAccess
+
+    %% AWS ES seems to configure these relationships itself?
+    aws_cognito_user_pool_client.es --- aws_cognito_user_pool.es
