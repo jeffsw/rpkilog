@@ -183,7 +183,7 @@ class VrpDiff():
                 'ta': self.get_ta(),
                 'old_roa': self.old_roa,
                 'new_roa': self.new_roa,
-            }
+            },
         )
         return result
 
@@ -194,7 +194,7 @@ class VrpDiff():
         '''
         old_roa = j.get('old_roa', None)
         new_roa = j.get('new_roa', None)
-        o = cls(cls, old_roa=old_roa, new_roa=new_roa)
+        o = cls(old_roa=old_roa, new_roa=new_roa)
         return o
 
     def get_asn(self):
@@ -242,6 +242,7 @@ class VrpDiff():
         Largely a wrapper around vrp_diff_list.  Writes result metadata and diff objects to output_file_path.
         Returns result metadata.
         '''
+        logger.info(F'Loading data from {str(old_file_path)} and {str(new_file_path)}')
         # load JSON data from both files
         if old_file_path.suffix == '.bz2':
             old_file = bz2.open(old_file_path)
@@ -311,6 +312,7 @@ class VrpDiff():
             diff_str = diff_obj.as_json_str()
             output_file.write('    ' + diff_str + separator)
         output_file.write(']\n}\n')
+        output_file.close()
         # return result_metadata
         return result_metadata
 
@@ -395,7 +397,7 @@ class VrpDiff():
         return retlist
 
     @classmethod
-    def es_create_diff_index_for_datetime(index_datetime:datetime, es_client:Elasticsearch) -> str:
+    def es_create_diff_index_for_datetime(cls, index_datetime:datetime, es_client:Elasticsearch) -> str:
         '''
         Ensure necessary index exists for vrp diff data created from new vrp cache at given datetime.
         Returns the datetime-appropriate index name, e.g. '198110'.
@@ -428,7 +430,11 @@ class VrpDiff():
         return index_name
 
     @classmethod
-    def get_es_client(cls, es_endpoint):
+    def get_es_client(
+        cls,
+        es_hostname:str,
+        es_port:int=443,
+    ):
         '''
         Move this to a utility module?
         '''
@@ -440,10 +446,9 @@ class VrpDiff():
             'es',
             aws_credentials.token,
         )
-        es_url = urlparse(es_endpoint)
         es_client = Elasticsearch(
             hosts = [
-                {'host': es_url.hostname, 'port': es_url.port or 443},
+                {'host': es_hostname, 'port': es_port},
             ],
             http_auth=aws_auth,
             use_ssl=True,
@@ -471,7 +476,7 @@ class VrpDiff():
             return
         # find the filename immediately before the one which invoked us
         for candidate_filename in sorted(summaries, reverse=True):
-            rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json$', candidate_filename)
+            rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', candidate_filename)
             if not rem:
                 logging.warning(F'{src_bucket_name} contained a file not matching our regex: {candidate_filename}')
                 continue
@@ -524,28 +529,61 @@ class VrpDiff():
 
     @classmethod
     def cli_entry_point(cls):
-        realtime_initial = time.time()
         logging.basicConfig(level='INFO')
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
-        ap.add_argument('--old-file', required=True, type=Path, help='Old input JSON file')
-        ap.add_argument('--new-file', required=True, type=Path, help='New input JSON file')
-        ap.add_argument('--overwrite', default=False, action='store_true', help='Overwrite existing result file')
-        ap.add_argument('--result-file', required=True, type=Path, help='Results are saved in JSON format to this file')
-        ap.add_argument('--log-level', type=str, help='Log level.  Try CRITICAL, ERROR, INFO (default) or DEBUG.')
+        ag1 = ap.add_argument_group('Use S3 for I/O to simulate AWS Lambda workflow')
+        ag1.add_argument('--summary-bucket', help='S3 bucket containing VRP cache summaries')
+        ag1.add_argument('--new-file-key', help='S3 key of "new" file key to use for generating a diff')
+        ag1.add_argument('--reprocess-all-s3-summary-files', action='store_true', help='Invoke diff process on all summary files')
+        ag1.add_argument('--diff-bucket', help='Destination S3 bucket for VRP cache diff output')
+        ag2 = ap.add_argument_group('Use local files')
+        ag2.add_argument('--old-file', type=Path, help='Path to the "old" file used for diffing')
+        ag2.add_argument('--new-file', type=Path, help='Path to the "new" file')
+        ag2.add_argument('--output-file', type=Path, help='Output file')
+        ag3 = ap.add_argument_group('Debug options')
+        ag3.add_argument('--debugger', default=False, action='store_true', help='If specified, invoke pdb.set_break()')
+        ag3.add_argument('--log-level', type=str, help='Log level.  Try CRITICAL, ERROR, INFO (default) or DEBUG.')
         args = vars(ap.parse_args())
-        if 'log_level' in args:
-            logger.setLevel(args['log_level'])
-        else:
-            logger.setLevel('INFO')
+        logger.setLevel(args.get('log_level', 'INFO'))
+        if args['debugger']:
+            import pdb
+            pdb.set_trace()
 
-        metadata = cls.vrp_diff_from_files(
-            old_file_path=args['old_file'],
-            new_file_path=args['new_file'],
-            output_file_path=args['result_file'],
-            output_file_mode='wt' if args['overwrite'] else 'xt',
-            realtime_initial=realtime_initial,
-        )
-        print(json.dumps(metadata))
+        if 'new_file_key' in args:
+            metadata = cls.generic_entry_point(
+                src_bucket_name=args['summary_bucket'],
+                new_file_key=args['new_file_key'],
+                diff_bucket_name=args['diff_bucket'],
+            )
+        elif 'old_file' in args:
+            metadata = cls.vrp_diff_from_files(
+                old_file_path=args['old_file'],
+                new_file_path=args['new_file'],
+                output_file_path=args['output_file'],
+                realtime_initial=time.time(),
+            )
+        elif 'reprocess_all_s3_summary_files' in args:
+            # Get a list of all the VRP cache diff summary files in S3 and invoke vrp_diff_from_files()
+            # on every one of those.  This is used for re-building all diffs from our summary archive.
+            files_processed = 0
+            summary_bucket = boto3.resource('s3').Bucket(args['summary_bucket'])
+            for buckobj in summary_bucket.objects.all():
+                rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', buckobj.key)
+                if not rem:
+                    logger.info(F'Skipping S3 key {buckobj.key} which does not match our regex')
+                    continue
+                logger.info(F'Invoking generic_entry_point() for summary key {buckobj.key}...')
+                metadata = cls.generic_entry_point(
+                    src_bucket_name=args['summary_bucket'],
+                    new_file_key=buckobj.key,
+                    diff_bucket_name=args['diff_bucket'],
+                )
+                print(json.dumps(metadata, indent=4, sort_keys=True))
+                files_processed += 1
+                logger.info(F'Completed processing summary number {files_processed} key {buckobj.key}')
+        else:
+            raise KeyError('Command line arguments missing')
+        print(json.dumps(metadata, indent=4, sort_keys=True))
 
     @classmethod
     def cli_entry_point_import(cls):
@@ -585,7 +623,7 @@ class VrpDiff():
             tmp_dir = Path('/tmp')
         s3 = boto3.client('s3')
         new_file_path = Path(tmp_dir, new_file_key)
-        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json$', new_file_key)
+        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', new_file_key)
         if not rem:
             raise ValueError(F'Input file name didnt match our regex: {new_file_key}')
         new_file_datestr = rem.group('datetime')
@@ -596,8 +634,11 @@ class VrpDiff():
             src_bucket_name=src_bucket_name,
             new_file_datetime=new_file_datetime,
         )
+        if old_file_key==None:
+            # If no old_file_key was found, we cannot produce a diff.
+            return
         old_file_path = Path(tmp_dir, old_file_key)
-        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json$', old_file_key)
+        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', old_file_key)
         if not rem:
             raise ValueError(F'Old file key didnt match our regex: {old_file_key}')
         logging.info(F'Downloading files from S3 bucket {src_bucket_name} {old_file_key} {new_file_key}')
@@ -614,8 +655,12 @@ class VrpDiff():
             Bucket=diff_bucket_name,
             Key=output_file_key,
         )
+        os.remove(old_file_path)
+        os.remove(new_file_path)
+        os.remove(output_file_path)
         return metadata
 
+    @classmethod
     def generic_entry_point_import(
         cls,
         es_endpoint:str,
@@ -636,9 +681,9 @@ class VrpDiff():
         diff_file_path = Path(tmpdir.name, src_s3_path.name)
         rem = re.match(r'^(?P<datetime>\d{8}T\d{6}Z)', diff_file_path.name)
         diff_datetime = dateutil.parser.parse(rem.group('datetime'))
-        es_client = cls.get_es_client(es_endpoint=es_endpoint)
+        es_client = cls.get_es_client(es_hostname=es_endpoint)
         es_index = cls.es_create_diff_index_for_datetime(index_datetime=diff_datetime, es_client=es_client)
-        s3.download_file(Bucket=src_s3_bucket_name, Key=src_s3_key, Filename=str(diff_file_path))
+        s3.download_file(Bucket=src_s3_bucket_name, Key=str(src_s3_key), Filename=str(diff_file_path))
         if diff_file_path.suffix == '.bz2':
             diff_file = bz2.open(diff_file_path)
         elif diff_file_path.suffix == '.json':
