@@ -30,7 +30,7 @@ class Roa():
         prefix:netaddr.IPNetwork,
         maxLength:int,
         ta:str,
-        expires:int,
+        expires:int=0,
         source_host:str=None,
         source_time:datetime=None,
     ):
