@@ -285,8 +285,8 @@ class ArchiveSiteCrawler():
         ap.add_argument('--s3-snapshot-summary-bucket-name', help='S3 bucket containing JSON summary files')
         ap.add_argument('--site-root', help='Root of web archive site')
         ap.add_argument('--start-date', type=dateutil.parser.parse, help='Do not download snapshots earlier than this date')
-        ap.add_argument('--job-max-runtime', type=float, help='Max runtime in seconds')
-        ap.add_argument('--job-max-downloads', default=2, type=int, help='Max files to download before stopping')
+        ap.add_argument('--job-max-runtime', type=float, help='Max runtime in seconds (default: unlimited)')
+        ap.add_argument('--job-max-downloads', default=2, type=int, help='Max files to download before stopping (default: 2)')
         args = vars(ap.parse_args())
         if 'job_max_runtime' in args:
             args['job_deadline'] = datetime.utcnow() + timedelta(seconds=args['job_max_runtime'])
