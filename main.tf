@@ -648,6 +648,16 @@ resource "aws_s3_bucket_notification" "vrp_cache_diff" {
         aws_lambda_permission.vrp_cache_diff
     ]
 }
+resource "aws_s3_bucket_notification" "vrp_diff_import" {
+    bucket = aws_s3_bucket.rpkilog_diff.id
+    lambda_function {
+        lambda_function_arn = aws_lambda_function.diff_import.arn
+        events = [ "s3:ObjectCreated:*" ]
+    }
+    depends_on = [
+        aws_lambda_permission.diff_import
+    ]
+}
 
 ##############################
 # EC2 Instance Profiles
