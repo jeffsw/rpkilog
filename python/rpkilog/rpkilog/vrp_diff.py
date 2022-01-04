@@ -34,6 +34,12 @@ class Roa():
         source_host:str=None,
         source_time:datetime=None,
     ):
+        if isinstance(asn, str) and asn.startswith('AS'):
+            # tolerate old VRP Cache files with asn="AS64496" instead of asn=64496
+            rem = re.match(r'^AS(?P<asn>\d+)$', asn)
+            if not rem:
+                raise ValueError(F'Cannot get integer ASN from asn argument passed as string: {asn}')
+            asn = int(rem.group(asn))
         if asn < 0 or asn > 2**32-1:
             raise ValueError(F'Invalid asn F{asn}')
         self.asn = int(asn)
