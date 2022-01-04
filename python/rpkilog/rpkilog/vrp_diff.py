@@ -2,7 +2,7 @@
 import argparse
 import boto3
 import bz2
-from datetime import datetime
+from datetime import datetime, timezone
 import dateutil.parser
 import getpass
 import logging
@@ -16,6 +16,7 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
+import elasticsearch.helpers
 from elasticsearch import Elasticsearch, RequestsHttpConnection
 import netaddr
 from requests_aws4auth import AWS4Auth
@@ -167,25 +168,47 @@ class VrpDiff():
         retstr += ' }'
         return retstr
 
-    def es_insert(self, es_client:Elasticsearch, index_name:str, dt:datetime):
+    def es_bulk_insertable_dict(self, es_index:str, diff_datetime:datetime) -> dict:
+        '''
+        Return a dict that may be passed to elasticsearch.helpers.bulk() to insert this diff object.
+        '''
+        body = self.es_insertable(diff_datetime=diff_datetime)
+        resdict = {
+            '_op_type': 'create',
+            '_index': es_index,
+            **body
+        }
+        return resdict
+
+    def es_insert(self, es_client:Elasticsearch, es_index:str, diff_datetime:datetime):
         '''
         Insert object into given ElasticSearch index
         '''
+        body = self.es_insertable(diff_datetime=diff_datetime)
         result = es_client.index(
-            index=index_name,
+            index=es_index,
             op_type='create',
-            body={
-                'observation_timestamp': dt.strftime('%Y%m%dT%H%M%SZ'),
-                'verb': self.verb,
-                'prefix': self.get_prefix(),
-                'maxLength': self.get_maxLength(),
-                'asn': self.get_asn(),
-                'ta': self.get_ta(),
-                'old_roa': self.old_roa,
-                'new_roa': self.new_roa,
-            },
+            body=body,
         )
         return result
+
+    def es_insertable(self, diff_datetime:datetime) -> dict:
+        'Return a dict which may be inserted into ElasticSearch'
+        body={
+            'observation_timestamp': diff_datetime.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'verb': self.verb,
+            'prefix': self.get_prefix(),
+            'maxLength': self.get_maxLength(),
+            'asn': self.get_asn(),
+            'ta': self.get_ta(),
+        }
+        if self.old_roa:
+            body['old_expires'] = datetime.fromtimestamp(self.old_roa.expires, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            body['old_roa'] = self.old_roa.as_json_obj()
+        if self.new_roa:
+            body['new_expires'] = datetime.fromtimestamp(self.new_roa.expires, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            body['new_roa'] = self.new_roa.as_json_obj()
+        return body
 
     @classmethod
     def from_json_obj(cls, j:dict):
@@ -193,39 +216,43 @@ class VrpDiff():
         Instantiate a VrpDiff object from its JSON representation
         '''
         old_roa = j.get('old_roa', None)
+        if old_roa:
+            old_roa = Roa(**old_roa)
         new_roa = j.get('new_roa', None)
+        if new_roa:
+            new_roa = Roa(**new_roa)
         o = cls(old_roa=old_roa, new_roa=new_roa)
         return o
 
-    def get_asn(self):
+    def get_asn(self) -> int:
         if self.new_roa!=None:
-            return self.new_roa['asn']
+            return self.new_roa.asn
         elif self.old_roa!=None:
-            return self.old_roa['asn']
+            return self.old_roa.asn
         else:
             raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
 
-    def get_maxLength(self):
+    def get_maxLength(self) -> int:
         if self.new_roa!=None:
-            return self.new_roa['maxLength']
+            return self.new_roa.maxLength
         elif self.old_roa!=None:
-            return self.old_roa['maxLength']
+            return self.old_roa.maxLength
         else:
             raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
 
-    def get_prefix(self):
+    def get_prefix(self) -> str:
         if self.new_roa!=None:
-            return self.new_roa['prefix']
+            return str(self.new_roa.prefix)
         elif self.old_roa!=None:
-            return self.old_roa['prefix']
+            return str(self.old_roa.prefix)
         else:
             raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
 
-    def get_ta(self):
+    def get_ta(self) -> str:
         if self.new_roa!=None:
-            return self.new_roa['ta']
+            return self.new_roa.ta
         elif self.old_roa!=None:
-            return self.old_roa['ta']
+            return self.old_roa.ta
         else:
             raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
 
@@ -407,7 +434,9 @@ class VrpDiff():
             index=index_name,
             body={
                 'settings': {
-                    'number_of_shards': 5,
+                    'number_of_replicas': 0,
+                    'number_of_shards': 3,
+                    #'refresh_interval': 60,
                 },
                 'mappings': {
                     'properties': {
@@ -420,6 +449,14 @@ class VrpDiff():
                         'maxLength': { 'type': 'integer' },
                         'asn': { 'type': 'long' },
                         'ta': { 'type': 'keyword' },
+                        'old_expires': {
+                            'type': 'date',
+                            'format': 'strict_date_time_no_millis'
+                        },
+                        'new_expires': {
+                            'type': 'date',
+                            'format': 'strict_date_time_no_millis'
+                        },
                         'old_roa': { 'type': 'object' },
                         'new_roa': { 'type': 'object' },
                     }
@@ -454,6 +491,7 @@ class VrpDiff():
             use_ssl=True,
             verify_certs=True,
             connection_class=RequestsHttpConnection,
+            http_compress=True,
         )
         return es_client
 
@@ -591,6 +629,7 @@ class VrpDiff():
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--bucket', help='S3 bucket containing diff file')
         ap.add_argument('--key', type=Path, help='S3 key of diff file')
+        ap.add_argument('--all-files', action='store_true', help='Import all diff files found in the S3 bucket.  Used to re-populate database after a wipe.')
         ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
@@ -599,12 +638,26 @@ class VrpDiff():
             import pdb
             pdb.set_trace()
         logger.setLevel(args.get('log_level', 'INFO'))
-        result = cls.generic_entry_point_import(
-            es_endpoint=args['es_endpoint'],
-            src_s3_bucket_name=args['bucket'],
-            src_s3_key=args['key']
-        )
-        print(json.dumps(result))
+        if args.get('all_files', False):
+            # List files in the S3 bucket.
+            # Invoke cls.generic_entry_point_import() on every one.
+            diff_bucket = boto3.resource('s3').Bucket(args['bucket'])
+            import_file_count = 0
+            for buckobj in diff_bucket.objects.all():
+                result = cls.generic_entry_point_import(
+                    es_endpoint=args['es_endpoint'],
+                    src_s3_bucket_name=args['bucket'],
+                    src_s3_key=buckobj.key,
+                )
+                import_file_count += 1
+                print(F'Import file count {import_file_count} name {buckobj.key} result: {json.dumps(result)}')
+        else:
+            result = cls.generic_entry_point_import(
+                es_endpoint=args['es_endpoint'],
+                src_s3_bucket_name=args['bucket'],
+                src_s3_key=args['key']
+            )
+            print(json.dumps(result))
 
     @classmethod
     def generic_entry_point(
@@ -666,12 +719,15 @@ class VrpDiff():
         es_endpoint:str,
         src_s3_bucket_name:str,
         src_s3_key:str,
+        es_bulk_batch_size:int=None,
     ):
         '''
         Invoked by cli_entry_point_import or aws_lambda_entry_point_import
 
         Retrieve given vrp diff file from S3 and insert its records into ElasticSearch
         '''
+        if es_bulk_batch_size==None:
+            es_bulk_batch_size = 1000
         realtime_initial = time.time()
         src_s3_path = Path(src_s3_key)
         if not '.json' in src_s3_path.suffixes:
@@ -691,15 +747,37 @@ class VrpDiff():
         else:
             raise ValueError(F'Invoked upon a file with a Path().suffix I cannot open: {diff_file_path}')
         diff_data = json.load(diff_file)
+        #BEGIN insert records
         records_inserted = 0
-        for vrp_diff_record in diff_data['vrp_diffs']:
-            vrp_diff_obj = VrpDiff.from_json_obj(vrp_diff_record)
-            vrp_diff_obj.es_insert(
-                diff_datetime=diff_datetime,
-                es_client=es_client,
-                es_index=es_index,
-            )
-            records_inserted += 1
+        if es_bulk_batch_size > 1:
+            for batch_base_index in range(0, len(diff_data['vrp_diffs']), es_bulk_batch_size):
+                bulk_actions = []
+                if batch_base_index + es_bulk_batch_size <= len(diff_data['vrp_diffs']):
+                    batch_max_index = batch_base_index + es_bulk_batch_size
+                else:
+                    batch_max_index = len(diff_data['vrp_diffs'])
+                for vrpd_index in range(batch_base_index, batch_max_index):
+                    vrpd_record = diff_data['vrp_diffs'][vrpd_index]
+                    vrpd_obj = VrpDiff.from_json_obj(vrpd_record)
+                    insertable = vrpd_obj.es_bulk_insertable_dict(
+                        diff_datetime=diff_datetime,
+                        es_index=es_index,
+                    )
+                    bulk_actions.append(insertable)
+                successful_actions, errors = elasticsearch.helpers.bulk(client=es_client, actions=bulk_actions)
+                records_inserted += successful_actions
+                for e in errors:
+                    logger.error(F'ElasticSearch bulk insert error: e')
+        else:
+            for vrp_diff_record in diff_data['vrp_diffs']:
+                vrp_diff_obj = VrpDiff.from_json_obj(vrp_diff_record)
+                vrp_diff_obj.es_insert(
+                    diff_datetime=diff_datetime,
+                    es_client=es_client,
+                    es_index=es_index,
+                )
+                records_inserted += 1
+        #DONE inserting records
         runtime = time.time() - realtime_initial
         retdict = {
             'records_inserted': records_inserted,
