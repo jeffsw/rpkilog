@@ -7,6 +7,7 @@ import dateutil.parser
 import getpass
 import logging
 import json
+import operator
 import os
 from pathlib import Path
 import re
@@ -178,27 +179,44 @@ class VrpDiff():
         '''
         Return a dict that may be passed to elasticsearch.helpers.bulk() to insert this diff object.
         '''
-        body = self.es_insertable(diff_datetime=diff_datetime)
+        body = self.es_insertable_body(diff_datetime=diff_datetime)
+        es_doc_id = self.es_id(diff_datetime=diff_datetime)
         resdict = {
             '_op_type': 'create',
             '_index': es_index,
-            **body
+            '_id': es_doc_id,
+            '_source': body,
         }
         return resdict
+
+    def es_id(self, diff_datetime:datetime) -> str:
+        '''
+        Return a string usable as the ES DocumentID (primary key) for this diff.
+        '''
+        es_doc_id = '+'.join(map(str, [
+            int(diff_datetime.timestamp()),
+            self.get_prefix(),
+            self.get_maxLength(),
+            self.get_asn(),
+            self.get_ta(),
+        ]))
+        return(es_doc_id)
 
     def es_insert(self, es_client:Elasticsearch, es_index:str, diff_datetime:datetime):
         '''
         Insert object into given ElasticSearch index
         '''
-        body = self.es_insertable(diff_datetime=diff_datetime)
+        body = self.es_insertable_body(diff_datetime=diff_datetime)
+        es_doc_id = self.es_id(diff_datetime=diff_datetime)
         result = es_client.index(
             index=es_index,
             op_type='create',
             body=body,
+            id=es_doc_id,
         )
         return result
 
-    def es_insertable(self, diff_datetime:datetime) -> dict:
+    def es_insertable_body(self, diff_datetime:datetime) -> dict:
         'Return a dict which may be inserted into ElasticSearch'
         body={
             'observation_timestamp': diff_datetime.strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -635,7 +653,10 @@ class VrpDiff():
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--bucket', help='S3 bucket containing diff file')
         ap.add_argument('--key', type=Path, help='S3 key of diff file')
-        ap.add_argument('--all-files', action='store_true', help='Import all diff files found in the S3 bucket.  Used to re-populate database after a wipe.')
+        ap.add_argument('--all-files', action='store_true',
+            help='Import all diff files found in the S3 bucket.  Used to re-populate database after a wipe.  Youngest files first.'
+        )
+        ap.add_argument('--all-limit', type=int, help='Max number of files to import when using -all-files')
         ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
@@ -646,17 +667,22 @@ class VrpDiff():
         logger.setLevel(args.get('log_level', 'INFO'))
         if args.get('all_files', False):
             # List files in the S3 bucket.
-            # Invoke cls.generic_entry_point_import() on every one.
+            # Invoke cls.generic_entry_point_import() on every one, youngest first (reverse sort order).
             diff_bucket = boto3.resource('s3').Bucket(args['bucket'])
             import_file_count = 0
-            for buckobj in diff_bucket.objects.all():
+            diff_bucket_objects = sorted(diff_bucket.objects.all(), key=operator.attrgetter('key'), reverse=True)
+            for buckobj in diff_bucket_objects:
+                print(F'Importing {buckobj.key}')
                 result = cls.generic_entry_point_import(
                     es_endpoint=args['es_endpoint'],
                     src_s3_bucket_name=args['bucket'],
                     src_s3_key=buckobj.key,
                 )
                 import_file_count += 1
-                print(F'Import file count {import_file_count} name {buckobj.key} result: {json.dumps(result)}')
+                print(F'Imported file count {import_file_count} name {buckobj.key} result: {json.dumps(result)}')
+                if args.get('all_limit', 1000000000) <= import_file_count:
+                    # reached --all-limit max file count
+                    break
         else:
             result = cls.generic_entry_point_import(
                 es_endpoint=args['es_endpoint'],
