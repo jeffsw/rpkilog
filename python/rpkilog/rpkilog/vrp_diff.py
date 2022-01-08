@@ -372,13 +372,11 @@ class VrpDiff():
         Given two lists of VRPs, return a list of VrpDiff objects.
         EMPTIES THE INPUT LISTS as a side-effect.  Pass copies if you don't want that!
 
-        This function assumes both ROA lists are sorted by prefix, then by ASN.  If they're not, it
-        will raise an error.  Such an error would indicate the implementation needs to support
-        un-sorted input, or caller needs to sort the input before invoking this method.
-
         SCALE: This could return a generator which reads the input files (or lists) sequentially and
         generates results as-needed.  It would be possible to scale up to a much larger VRP Cache
-        without using much RAM.
+        without using much RAM.  However, we need to sort the input, because in the real world, input
+        VRP cache files had a different (or inconsistent?) sort order in cases when a prefix had multiple
+        ROAs with different prefix-lengths.  That would complicate the generator a little.
         '''
         retlist = []
         count_delete = 0
@@ -389,6 +387,15 @@ class VrpDiff():
         initial_count_new = len(new_roas)
         # Add one to this for the benefit of the first loop iteration
         input_roa_count = len(old_roas) + len(new_roas) + 1
+        # Convert the input lists, which are dicts, to Roa objects.
+        for idx, roa_dict in enumerate(old_roas):
+            old_roas[idx] = Roa(**roa_dict)
+        for idx, roa_dict in enumerate(new_roas):
+            new_roas[idx] = Roa(**roa_dict)
+        # Sort the input lists
+        old_roas = sorted(old_roas, key=Roa.sortable)
+        new_roas = sorted(new_roas, key=Roa.sortable)
+
         while len(old_roas) + len(new_roas) > 0:
             # Every time through the loop, we must pop one entry from one or both input lists.
             # If we don't, we're stuck, and that's a bug.  That's why we check.
@@ -396,8 +403,8 @@ class VrpDiff():
                 raise Exception('STUCK not making progress consuming input ROAs')
             input_roa_count = len(old_roas) + len(new_roas)
             # If either old_roas or new_roas is empty, old_next or new_next will be None.
-            old_next = Roa(**old_roas[0]) if len(old_roas) else None
-            new_next = Roa(**new_roas[0]) if len(new_roas) else None
+            old_next = old_roas[0] if len(old_roas) else None
+            new_next = new_roas[0] if len(new_roas) else None
             # If first entry in both lists have identical (ta, prefix, maxLength, asn) we'll pop both
             # lists and dispose of both items (will become an UNCHANGED or REPLACE diff).
             #
@@ -594,6 +601,7 @@ class VrpDiff():
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ag1 = ap.add_argument_group('Use S3 for I/O to simulate AWS Lambda workflow')
         ag1.add_argument('--summary-bucket', help='S3 bucket containing VRP cache summaries')
+        ag1.add_argument('--summary-cache', default=None, type=Path, help='Path to summary cache directory on local filesystem')
         ag1.add_argument('--new-file-key', help='S3 key of "new" file key to use for generating a diff')
         ag1.add_argument('--reprocess-all-s3-summary-files', action='store_true', help='Invoke diff process on all summary files')
         ag1.add_argument('--diff-bucket', help='Destination S3 bucket for VRP cache diff output')
@@ -615,6 +623,7 @@ class VrpDiff():
                 src_bucket_name=args['summary_bucket'],
                 new_file_key=args['new_file_key'],
                 diff_bucket_name=args['diff_bucket'],
+                summary_cache=args['summary_cache'],
             )
         elif 'old_file' in args:
             metadata = cls.vrp_diff_from_files(
@@ -638,6 +647,7 @@ class VrpDiff():
                     src_bucket_name=args['summary_bucket'],
                     new_file_key=buckobj.key,
                     diff_bucket_name=args['diff_bucket'],
+                    summary_cache=args['summary_cache'],
                 )
                 print(json.dumps(metadata, indent=4, sort_keys=True))
                 files_processed += 1
@@ -696,6 +706,7 @@ class VrpDiff():
         src_bucket_name:str,
         new_file_key:str,
         diff_bucket_name:str,
+        summary_cache:Path=None,
         tmp_dir:Path=None,
     ):
         '''
@@ -703,10 +714,10 @@ class VrpDiff():
         '''
         realtime_initial = time.time()
         logging.info(F'Invoked for new_file_key={new_file_key}')
+        s3 = boto3.client('s3')
         if tmp_dir==None:
             tmp_dir = Path('/tmp')
-        s3 = boto3.client('s3')
-        new_file_path = Path(tmp_dir, new_file_key)
+
         rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', new_file_key)
         if not rem:
             raise ValueError(F'Input file name didnt match our regex: {new_file_key}')
@@ -721,26 +732,39 @@ class VrpDiff():
         if old_file_key==None:
             # If no old_file_key was found, we cannot produce a diff.
             return
-        old_file_path = Path(tmp_dir, old_file_key)
-        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', old_file_key)
-        if not rem:
-            raise ValueError(F'Old file key didnt match our regex: {old_file_key}')
-        logging.info(F'Downloading files from S3 bucket {src_bucket_name} {old_file_key} {new_file_key}')
-        s3.download_file(Bucket=src_bucket_name, Key=old_file_key, Filename=str(old_file_path))
-        s3.download_file(Bucket=src_bucket_name, Key=new_file_key, Filename=str(new_file_path))
+
+        if summary_cache:
+            new_file_path = Path(summary_cache, new_file_key)
+            old_file_path = Path(summary_cache, old_file_key)
+        else:
+            new_file_path = Path(tmp_dir, new_file_key)
+            old_file_path = Path(tmp_dir, old_file_key)
+        if summary_cache and old_file_path.exists():
+            logging.info(F'Using cache to access {old_file_key}')
+        else:
+            logging.info(F'Downloading {old_file_key} from S3')
+            s3.download_file(Bucket=src_bucket_name, Key=old_file_key, Filename=str(old_file_path))
+        if summary_cache and new_file_path.exists():
+            logging.info(F'Using cache to access {new_file_key}')
+        else:
+            logging.info(F'Downloading {new_file_key} from S3')
+            s3.download_file(Bucket=src_bucket_name, Key=new_file_key, Filename=str(new_file_path))
+
         metadata = cls.vrp_diff_from_files(
             old_file_path=old_file_path,
             new_file_path=new_file_path,
             output_file_path=output_file_path,
             realtime_initial=realtime_initial,
         )
+        logging.info(F'Uploading vrp diff {output_file_key} to S3')
         s3.upload_file(
             Filename=str(output_file_path),
             Bucket=diff_bucket_name,
             Key=output_file_key,
         )
-        os.remove(old_file_path)
-        os.remove(new_file_path)
+        if summary_cache==None:
+            os.remove(old_file_path)
+            os.remove(new_file_path)
         os.remove(output_file_path)
         return metadata
 
