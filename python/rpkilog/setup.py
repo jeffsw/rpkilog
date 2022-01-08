@@ -14,8 +14,8 @@ setup(
     packages = find_packages(),
     install_requires = [
         'boto3',
-        'elasticsearch',
         'netaddr',
+        'opensearch-py',
         'psutil',
         'pyyaml',
         'requests',

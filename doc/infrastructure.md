@@ -26,7 +26,11 @@ Manual processes involved in setting up our ES include:
         * `role/es_master` so Cognito users in the Cognito `es_master` group will have full ES access
         * `role/superuser` and other roles used by Cognito users (if any)
         * `user/jeffsw6@gmail.com` and other individual people
-    * Add to ES `logstash` the IAM roles: `lambda_vrp_diff_import`
+    * Add to ES `logstash` the IAM roles:
+        * `ec2_cron`
+        * `lambda_vrp_diff_import`
+    * Edit the `logstash` role:
+        * Add `diff-*` to the index permissions w/ crud & create_index.
     * Create ES `anonymous` role and add IAM role mapping from IAM role `anonymous_web`
 * (!) I've had to `terraform import aws_cognito_user_pool_client.es us-east-1_<pool_-_id>/<client_id>`.
 

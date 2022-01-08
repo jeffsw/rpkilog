@@ -15,11 +15,10 @@ import socket
 import sys
 import tempfile
 import time
-from urllib.parse import urlparse
 
-import elasticsearch.helpers
-from elasticsearch import Elasticsearch, RequestsHttpConnection
 import netaddr
+import opensearchpy.helpers
+from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 
 logger = logging.getLogger(__name__)
@@ -202,7 +201,7 @@ class VrpDiff():
         ]))
         return(es_doc_id)
 
-    def es_insert(self, es_client:Elasticsearch, es_index:str, diff_datetime:datetime):
+    def es_insert(self, es_client:OpenSearch, es_index:str, diff_datetime:datetime):
         '''
         Insert object into given ElasticSearch index
         '''
@@ -448,7 +447,7 @@ class VrpDiff():
         return retlist
 
     @classmethod
-    def es_create_diff_index_for_datetime(cls, index_datetime:datetime, es_client:Elasticsearch) -> str:
+    def es_create_diff_index_for_datetime(cls, index_datetime:datetime, es_client:OpenSearch) -> str:
         '''
         Ensure necessary index exists for vrp diff data created from new vrp cache at given datetime.
         Returns the datetime-appropriate index name, e.g. '198110'.
@@ -507,7 +506,7 @@ class VrpDiff():
             'es',
             aws_credentials.token,
         )
-        es_client = Elasticsearch(
+        es_client = OpenSearch(
             hosts = [
                 {'host': es_hostname, 'port': es_port},
             ],
@@ -796,7 +795,7 @@ class VrpDiff():
                         es_index=es_index,
                     )
                     bulk_actions.append(insertable)
-                successful_actions, errors = elasticsearch.helpers.bulk(client=es_client, actions=bulk_actions)
+                successful_actions, errors = opensearchpy.helpers.bulk(client=es_client, actions=bulk_actions)
                 records_inserted += successful_actions
                 for e in errors:
                     logger.error(F'ElasticSearch bulk insert error: e')
