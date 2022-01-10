@@ -208,7 +208,62 @@ resource "aws_iam_role" "lambda_vrp_cache_diff" {
     assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
     inline_policy {
         name = "lambda_vrp_cache_diff"
-        policy = file("aws_iam/lambda_vrp_cache_diff.json")
+        policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:GetObjectTagging",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::rpkilog-snapshot-summary",
+                "arn:aws:s3:::rpkilog-snapshot-summary/*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:GetObjectTagging",
+                "s3:ListBucket",
+                "s3:PutObject",
+                "s3:PutObjectAcl",
+                "s3:PutObjectRetention",
+                "s3:PutObjectTagging"
+            ],
+            "Resource": [
+                "arn:aws:s3:::rpkilog-diff",
+                "arn:aws:s3:::rpkilog-diff/*"
+            ]
+        },
+        {
+            "Sid": "DeadLetterQueue",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:SendMessage"
+            ],
+            "Resource": [
+                "${aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn}"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:*:*"
+            ]
+        }
+    ]
+}
+POLICY
     }
 }
 
@@ -344,6 +399,20 @@ resource "aws_iam_group_membership" "es_limited" {
 }
 
 ##############################
+# SNS
+resource "aws_sns_topic" "lambda_dead_letter_queue_for_diff" {
+    name = "lambda_dead_letter_queue_for_diff"
+}
+
+##############################
+# SQS
+resource "aws_sqs_queue" "lambda_dlq_for_vrp_cache_diff" {
+    name = "lambda_dlq_for_vrp_cache_diff"
+    max_message_size = 2048
+    message_retention_seconds = 1209600 # 14 days
+}
+
+##############################
 # Cognito
 resource "aws_cognito_user_pool" "es" {
     name = "es"
@@ -387,6 +456,9 @@ resource "aws_cognito_identity_pool" "es" {
         client_id = aws_cognito_user_pool_client.es.id
         provider_name = aws_cognito_user_pool.es.endpoint
         server_side_token_check = true
+    }
+    lifecycle {
+        ignore_changes = [ cognito_identity_providers ]
     }
 }
 resource "aws_cognito_identity_pool_roles_attachment" "es" {
@@ -589,6 +661,9 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     #     subnet_ids = [ for x in data.aws_subnet_ids.default.ids : x ]
     #     security_group_ids = [ aws_default_security_group.default.id ]
     # }
+    dead_letter_config {
+        target_arn = aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn
+    }
     lifecycle {
         # Never update the lambda deployment package.  We use another tool for that, not Terraform.
         ignore_changes = [ filename ]
@@ -648,16 +723,18 @@ resource "aws_s3_bucket_notification" "vrp_cache_diff" {
         aws_lambda_permission.vrp_cache_diff
     ]
 }
-resource "aws_s3_bucket_notification" "vrp_diff_import" {
-    bucket = aws_s3_bucket.rpkilog_diff.id
-    lambda_function {
-        lambda_function_arn = aws_lambda_function.diff_import.arn
-        events = [ "s3:ObjectCreated:*" ]
-    }
-    depends_on = [
-        aws_lambda_permission.diff_import
-    ]
-}
+
+# DISABLED while developing & troubleshooting the pipeline.  Don't want it automatically importing yet.
+# resource "aws_s3_bucket_notification" "vrp_diff_import" {
+#     bucket = aws_s3_bucket.rpkilog_diff.id
+#     lambda_function {
+#         lambda_function_arn = aws_lambda_function.diff_import.arn
+#         events = [ "s3:ObjectCreated:*" ]
+#     }
+#     depends_on = [
+#         aws_lambda_permission.diff_import
+#     ]
+# }
 
 ##############################
 # EC2 Instance Profiles

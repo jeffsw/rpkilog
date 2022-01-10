@@ -36,6 +36,16 @@
             ]
         },
         {
+            "Sid": "ElasticSearch",
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:*:*:*"
+            ]
+        },
+        {
             "Effect": "Allow",
             "Action": [
                 "logs:CreateLogGroup",
