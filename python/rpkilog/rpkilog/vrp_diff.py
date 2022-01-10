@@ -515,7 +515,7 @@ class VrpDiff():
         return index_name
 
     @classmethod
-    def get_datetime_from_diff_filename(cls, summary_filename:str) -> datetime:
+    def get_datetime_from_diff_filename(cls, summary_filename:str, with_timezone:bool=True) -> datetime:
         '''
         Returns a datetime object or raises a ValueError if the filename does not match our regex.
         '''
@@ -768,6 +768,11 @@ class VrpDiff():
             import pdb
             pdb.set_trace()
         logger.setLevel(args.get('log_level', 'INFO'))
+        for argname in ['all_date_min', 'all_date_max']:
+            if argname in args:
+                # Add time zone information to the argument
+                args[argname] = args[argname].replace(tzinfo=timezone.utc)
+
         if args.get('all_files', False):
             # List files in the S3 bucket.
             # Invoke cls.generic_entry_point_import() on every one, youngest first (reverse sort order).
