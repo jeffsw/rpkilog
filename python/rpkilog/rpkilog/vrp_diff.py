@@ -181,7 +181,7 @@ class VrpDiff():
         body = self.es_insertable_body(diff_datetime=diff_datetime)
         es_doc_id = self.es_id(diff_datetime=diff_datetime)
         resdict = {
-            '_op_type': 'create',
+            '_op_type': 'index',
             '_index': es_index,
             '_id': es_doc_id,
             '_source': body,
@@ -497,6 +497,17 @@ class VrpDiff():
         return index_name
 
     @classmethod
+    def get_diff_filename_from_summary_filename(cls, summary_filename:str, diff_bzip2:bool=True):
+        summary_filename = str(summary_filename)
+        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', summary_filename)
+        if not rem:
+            raise ValueError(F'Input file name didnt match our regex: {summary_filename}')
+        diff_filename = F'{rem.group("datetime")}.vrpdiff.json'
+        if diff_bzip2:
+            diff_filename += '.bz2'
+        return diff_filename
+
+    @classmethod
     def get_es_client(
         cls,
         es_hostname:str,
@@ -504,15 +515,24 @@ class VrpDiff():
     ):
         '''
         Move this to a utility module?
+
+        FIXME: hard-coded AWS region
         '''
         aws_credentials = boto3.Session().get_credentials()
-        aws_auth = AWS4Auth(
-            aws_credentials.access_key,
-            aws_credentials.secret_key,
-            'us-east-1',
-            'es',
-            aws_credentials.token,
-        )
+        try:
+            aws_auth = AWS4Auth(
+                region='us-east-1',
+                service='es',
+                refreshable_credentials=aws_credentials
+            )
+        except:
+            aws_auth = AWS4Auth(
+                aws_credentials.access_key,
+                aws_credentials.secret_key,
+                'us-east-1',
+                'es',
+                aws_credentials.token,
+            )
         es_client = OpenSearch(
             hosts = [
                 {'host': es_hostname, 'port': es_port},
@@ -601,10 +621,13 @@ class VrpDiff():
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ag1 = ap.add_argument_group('Use S3 for I/O to simulate AWS Lambda workflow')
         ag1.add_argument('--summary-bucket', help='S3 bucket containing VRP cache summaries')
+        ag1.add_argument('--diff-bucket', help='Destination S3 bucket for VRP cache diff output')
         ag1.add_argument('--summary-cache', default=None, type=Path, help='Path to summary cache directory on local filesystem')
         ag1.add_argument('--new-file-key', help='S3 key of "new" file key to use for generating a diff')
         ag1.add_argument('--reprocess-all-s3-summary-files', action='store_true', help='Invoke diff process on all summary files')
-        ag1.add_argument('--diff-bucket', help='Destination S3 bucket for VRP cache diff output')
+        ag1.add_argument('--invoke-lambda-on-all-s3-summary-files', type=str, help='Invoke given lambda (asynchronously) on all summary files')
+        ag1.add_argument('--reprocess-max-files', type=int, help='Stop reprocessing after first N files')
+        ag1.add_argument('--reprocess-skip-existing-diffs', action='store_true', help='Do not reprocess files that would overwrite existing diffs')
         ag2 = ap.add_argument_group('Use local files')
         ag2.add_argument('--old-file', type=Path, help='Path to the "old" file used for diffing')
         ag2.add_argument('--new-file', type=Path, help='Path to the "new" file')
@@ -625,6 +648,7 @@ class VrpDiff():
                 diff_bucket_name=args['diff_bucket'],
                 summary_cache=args['summary_cache'],
             )
+            print(json.dumps(metadata, indent=4, sort_keys=True))
         elif 'old_file' in args:
             metadata = cls.vrp_diff_from_files(
                 old_file_path=args['old_file'],
@@ -632,29 +656,66 @@ class VrpDiff():
                 output_file_path=args['output_file'],
                 realtime_initial=time.time(),
             )
+            print(json.dumps(metadata, indent=4, sort_keys=True))
         elif 'reprocess_all_s3_summary_files' in args:
             # Get a list of all the VRP cache diff summary files in S3 and invoke vrp_diff_from_files()
             # on every one of those.  This is used for re-building all diffs from our summary archive.
             files_processed = 0
+            diff_bucket = boto3.resource('s3').Bucket(args['diff_bucket'])
             summary_bucket = boto3.resource('s3').Bucket(args['summary_bucket'])
             for buckobj in summary_bucket.objects.all():
                 rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', buckobj.key)
                 if not rem:
                     logger.info(F'Skipping S3 key {buckobj.key} which does not match our regex')
                     continue
-                logger.info(F'Invoking generic_entry_point() for summary key {buckobj.key}...')
-                metadata = cls.generic_entry_point(
-                    src_bucket_name=args['summary_bucket'],
-                    new_file_key=buckobj.key,
-                    diff_bucket_name=args['diff_bucket'],
-                    summary_cache=args['summary_cache'],
-                )
-                print(json.dumps(metadata, indent=4, sort_keys=True))
+                if args.get('reprocess_skip_existing_diffs', False):
+                    diff_filename = cls.get_diff_filename_from_summary_filename(summary_filename=buckobj.key)
+                    # If a diff file already exists for this summary, skip this invocation
+                    try:
+                        diff_bucket.Object(key=diff_filename).load()
+                        logger.info(F'SKIPPING_LAMBDA on {buckobj.key} because {diff_filename} already exists')
+                        continue
+                    except:
+                        # Exception indicates the file was not found in S3.
+                        pass
+                if args.get('invoke_lambda_on_all_s3_summary_files', False):
+                    logger.info(F'INVOKING_LAMBDA on {buckobj.key}')
+                    invoke_payload = {
+                        'Records': [
+                            {
+                                's3': {
+                                    'bucket': {
+                                        'name': str(args['summary_bucket'])
+                                    },
+                                    'object': {
+                                        'key': str(buckobj.key)
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                    invoke_result = boto3.client('lambda').invoke(
+                        FunctionName=args['invoke_lambda_on_all_s3_summary_files'],
+                        InvocationType='Event',
+                        Payload=json.dumps(invoke_payload),
+                    )
+                    logger.info(F'LAMBDA_ASYNC_INVOKE_RESULT StatusCode {invoke_result["StatusCode"]} payload: {invoke_result["Payload"].read()}')
+                else:
+                    logger.info(F'Invoking generic_entry_point() for summary key {buckobj.key}...')
+                    metadata = cls.generic_entry_point(
+                        src_bucket_name=args['summary_bucket'],
+                        new_file_key=buckobj.key,
+                        diff_bucket_name=args['diff_bucket'],
+                        summary_cache=args['summary_cache'],
+                    )
+                    print(json.dumps(metadata, indent=4, sort_keys=True))
                 files_processed += 1
                 logger.info(F'Completed processing summary number {files_processed} key {buckobj.key}')
+                if args.get('reprocess_max_files', 1000000000) <= files_processed:
+                    logger.info(F'Reprocessed max number of files per CLI.  Job complete.')
+                    break
         else:
             raise KeyError('Command line arguments missing')
-        print(json.dumps(metadata, indent=4, sort_keys=True))
 
     @classmethod
     def cli_entry_point_import(cls):
