@@ -280,6 +280,24 @@ class VrpDiff():
             raise KeyError('Missing both old_roa and new_roa.  Invalid object!')
 
     @classmethod
+    def limit_cpu_sleep(cls, invocation_time:float, limit:float):
+        '''
+        Sleep long enough to bring our CPU utilization (usr+sys) below given fraction of real run-time.
+        For example, if we have run for 30 seconds and used 4 seconds usr+sys, and limit is 0.10 (10%),
+        sleep for 10 seconds.
+        Return immediately if no sleep is necessary.
+        '''
+        now = time.time()
+        realtime_elapsed = now - invocation_time
+        cpu_budget = realtime_elapsed * limit
+        times = os.times()
+        cpu_used = times.user + times.system
+        if cpu_budget < cpu_used:
+            sleep_for = cpu_used - cpu_budget
+            logger.info(F'LIMIT_CPU sleeping for {sleep_for} to stay within CPU budget of {limit*100}%')
+            time.sleep(sleep_for)
+
+    @classmethod
     def vrp_diff_from_files(
         cls,
         old_file_path:Path,
@@ -719,6 +737,7 @@ class VrpDiff():
 
     @classmethod
     def cli_entry_point_import(cls):
+        invocation_time=time.time()
         logging.basicConfig(level='INFO')
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--bucket', help='S3 bucket containing diff file')
@@ -728,6 +747,7 @@ class VrpDiff():
         )
         ap.add_argument('--all-limit', type=int, help='Max number of files to import when using -all-files')
         ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
+        ap.add_argument('--limit-cpu', type=int, help='Try to limit CPU utilization to N percent, e.g. 10.')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
         args = vars(ap.parse_args())
@@ -753,6 +773,8 @@ class VrpDiff():
                 if args.get('all_limit', 1000000000) <= import_file_count:
                     # reached --all-limit max file count
                     break
+                if 'limit_cpu' in args:
+                    cls.limit_cpu_sleep(invocation_time=invocation_time, limit=args['limit_cpu']/100)
         else:
             result = cls.generic_entry_point_import(
                 es_endpoint=args['es_endpoint'],

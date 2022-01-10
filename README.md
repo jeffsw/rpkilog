@@ -4,6 +4,12 @@ TODO: insert ref to pipeline.mmd here
 
 TODO: insert ref to ingest.mmd here
 
+### Installing from github
+
+```bash
+pip3 install --upgrade "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpkilog"
+```
+
 ### Lucene query example
 
 Lucene syntax is unforgiving in that the database generally won't give you an error message when executing
