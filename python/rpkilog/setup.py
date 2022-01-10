@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    version='0.220202',
+    version='0.220203',
     name = 'rpkilog',
     author = 'Jeff Wheeler',
     author_email = 'jeffsw6@gmail.com',

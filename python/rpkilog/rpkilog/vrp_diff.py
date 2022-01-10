@@ -515,11 +515,11 @@ class VrpDiff():
         return index_name
 
     @classmethod
-    def get_datetime_from_summary_filename(cls, summary_filename:str) -> datetime:
+    def get_datetime_from_diff_filename(cls, summary_filename:str) -> datetime:
         '''
         Returns a datetime object or raises a ValueError if the filename does not match our regex.
         '''
-        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', summary_filename)
+        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.vrpdiff\.json(\.bz2)?$', summary_filename)
         if not rem:
             raise ValueError(F'Input file name didnt match our regex: {summary_filename}')
         dt = dateutil.parser.parse(rem.group('datetime'))
@@ -775,7 +775,7 @@ class VrpDiff():
             import_file_count = 0
             diff_bucket_objects = sorted(diff_bucket.objects.all(), key=operator.attrgetter('key'), reverse=True)
             for buckobj in diff_bucket_objects:
-                dt = cls.get_datetime_from_summary_filename(summary_filename=buckobj.key)
+                dt = cls.get_datetime_from_diff_filename(summary_filename=buckobj.key)
                 if 'all_date_min' in args:
                     if dt < args['all_date_min']:
                         logger.info(F'SKIP file {buckobj.key} because it is earlier than --all-date-min argument')
