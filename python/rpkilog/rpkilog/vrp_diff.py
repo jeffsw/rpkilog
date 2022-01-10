@@ -515,6 +515,17 @@ class VrpDiff():
         return index_name
 
     @classmethod
+    def get_datetime_from_summary_filename(cls, summary_filename:str) -> datetime:
+        '''
+        Returns a datetime object or raises a ValueError if the filename does not match our regex.
+        '''
+        rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', summary_filename)
+        if not rem:
+            raise ValueError(F'Input file name didnt match our regex: {summary_filename}')
+        dt = dateutil.parser.parse(rem.group('datetime'))
+        return(dt)
+
+    @classmethod
     def get_diff_filename_from_summary_filename(cls, summary_filename:str, diff_bzip2:bool=True):
         summary_filename = str(summary_filename)
         rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', summary_filename)
@@ -746,6 +757,8 @@ class VrpDiff():
             help='Import all diff files found in the S3 bucket.  Used to re-populate database after a wipe.  Youngest files first.'
         )
         ap.add_argument('--all-limit', type=int, help='Max number of files to import when using -all-files')
+        ap.add_argument('--all-date-min', type=dateutil.parser.parse, help='Import files only on-or-after this date')
+        ap.add_argument('--all-date-max', type=dateutil.parser.parse, help='Import files only on-or-before this date')
         ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
         ap.add_argument('--limit-cpu', type=int, help='Try to limit CPU utilization to N percent, e.g. 10.')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
@@ -762,14 +775,23 @@ class VrpDiff():
             import_file_count = 0
             diff_bucket_objects = sorted(diff_bucket.objects.all(), key=operator.attrgetter('key'), reverse=True)
             for buckobj in diff_bucket_objects:
-                print(F'Importing {buckobj.key}')
+                dt = cls.get_datetime_from_summary_filename(summary_filename=buckobj.key)
+                if 'all_date_min' in args:
+                    if dt < args['all_date_min']:
+                        logger.info(F'SKIP file {buckobj.key} because it is earlier than --all-date-min argument')
+                        continue
+                if 'all_date_max' in args:
+                    if args['all_date_max'] < dt:
+                        logger.info(F'SKIP file {buckobj.key} because it is later than --all-date-max argument')
+                        continue
+                logger.info(F'Importing {buckobj.key}')
                 result = cls.generic_entry_point_import(
                     es_endpoint=args['es_endpoint'],
                     src_s3_bucket_name=args['bucket'],
                     src_s3_key=buckobj.key,
                 )
                 import_file_count += 1
-                print(F'Imported file count {import_file_count} name {buckobj.key} result: {json.dumps(result)}')
+                logger.info(F'Imported file count {import_file_count} name {buckobj.key} result: {json.dumps(result)}')
                 if args.get('all_limit', 1000000000) <= import_file_count:
                     # reached --all-limit max file count
                     break
