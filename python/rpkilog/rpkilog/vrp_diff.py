@@ -634,10 +634,12 @@ class VrpDiff():
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
+        es_bulk_batch_size = int(os.getenv('es_bulk_batch_size', 200))
         es_endpoint = os.getenv('es_endpoint')
         src_s3_bucket_name = event['Records'][0]['s3']['bucket']['name']
         src_s3_key = event['Records'][0]['s3']['object']['key']
         result = cls.generic_entry_point_import(
+            es_bulk_batch_size=es_bulk_batch_size,
             es_endpoint=es_endpoint,
             src_s3_bucket_name=src_s3_bucket_name,
             src_s3_key=src_s3_key,
@@ -759,6 +761,7 @@ class VrpDiff():
         ap.add_argument('--all-limit', type=int, help='Max number of files to import when using -all-files')
         ap.add_argument('--all-date-min', type=dateutil.parser.parse, help='Import files only on-or-after this date')
         ap.add_argument('--all-date-max', type=dateutil.parser.parse, help='Import files only on-or-before this date')
+        ap.add_argument('--bulk-batch-size', type=int, default=200, help='Number of records inserted per ES _bulk operation')
         ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
         ap.add_argument('--limit-cpu', type=int, help='Try to limit CPU utilization to N percent, e.g. 10.')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
@@ -791,6 +794,7 @@ class VrpDiff():
                         continue
                 logger.info(F'Importing {buckobj.key}')
                 result = cls.generic_entry_point_import(
+                    es_bulk_batch_size=args['bulk_batch_size'],
                     es_endpoint=args['es_endpoint'],
                     src_s3_bucket_name=args['bucket'],
                     src_s3_key=buckobj.key,
@@ -804,6 +808,7 @@ class VrpDiff():
                     cls.limit_cpu_sleep(invocation_time=invocation_time, limit=args['limit_cpu']/100)
         else:
             result = cls.generic_entry_point_import(
+                es_bulk_batch_size=args['bulk_batch_size'],
                 es_endpoint=args['es_endpoint'],
                 src_s3_bucket_name=args['bucket'],
                 src_s3_key=args['key']
@@ -892,7 +897,7 @@ class VrpDiff():
         Retrieve given vrp diff file from S3 and insert its records into ElasticSearch
         '''
         if es_bulk_batch_size==None:
-            es_bulk_batch_size = 1000
+            es_bulk_batch_size = 200
         realtime_initial = time.time()
         src_s3_path = Path(src_s3_key)
         if not '.json' in src_s3_path.suffixes:
