@@ -934,10 +934,18 @@ class VrpDiff():
                         es_index=es_index,
                     )
                     bulk_actions.append(insertable)
-                successful_actions, errors = opensearchpy.helpers.bulk(client=es_client, actions=bulk_actions)
-                records_inserted += successful_actions
-                for e in errors:
-                    logger.error(F'ElasticSearch bulk insert error: e')
+                bulk_generator = opensearchpy.helpers.streaming_bulk(
+                    client=es_client,
+                    actions=bulk_actions,
+                    initial_backoff=5,
+                    max_backoff=20,
+                    max_retries=5,
+                )
+                for ok, bulk_action_result in bulk_generator:
+                    if ok:
+                        records_inserted += 1
+                    else:
+                        raise ValueError(F'bulk insert returned an unsuccessful result: {bulk_action_result}')
         else:
             for vrp_diff_record in diff_data['vrp_diffs']:
                 vrp_diff_obj = VrpDiff.from_json_obj(vrp_diff_record)

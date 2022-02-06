@@ -1,5 +1,6 @@
 *.terraform
 *.zip
+*.egg-info*
 .terraform*
 terraform.tfstate*
 build/
