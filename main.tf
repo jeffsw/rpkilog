@@ -6,6 +6,17 @@ terraform {
     }
 }
 
+variable "rpkilog_idp_google_client_id" {
+    description = "Client ID used to identify ourselves to Google for federated auth"
+    type = string
+}
+
+variable "rpkilog_idp_google_client_secret" {
+    description = "Secret used to authenticate ourselves to Google for federated auth"
+    type = string
+    sensitive = true
+}
+
 provider "aws" {
     region = "us-east-1"
     default_tags {
@@ -64,6 +75,63 @@ resource "aws_iam_role" "ec2_cron1" {
 data "aws_iam_policy" "AmazonOpenSearchServiceCognitoAccess" {
     name = "AmazonOpenSearchServiceCognitoAccess"
 }
+
+resource "aws_iam_role" "es_superuser" {
+    name = "es_superuser"
+    description = "ElasticSearch superuser"
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+            },
+            "Action": "sts:AssumeRole"
+        },
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "cognito-identity.amazonaws.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.es.id}"
+                },
+                "ForAnyValue:StringLike": {
+                    "cognito-identity.amazonaws.com:amr": "authenticated"
+                }
+            }
+        }
+    ]
+}
+POLICY
+    inline_policy {
+        name = "es_superuser"
+        policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:*:*:*"
+            ]
+        }
+    ]
+}
+POLICY
+    }
+    depends_on = [
+        aws_cognito_identity_pool.es
+    ]
+}
+
 resource "aws_iam_role" "es_master" {
     name = "es_master"
     assume_role_policy = <<POLICY
@@ -118,8 +186,8 @@ POLICY
         aws_cognito_identity_pool.es
     ]
 }
-resource "aws_iam_role" "es_limited" {
-    name = "es_limited"
+resource "aws_iam_role" "anonymous_web" {
+    name = "anonymous_web"
     assume_role_policy = <<POLICY
 {
     "Version": "2012-10-17",
@@ -132,16 +200,13 @@ resource "aws_iam_role" "es_limited" {
         "Condition": {
             "StringEquals": {
                 "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.es.id}"
-            },
-            "ForAnyValue:StringLike": {
-                "cognito-identity.amazonaws.com:amr": "authenticated"
             }
         }
     }]
 }
 POLICY
     inline_policy {
-        name = "es_limited"
+        name = "anonymous_web"
         policy = <<POLICY
 {
     "Version": "2012-10-17",
@@ -166,6 +231,7 @@ POLICY
 
 resource "aws_iam_role" "es_cognito" {
     name = "es_cognito"
+    description = "ElasticSearch/OpenSearch runs as this role.  The policy is a managed policy supplied by AWS."
     managed_policy_arns = [
         data.aws_iam_policy.AmazonOpenSearchServiceCognitoAccess.arn
     ]
@@ -285,8 +351,8 @@ resource "aws_iam_role" "lambda_diff_import" {
                 "s3:ListBucket"
             ],
             "Resource": [
-                "arn:aws:s3:::rpkilog-snapshot-summary",
-                "arn:aws:s3:::rpkilog-snapshot-summary/*"
+                "arn:aws:s3:::rpkilog-diff",
+                "arn:aws:s3:::rpkilog-diff/*"
             ]
         },
         {
@@ -325,10 +391,6 @@ resource "aws_iam_user" "jeffsw" {
 
 resource "aws_iam_user" "es_master" {
     name = "es_master"
-}
-
-resource "aws_iam_user" "es_limited" {
-    name = "es_limited"
 }
 
 ##############################
@@ -373,31 +435,6 @@ resource "aws_iam_group_membership" "es_master" {
     users = [ aws_iam_user.es_master.name ]
 }
 
-resource "aws_iam_group_policy" "es_limited" {
-    name = "es_limited"
-    group = aws_iam_group.es_limited.name
-    policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": "sts:AssumeRole",
-            "Resource": "arn:aws:iam:::role/es_limited"
-        }
-    ]
-}
-POLICY
-}
-resource "aws_iam_group" "es_limited" {
-    name = "es_limited"
-}
-resource "aws_iam_group_membership" "es_limited" {
-    name = "es_limited"
-    group = aws_iam_group.es_limited.name
-    users = [ aws_iam_user.es_limited.name ]
-}
-
 ##############################
 # SNS
 resource "aws_sns_topic" "lambda_dead_letter_queue_for_diff" {
@@ -418,7 +455,7 @@ resource "aws_cognito_user_pool" "es" {
     name = "es"
     username_attributes = [ "email" ]
     admin_create_user_config {
-        allow_admin_create_user_only = true
+        allow_admin_create_user_only = false
     }
 }
 resource "aws_cognito_user_pool_domain" "es" {
@@ -430,15 +467,48 @@ resource "aws_cognito_user_group" "es_master" {
     user_pool_id = aws_cognito_user_pool.es.id
     description = "Users given AllAccess within ES"
     role_arn = aws_iam_role.es_master.arn
+    precedence = 2
+}
+resource "aws_cognito_user_group" "es_superuser" {
+    name = "es_superuser"
+    user_pool_id = aws_cognito_user_pool.es.id
+    role_arn = aws_iam_role.es_superuser.arn
+    precedence = 0
+}
+
+resource "aws_cognito_identity_provider" "google" {
+    user_pool_id = aws_cognito_user_pool.es.id
+    provider_name = "Google"
+    provider_type = "Google"
+    provider_details = {
+        authorize_scopes = "email"
+        client_id = var.rpkilog_idp_google_client_id
+        client_secret = var.rpkilog_idp_google_client_secret
+    }
+    attribute_mapping = {
+        # cognito user pool attribute = google attribute
+        email = "email"
+        username = "sub"
+    }
+    lifecycle {
+        ignore_changes = [ provider_details ]
+    }
 }
 
 resource "aws_cognito_user_pool_client" "es" {
-    name = "es"
+    #BOOTSTRAP: If creating a new Cognito/ES configuration for the first time, uncomment name="es", allow
+    #the new ES domain to come online, then retrieve the name of the user_pool_client THAT IT CREATED ON ITS OWN
+    #and substitute it for the lenghty name, below.  Then, perform any necessary Terraform state delete/import
+    #operations necessary to get it to work.
+    #Yes, the official Terraform implementation for AWS elasticsearch is seriously buggy, but it can work.
+    #name = "es"
+    name = "AWSElasticsearch-prod-us-east-1-3iwnbr2xd6gjgnh6q3eeesutpa"
     user_pool_id = aws_cognito_user_pool.es.id
     # access_token_validity = 86400
     # id_token_validity = 86400
     # refresh_token_validity = 30
     allowed_oauth_flows = [ "code" ]
+    allowed_oauth_flows_user_pool_client = true
     allowed_oauth_scopes = [
         "email",
         "openid",
@@ -446,7 +516,8 @@ resource "aws_cognito_user_pool_client" "es" {
         "profile",
     ]
     prevent_user_existence_errors = "LEGACY"
-    supported_identity_providers = [ "COGNITO" ]
+    # supported_identity_providers must match an aws_cognito_identity_provider.provider_name or "COGNITO"
+    supported_identity_providers = [ "COGNITO", "Google" ]
 }
 resource "aws_cognito_identity_pool" "es" {
     identity_pool_name = "es"
@@ -465,7 +536,12 @@ resource "aws_cognito_identity_pool_roles_attachment" "es" {
     identity_pool_id = aws_cognito_identity_pool.es.id
     roles = {
         authenticated = aws_iam_role.es_master.arn
-        unauthenticated = aws_iam_role.es_limited.arn
+        unauthenticated = aws_iam_role.anonymous_web.arn
+    }
+    role_mapping {
+        identity_provider = "${aws_cognito_user_pool.es.endpoint}:${aws_cognito_user_pool_client.es.id}"
+        ambiguous_role_resolution = "AuthenticatedRole"
+        type = "Token"
     }
 }
 
@@ -702,7 +778,7 @@ resource "aws_lambda_function" "diff_import" {
 resource "aws_lambda_permission" "diff_import" {
     statement_id = "AllowExecutionFromS3Bucket"
     action = "lambda:InvokeFunction"
-    function_name = aws_lambda_function.diff_import.id
+    function_name = aws_lambda_function.diff_import.function_name
     principal = "s3.amazonaws.com"
     source_arn = aws_s3_bucket.rpkilog_diff.arn
 }
@@ -724,17 +800,16 @@ resource "aws_s3_bucket_notification" "vrp_cache_diff" {
     ]
 }
 
-# DISABLED while developing & troubleshooting the pipeline.  Don't want it automatically importing yet.
-# resource "aws_s3_bucket_notification" "vrp_diff_import" {
-#     bucket = aws_s3_bucket.rpkilog_diff.id
-#     lambda_function {
-#         lambda_function_arn = aws_lambda_function.diff_import.arn
-#         events = [ "s3:ObjectCreated:*" ]
-#     }
-#     depends_on = [
-#         aws_lambda_permission.diff_import
-#     ]
-# }
+resource "aws_s3_bucket_notification" "vrp_diff_import" {
+    bucket = aws_s3_bucket.rpkilog_diff.id
+    lambda_function {
+        lambda_function_arn = aws_lambda_function.diff_import.arn
+        events = [ "s3:ObjectCreated:*" ]
+    }
+    depends_on = [
+        aws_lambda_permission.diff_import
+    ]
+}
 
 ##############################
 # EC2 Instance Profiles
@@ -893,7 +968,7 @@ POLICY
     }
     ebs_options {
         ebs_enabled = true
-        volume_size = 10
+        volume_size = 50
         volume_type = "gp2" # gp3 not supported by current version of aws_elasticsearch_domain
     }
     encrypt_at_rest {

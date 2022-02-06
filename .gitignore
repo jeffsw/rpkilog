@@ -2,3 +2,4 @@
 *.zip
 .terraform*
 terraform.tfstate*
+build/
