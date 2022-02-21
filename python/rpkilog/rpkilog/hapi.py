@@ -17,16 +17,14 @@ def datetime_to_es_format(d:datetime):
     retstr = d.strftime('%Y-%m-%dT%H:%M:%S.') + F'{d.microsecond/1000:03.0f}'
     return retstr
 
-def get_es_client(aws_credentials, aws_region:str=None, es_host):
+def get_es_client(aws_credentials, aws_region:str, es_host:str):
     '''
-    > es = get_es_client(boto3.Session().get_credentials, 'es-prod.rpkilog.com')
+    > es = get_es_client(boto3.Session().get_credentials, aws_region='us-east-1', 'es-prod.rpkilog.com')
     '''
-    if aws_region==None:
-        aws_region = 'us-east-1'
     awsauth = AWS4Auth(
         aws_credentials.access_key,
         aws_credentials.secret_key,
-        'us-east-1',
+        aws_region,
         'es',
         aws_credentials.token,
     )
