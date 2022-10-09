@@ -1,4 +1,10 @@
 terraform {
+    backend "s3" {
+        bucket = "rpkilog-terraform"
+        dynamodb_table = "rpkilog-terraform"
+        key = "main"
+        region = "us-east-1"
+    }
     required_providers {
         aws = {
             source = "hashicorp/aws"
