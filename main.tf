@@ -913,7 +913,7 @@ EOF
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "7.10"
+    elasticsearch_version = "OpenSearch_1.3"
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
@@ -968,7 +968,7 @@ POLICY
     }
     ebs_options {
         ebs_enabled = true
-        volume_size = 50
+        volume_size = 200
         volume_type = "gp2" # gp3 not supported by current version of aws_elasticsearch_domain
     }
     encrypt_at_rest {
