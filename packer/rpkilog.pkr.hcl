@@ -8,23 +8,25 @@ packer {
 }
 
 source "amazon-ebs" "rpkilog" {
-  ami_name      = "rpkilog"
+  ami_name      = "rpkilog-22"
+  force_deregister = true
+  force_delete_snapshot = true
   instance_type = "t3.small"
   region        = "us-east-1"
   source_ami_filter {
     filters = {
-      name                = "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
+      name                = "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
     most_recent = true
-    owners      = ["099720109477"] # Canonical official Ubuntu AMIs
+    owners      = ["amazon"] # Canonical official Ubuntu AMIs
   }
   ssh_username = "ubuntu"
 }
 
 build {
-  name = "rpkilog"
+  name = "rpkilog-22"
   sources = [
     "source.amazon-ebs.rpkilog"
   ]
