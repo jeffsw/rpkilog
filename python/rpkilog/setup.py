@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    version='0.22101001',
+    version='0.22101002',
     name = 'rpkilog',
     author = 'Jeff Wheeler',
     author_email = 'jeffsw6@gmail.com',
@@ -20,6 +20,7 @@ setup(
         'pyyaml',
         'requests',
         'requests_aws4auth',
+        'tqdm',
     ],
     entry_points = {
         'console_scripts': [

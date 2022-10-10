@@ -20,6 +20,7 @@ import netaddr
 import opensearchpy.helpers
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -784,6 +785,7 @@ class VrpDiff():
                 result = cls.generic_entry_point_import(
                     es_bulk_batch_size=args['bulk_batch_size'],
                     es_endpoint=args['es_endpoint'],
+                    progress_bar_enable=True,
                     src_s3_bucket_name=args['bucket'],
                     src_s3_key=buckobj.key,
                 )
@@ -882,6 +884,7 @@ class VrpDiff():
         src_s3_bucket_name:str,
         src_s3_key:str,
         es_bulk_batch_size:int=None,
+        progress_bar_enable:bool=False,
     ):
         '''
         Invoked by cli_entry_point_import or aws_lambda_entry_point_import
@@ -892,6 +895,7 @@ class VrpDiff():
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
+        logging.getLogger('opensearch').setLevel(logging.WARNING)
         if es_bulk_batch_size==None:
             es_bulk_batch_size = 200
         realtime_initial = time.time()
@@ -916,6 +920,7 @@ class VrpDiff():
         #BEGIN insert records
         records_inserted = 0
         if es_bulk_batch_size > 1:
+            progress_bar = tqdm(total=len(diff_data["vrp_diffs"]), unit="records", disable=not progress_bar_enable)
             for batch_base_index in range(0, len(diff_data['vrp_diffs']), es_bulk_batch_size):
                 bulk_actions = []
                 if batch_base_index + es_bulk_batch_size <= len(diff_data['vrp_diffs']):
@@ -937,11 +942,15 @@ class VrpDiff():
                     max_backoff=20,
                     max_retries=5,
                 )
+                records_inserted_this_batch = 0
                 for ok, bulk_action_result in bulk_generator:
                     if ok:
+                        records_inserted_this_batch += 1
                         records_inserted += 1
                     else:
                         raise ValueError(F'bulk insert returned an unsuccessful result: {bulk_action_result}')
+                progress_bar.update(records_inserted_this_batch)
+            progress_bar.close()
         else:
             for vrp_diff_record in diff_data['vrp_diffs']:
                 vrp_diff_obj = VrpDiff.from_json_obj(vrp_diff_record)
