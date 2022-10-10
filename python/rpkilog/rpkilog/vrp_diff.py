@@ -589,13 +589,13 @@ class VrpDiff():
         for buckobj in src_bucket.objects.all():
             summaries.add(buckobj.key)
         if len(summaries) == 1:
-            logging.warning(F'ONLY ONE FILE IN src_bucket {src_bucket_name}.  Is this first ever invocation?')
+            logger.warning(F'ONLY ONE FILE IN src_bucket {src_bucket_name}.  Is this first ever invocation?')
             return
         # find the filename immediately before the one which invoked us
         for candidate_filename in sorted(summaries, reverse=True):
             rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', candidate_filename)
             if not rem:
-                logging.warning(F'{src_bucket_name} contained a file not matching our regex: {candidate_filename}')
+                logger.warning(F'{src_bucket_name} contained a file not matching our regex: {candidate_filename}')
                 continue
             candidate_datetime = dateutil.parser.parse(rem.group('datetime'))
             if candidate_datetime < new_file_datetime:
@@ -604,7 +604,7 @@ class VrpDiff():
                 return(old_file_key)
         else:
             # no files found which are older than new_file_datetime
-            logging.warning(
+            logger.warning(
                 F'{src_bucket_name} doesnt contain any files older than {new_file_datetime}'
                 F' Is this first ever invocation?'
             )
@@ -612,11 +612,6 @@ class VrpDiff():
 
     @classmethod
     def aws_lambda_entry_point(cls, event, context):
-        logging.basicConfig(
-            level='INFO',
-            datefmt='%Y-%m-%dT%H:%M:%S',
-            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
-        )
         dst_bucket_name = os.getenv('diff_bucket')
         src_bucket_name = event['Records'][0]['s3']['bucket']['name']
         new_file_key = event['Records'][0]['s3']['object']['key']
@@ -629,11 +624,6 @@ class VrpDiff():
 
     @classmethod
     def aws_lambda_entry_point_import(cls, event, context):
-        logging.basicConfig(
-            level='INFO',
-            datefmt='%Y-%m-%dT%H:%M:%S',
-            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
-        )
         es_bulk_batch_size = int(os.getenv('es_bulk_batch_size', 200))
         es_endpoint = os.getenv('es_endpoint')
         src_s3_bucket_name = event['Records'][0]['s3']['bucket']['name']
@@ -648,7 +638,6 @@ class VrpDiff():
 
     @classmethod
     def cli_entry_point(cls):
-        logging.basicConfig(level='INFO')
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ag1 = ap.add_argument_group('Use S3 for I/O to simulate AWS Lambda workflow')
         ag1.add_argument('--summary-bucket', help='S3 bucket containing VRP cache summaries')
@@ -751,7 +740,6 @@ class VrpDiff():
     @classmethod
     def cli_entry_point_import(cls):
         invocation_time=time.time()
-        logging.basicConfig(level='INFO')
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--bucket', help='S3 bucket containing diff file')
         ap.add_argument('--key', type=Path, help='S3 key of diff file')
@@ -786,11 +774,11 @@ class VrpDiff():
                 dt = cls.get_datetime_from_diff_filename(summary_filename=buckobj.key)
                 if 'all_date_min' in args:
                     if dt < args['all_date_min']:
-                        logger.info(F'SKIP file {buckobj.key} because it is earlier than --all-date-min argument')
+                        logger.debug(F'SKIP file {buckobj.key} because it is earlier than --all-date-min argument')
                         continue
                 if 'all_date_max' in args:
                     if args['all_date_max'] < dt:
-                        logger.info(F'SKIP file {buckobj.key} because it is later than --all-date-max argument')
+                        logger.debug(F'SKIP file {buckobj.key} because it is later than --all-date-max argument')
                         continue
                 logger.info(F'Importing {buckobj.key}')
                 result = cls.generic_entry_point_import(
@@ -827,8 +815,12 @@ class VrpDiff():
         '''
         Invoke by cli_entry_point or aws_lambda_entry_point.
         '''
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         realtime_initial = time.time()
-        logging.info(F'Invoked for new_file_key={new_file_key}')
+        logger.info(F'Invoked for new_file_key={new_file_key}')
         s3 = boto3.client('s3')
         if tmp_dir==None:
             tmp_dir = Path('/tmp')
@@ -855,14 +847,14 @@ class VrpDiff():
             new_file_path = Path(tmp_dir, new_file_key)
             old_file_path = Path(tmp_dir, old_file_key)
         if summary_cache and old_file_path.exists():
-            logging.info(F'Using cache to access {old_file_key}')
+            logger.info(F'Using cache to access {old_file_key}')
         else:
-            logging.info(F'Downloading {old_file_key} from S3')
+            logger.info(F'Downloading {old_file_key} from S3')
             s3.download_file(Bucket=src_bucket_name, Key=old_file_key, Filename=str(old_file_path))
         if summary_cache and new_file_path.exists():
-            logging.info(F'Using cache to access {new_file_key}')
+            logger.info(F'Using cache to access {new_file_key}')
         else:
-            logging.info(F'Downloading {new_file_key} from S3')
+            logger.info(F'Downloading {new_file_key} from S3')
             s3.download_file(Bucket=src_bucket_name, Key=new_file_key, Filename=str(new_file_path))
 
         metadata = cls.vrp_diff_from_files(
@@ -871,7 +863,7 @@ class VrpDiff():
             output_file_path=output_file_path,
             realtime_initial=realtime_initial,
         )
-        logging.info(F'Uploading vrp diff {output_file_key} to S3')
+        logger.info(F'Uploading vrp diff {output_file_key} to S3')
         s3.upload_file(
             Filename=str(output_file_path),
             Bucket=diff_bucket_name,
@@ -896,6 +888,10 @@ class VrpDiff():
 
         Retrieve given vrp diff file from S3 and insert its records into ElasticSearch
         '''
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         if es_bulk_batch_size==None:
             es_bulk_batch_size = 200
         realtime_initial = time.time()

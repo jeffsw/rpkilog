@@ -9,3 +9,7 @@ zip_omit = [
     "^botocore",
     "^boto3",
 ]
+
+[tool.black]
+line-length = 120
+
