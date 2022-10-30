@@ -23,18 +23,21 @@ variable "rpkilog_idp_google_client_secret" {
     sensitive = true
 }
 
-provider "aws" {
-    region = "us-east-1"
-    default_tags {
-        tags = {
-            tf_managed = "main"
-        }
-    }
+variable "aws_subnet_ids" {
+    description = "List of AWS subnet IDs"
+    type = set(string)
+    default = [
+        "subnet-052d585f76f551e79",
+        "subnet-0ba4127fc7ffa146e",
+        "subnet-0774b9b19bf6f3fc4",
+        "subnet-056f4cd1a33e2e5ac",
+        "subnet-0fa104bced02ea8dc",
+        "subnet-046b1d24b6e34d4d8"
+    ]
 }
 
 provider "aws" {
-    region = "eu-central-1"
-    alias = "eu-central-1"
+    region = "us-east-1"
     default_tags {
         tags = {
             tf_managed = "main"
@@ -563,12 +566,6 @@ resource "aws_default_security_group" "default" {
 }
 
 ##############################
-# Get subnets of default VPC
-data "aws_subnet_ids" "default" {
-    vpc_id = aws_default_vpc.default.id
-}
-
-##############################
 # Security Groups
 resource "aws_security_group" "https_allow" {
     name = "https_allow"
@@ -658,7 +655,7 @@ resource "aws_efs_access_point" "rpki_archive" {
 }
 
 resource "aws_efs_mount_target" "rpki_archive" {
-    for_each = data.aws_subnet_ids.default.ids
+    for_each = var.aws_subnet_ids
     file_system_id = aws_efs_file_system.rpki_archive.id
     subnet_id = each.value
     security_groups = [ aws_security_group.allow_nfs.id ]
@@ -668,21 +665,35 @@ resource "aws_efs_mount_target" "rpki_archive" {
 # s3 buckets
 resource "aws_s3_bucket" "rpkilog_artifact" {
     bucket = "rpkilog-artifact"
-    acl = "private"
 }
 
 resource "aws_s3_bucket" "rpkilog_snapshot" {
     bucket = "rpkilog-snapshot"
-    acl = "private"
 }
 
 resource "aws_s3_bucket" "rpkilog_snapshot_summary" {
     bucket = "rpkilog-snapshot-summary"
+}
+
+resource "aws_s3_bucket_acl" "private" {
+    for_each = toset([
+        aws_s3_bucket.rpkilog_artifact.id,
+        aws_s3_bucket.rpkilog_snapshot.id,
+        aws_s3_bucket.rpkilog_snapshot_summary.id,
+    ])
+    bucket = each.value
     acl = "private"
 }
 
 resource "aws_s3_bucket" "rpkilog_diff" {
     bucket = "rpkilog-diff"
+}
+
+resource "aws_s3_bucket_acl" "public_read" {
+    for_each = toset([
+        aws_s3_bucket.rpkilog_diff.id,
+    ])
+    bucket = each.value
     acl = "public-read"
 }
 
