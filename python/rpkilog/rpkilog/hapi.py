@@ -138,9 +138,7 @@ def get_history_for_prefix(
     return retval
 
 def invoke_es_query(query):
-    #TODO: invoke query
-    #TODO: log metadata about response
-    #TODO: return response which will be passed along to client essentially as-is
+    #TODO: get_es_client needs arguments!
     es_client = get_es_client()
     qresult = es_client.search(query)
     logger.info({
