@@ -805,6 +805,46 @@ resource "aws_lambda_function_event_invoke_config" "diff_import" {
 }
 
 ##############################
+# begin lambda: hapi
+# hapi can be invoked by anyone from the web like https://<aws-generated>.lambda-url.<region>.on.aws
+resource "aws_lambda_function" "hapi" {
+    function_name = "hapi"
+    s3_bucket = "rpkilog-artifact"
+    s3_key = "lambda_hapi.zip"
+    role = aws_iam_role.hapi.arn
+    runtime = "python3.9"
+    handler = "rpkilog.hapi.aws_lambda_entry_point"
+    memory_size = 512
+    timeout = 30
+    environment {
+        variables = {
+            es_endpoint = aws_elasticsearch_domain.prod.endpoint
+        }
+    }
+    lifecycle {
+        ignore_changes = [ filename ]
+    }
+}
+resource "aws_lambda_permission" "hapi" {
+    function_name = aws_lambda_function.hapi.function_name
+    statement_id = "AllowExecutionFromWeb"
+    action = "lambda:InvokeFunction"
+    principal = "*"
+}
+resource "aws_lambda_function_url" "hapi" {
+    function_name = aws_lambda_function.hapi.function_name
+    authorization_type = "NONE"
+    cors {
+        allow_credentials = true
+        allow_methods = [ "*" ]
+        allow_origins = [ "*" ]
+        max_age = 600
+    }
+}
+# end lambda: hapi
+##############################
+
+##############################
 # s3 bucket notifications
 resource "aws_s3_bucket_notification" "vrp_cache_diff" {
     bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
