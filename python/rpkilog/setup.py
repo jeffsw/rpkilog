@@ -27,6 +27,7 @@ setup(
             'rpkilog-archive-site-crawler = rpkilog.archive_site_crawler:ArchiveSiteCrawler.cli_entry_point',
             'rpkilog-diff-import = rpkilog:VrpDiff.cli_entry_point_import',
             'rpkilog-ingest-tar = rpkilog:IngestTar.cli_entry_point',
+            'rpkilog-hapi = rpkilog.hapi:cli_entry_point',
             'rpkilog-vrp-cache-differ = rpkilog:VrpDiff.cli_entry_point',
         ]
     },

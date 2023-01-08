@@ -5,6 +5,7 @@ import base64
 from datetime import datetime
 import json
 import logging
+import os
 
 import boto3
 import netaddr
@@ -30,8 +31,48 @@ def aws_lambda_entry_point(event:dict, context:dict):
     else:
         body_plain = event['body']
     body_dict = json.loads(body_plain)
+
+    query_args = dict()
+    query_args['prefix'] = netaddr.IPNetwork(body_dict['prefix'])
+    for bool_arg_name in ['exact', 'max_len']:
+        if bool_arg_name not in body_dict:
+            continue
+        if type(body_dict[bool_arg_name]) != bool:
+            wrong_type = type(body_dict[bool_arg_name])
+            raise TypeError(f'argument {bool_arg_name} must be a boolean.  Its type is {wrong_type}')
+        query_args[bool_arg_name] = body_dict[bool_arg_name]
+    for int_arg_name in ['max_len']:
+        if int_arg_name not in body_dict:
+            continue
+        if type(body_dict[int_arg_name]) != int:
+            wrong_type = type(body_dict[int_arg_name])
+            raise TypeError(f'argument {int_arg_name} must be an int.  Its type is {wrong_type}')
+        query_args[int_arg_name] = body_dict[int_arg_name]
+
     if 'prefix' in body_dict:
-        get_history_for_prefix()
+        get_history_for_prefix(**query_args)
+
+def cli_entry_point():
+    import argparse
+    import dateutil.parser
+
+    date_parser = dateutil.parser.parser()
+    ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
+    ap.add_argument('prefix', type=netaddr.IPNetwork, help='Query the DB for given prefix')
+    ap.add_argument('--exact', default=False, action='store_true', help='Exact prefix-length matches only')
+    ap.add_argument('--max-len', default=None, type=int, help='Maximum prefix-length')
+    ap.add_argument('--observation-timestamp-start', type=date_parser.parse, help='Optional start time for DB query')
+    ap.add_argument('--observation-timestamp-end', type=date_parser.parse, help='Optional end time for DB query')
+    ap.add_argument('--debug', action='store_true', help='Break to debugger immediately after argument parsing')
+    args = vars(ap.parse_args())
+    if args.get('debug', False):
+        import pdb
+        pdb.set_trace()
+        args.pop('debug')
+
+    result = get_history_for_prefix(**args)
+    pretty_result = pretty_stringify_es_result(result)
+    print(pretty_result)
 
 def datetime_to_es_format(d:datetime):
     '''
@@ -43,16 +84,22 @@ def datetime_to_es_format(d:datetime):
     retstr = d.strftime('%Y-%m-%dT%H:%M:%S.') + F'{d.microsecond/1000:03.0f}'
     return retstr
 
-def get_es_client(aws_credentials, aws_region:str, es_host:str):
+def get_es_client(
+    aws_region:str = os.getenv('AWS_REGION'),
+    es_host:str = os.getenv('RPKILOG_ES_HOST', 'es-prod.rpkilog.com'),
+):
     '''
-    > es = get_es_client(boto3.Session().get_credentials, aws_region='us-east-1', 'es-prod.rpkilog.com')
+    > es = get_es_client(boto3.Session().get_credentials(), aws_region='us-east-1', 'es-prod.rpkilog.com')
     '''
+
+    aws_credentials = boto3.Session().get_credentials()
+
     awsauth = AWS4Auth(
         aws_credentials.access_key,
         aws_credentials.secret_key,
         aws_region,
         'es',
-        aws_credentials.token,
+        session_token = aws_credentials.token,
     )
     es = OpenSearch(
         hosts = [
@@ -112,10 +159,10 @@ def get_es_query_for_ip_prefix(
     # If this function was invoked with non-None start/end values, we update the query, below.
     if observation_timestamp_start != None:
         obs_ts_start_str = datetime_to_es_format(observation_timestamp_start)
-        query['query']['bool']['filter']['range']['observation_timestamp']['gte'] = obs_ts_start_str
+        query['query']['bool']['filter'][0]['range']['observation_timestamp']['gte'] = obs_ts_start_str
     if observation_timestamp_end != None:
         obs_ts_end_str = datetime_to_es_format(observation_timestamp_end)
-        query['query']['bool']['filter']['range']['observation_timestamp']['lte'] = obs_ts_end_str
+        query['query']['bool']['filter'][0]['range']['observation_timestamp']['lte'] = obs_ts_end_str
 
     return query
 
@@ -126,7 +173,6 @@ def get_history_for_prefix(
     observation_timestamp_start: datetime = None,
     observation_timestamp_end: datetime = None,
 ):
-    #TODO: get the needed ES query
     es_query = get_es_query_for_ip_prefix(
         prefix = prefix,
         exact = exact,
@@ -146,3 +192,30 @@ def invoke_es_query(query):
         'hits.total': qresult['hits']['total'],
     })
     return qresult
+
+def pretty_stringify_es_result(es_result:dict):
+    '''
+    Given an ES query-response dict, stringify it with one result record per line, and indentation.
+    '''
+    import copy
+
+    # emit all the summary key/value pairs here using json.dump but strip off the last '}\n'
+    es_copy = copy.deepcopy(es_result)
+    hits_record_list = es_copy['hits'].pop('hits')
+    # we need the hits summary to be the last dict-key, so we just remove and re-add it
+    es_copy['hits'] = es_copy.pop('hits', {})
+    retstr = json.dumps(es_copy, indent=4)
+    # strip off some closing curly-braces
+    retstr = retstr[:-8]
+
+    retstr += ',\n        "hits": [\n'
+    # emit the result records, using join to ensure commas are at the end of each line
+    record_strings = []
+    for hit in hits_record_list:
+        record_strings.append('            ' + json.dumps(hit, sort_keys=True, indent=None))
+    retstr += ',\n'.join(record_strings)
+
+    # emit the last }\n
+    retstr += '\n        ]\n    }\n}\n'
+
+    return retstr
