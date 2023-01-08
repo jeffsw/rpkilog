@@ -935,6 +935,7 @@ class VrpDiff():
                         es_index=es_index,
                     )
                     bulk_actions.append(insertable)
+                # https://elasticsearch-py.readthedocs.io/en/7.x/helpers.html#elasticsearch.helpers.streaming_bulk
                 bulk_generator = opensearchpy.helpers.streaming_bulk(
                     client=es_client,
                     actions=bulk_actions,

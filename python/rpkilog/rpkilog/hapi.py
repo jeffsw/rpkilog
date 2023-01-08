@@ -87,6 +87,7 @@ def datetime_to_es_format(d:datetime):
 def get_es_client(
     aws_region:str = os.getenv('AWS_REGION'),
     es_host:str = os.getenv('RPKILOG_ES_HOST', 'es-prod.rpkilog.com'),
+    timeout : int = 30,
 ):
     '''
     > es = get_es_client(boto3.Session().get_credentials(), aws_region='us-east-1', 'es-prod.rpkilog.com')
@@ -109,6 +110,7 @@ def get_es_client(
         use_ssl=True,
         verify_certs=True,
         connection_class=RequestsHttpConnection,
+        timeout = timeout,
     )
     return es
 
@@ -118,6 +120,8 @@ def get_es_query_for_ip_prefix(
     max_len: int = None,
     observation_timestamp_start: datetime = None,
     observation_timestamp_end: datetime = None,
+    paginate_size: int = 20,
+    search_after: list = None,
 ):
     if bool(exact):
         raise ValueError(F'UNIMPLEMENTED: exact not yet supported')
@@ -128,7 +132,11 @@ def get_es_query_for_ip_prefix(
     # For example, prefix_first_addr: 192.0.2.0 prefix_last_addr: 192.0.2.255
     prefix_first_addr = netaddr.IPAddress(prefix.first)
     prefix_last_addr = netaddr.IPAddress(prefix.last)
+    # ES documentation: https://www.elastic.co/guide/en/elasticsearch/reference/current/search-search.html
     query = {
+        # pagination:
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html
+        'size': paginate_size,
         'query': {
             'bool': {
                 'filter': [
@@ -142,7 +150,7 @@ def get_es_query_for_ip_prefix(
                         }
                     }
                 ],
-                'must': [
+                'filter': [
                     {
                         'query_string': {
                             'analyze_wildcard': 'true',
@@ -152,7 +160,12 @@ def get_es_query_for_ip_prefix(
                     }
                 ]
             }
-        }
+        },
+        # sorting docs https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
+        'sort': [
+            {'observation_timestamp': 'desc'},
+            {'_doc': 'asc'}
+        ],
     }
     # ES query timestamps are like 2022-10-30T18:35:00.123Z
     # Default values (year 1981 & 2035) are used for the timestamp range in the above query dict.
@@ -163,6 +176,13 @@ def get_es_query_for_ip_prefix(
     if observation_timestamp_end != None:
         obs_ts_end_str = datetime_to_es_format(observation_timestamp_end)
         query['query']['bool']['filter'][0]['range']['observation_timestamp']['lte'] = obs_ts_end_str
+    # Pagination support uses sort_after to continue retrieving records after previous page
+    if search_after != None:
+        if len(search_after) != 2 or type(search_after[0]) != int or type(search_after[1]) != int:
+            raise TypeError('search_after must be a list containing two integers obtained from "sort" ' +
+                'key of previously-returned record'
+            )
+        query['search_after'] = search_after
 
     return query
 
@@ -186,7 +206,10 @@ def get_history_for_prefix(
 def invoke_es_query(query):
     #TODO: get_es_client needs arguments!
     es_client = get_es_client()
-    qresult = es_client.search(query)
+    qresult = es_client.search(
+        body = query,
+        index = 'diff-*',
+    )
     logger.info({
         'took': qresult['took'],
         'hits.total': qresult['hits']['total'],
