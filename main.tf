@@ -811,13 +811,16 @@ resource "aws_lambda_function" "hapi" {
     function_name = "hapi"
     s3_bucket = "rpkilog-artifact"
     s3_key = "lambda_hapi.zip"
-    role = aws_iam_role.hapi.arn
+    #TODO: try changing to anonymous_web role.  Eventually, create separate role.
+    role = aws_iam_role.es_master.arn
     runtime = "python3.9"
     handler = "rpkilog.hapi.aws_lambda_entry_point"
     memory_size = 512
     timeout = 30
     environment {
         variables = {
+            AWS_REGION = "us-east-1"
+            RPKILOG_ES_HOST = "es-prod.rpkilog.com"
             es_endpoint = aws_elasticsearch_domain.prod.endpoint
         }
     }
@@ -970,7 +973,7 @@ EOF
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "OpenSearch_1.3"
+    elasticsearch_version = "OpenSearch_2.3"
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
@@ -1026,7 +1029,7 @@ POLICY
     ebs_options {
         ebs_enabled = true
         volume_size = 200
-        volume_type = "gp2" # gp3 not supported by current version of aws_elasticsearch_domain
+        volume_type = "gp3" # gp3 not supported by current version of aws_elasticsearch_domain
     }
     encrypt_at_rest {
         enabled = true
