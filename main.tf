@@ -168,6 +168,13 @@ resource "aws_iam_role" "es_master" {
                     "cognito-identity.amazonaws.com:amr": "authenticated"
                 }
             }
+        },
+        {
+            "Action": "sts:AssumeRole",
+            "Principal": {
+                "Service": "lambda.amazonaws.com"
+            },
+            "Effect": "Allow"
         }
     ]
 }
@@ -185,6 +192,19 @@ POLICY
             ],
             "Resource": [
                 "arn:aws:es:*:*:*"
+            ]
+        },
+        {
+            "Sid": "Log",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:*:log-group:/aws/lambda/hapi",
+                "arn:aws:logs:*:*:log-group:/aws/lambda/hapi:log-stream:*"
             ]
         }
     ]
@@ -819,7 +839,6 @@ resource "aws_lambda_function" "hapi" {
     timeout = 30
     environment {
         variables = {
-            AWS_REGION = "us-east-1"
             RPKILOG_ES_HOST = "es-prod.rpkilog.com"
             es_endpoint = aws_elasticsearch_domain.prod.endpoint
         }
@@ -1033,6 +1052,10 @@ POLICY
     }
     encrypt_at_rest {
         enabled = true
+    }
+    lifecycle {
+        #WORKAROUND AWS provider 4.49.0 doesn't recognize ebs_options.iops = 3000 is a default.
+        ignore_changes = [ ebs_options["iops"] ]
     }
     node_to_node_encryption {
         enabled = true
