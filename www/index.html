@@ -1,0 +1,49 @@
+<html>
+<head>
+    <link rel="stylesheet" href="rpkilog.css">
+    <script>
+        var rpkilog_config = {
+            "api_url": "https://lv67q6w52abgu2igfbpef5vhsm0jahqq.lambda-url.us-east-1.on.aws/"
+        };
+    </script>
+    <script defer src="main.js" type="module"></script>
+</head>
+<template id="vrp_history_row">
+    <tr class="vrp_history">
+        <td data-field-name="prefix"></td>
+        <td data-field-name="maxLength"></td>
+        <td data-field-name="asn"></td>
+        <td data-field-name="ta"></td>
+        <td data-field-name="expires"></td>
+        <td data-field-name="verb"></td>
+        <td data-field-name="observation_timestamp"></td>
+    </tr>
+</template>
+<body>
+<form>
+    <fieldset>
+        <legend>RPKI History Search</legend>
+        
+        <label for="prefix">Prefix</label>
+        <input id="prefix" type="text" name="prefix" autofocus required minlength="4" maxlength="43" size="20">
+
+        <button type="button">Search</button>
+    </fieldset>
+</form>
+
+<table id="vrp_history_table" class="vrp_history">
+    <thead>
+        <th>prefix</th>
+        <th>maxLength</th>
+        <th>asn</th>
+        <th>ta</th>
+        <th>expires</th>
+        <th>verb</th>
+        <th>observation_timestamp</th>
+    </thead>
+    <tbody></tbody>
+</table>
+
+
+</body>
+</html>

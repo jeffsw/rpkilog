@@ -1,0 +1,21 @@
+body {
+    background-color: #000;
+    color: rgb(10, 202, 49);
+}
+
+tr.vrp_history {
+    font-family: monospace;
+}
+
+tr.vrp_history:nth-child(even) {
+    background-color: rgb(20, 44, 73);
+}
+
+td.vrp_history {
+    text-align: left;
+    vertical-align: bottom;
+}
+
+td[data-field-name="prefix"] {
+    font-family: monospace;
+}
