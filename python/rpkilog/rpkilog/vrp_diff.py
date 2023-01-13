@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 import argparse
-import boto3
 import bz2
-from datetime import datetime, timezone
-import dateutil.parser
 import getpass
-import logging
 import json
+import logging
 import operator
 import os
-from pathlib import Path
 import re
 import socket
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
+import boto3
+import dateutil.parser
 import netaddr
 import opensearchpy.helpers
 from opensearchpy import OpenSearch, RequestsHttpConnection
