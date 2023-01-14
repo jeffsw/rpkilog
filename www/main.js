@@ -72,7 +72,8 @@ function search_clicked (event) {
     let prefix_input = document.querySelector("#prefix");
     let tbody = document.querySelector("table#vrp_history_table > tbody");
     let caption = document.querySelector("#vrp_history_table > caption");
-    caption.innerText = 'Posting query to rpkilog API';
+    caption.innerText = 'Posting query to rpkilog API...';
+    caption.style.color = '#e4d802';
     tbody.replaceChildren();
 
     fetch(rpkilog_config.api_url, {
@@ -95,6 +96,7 @@ function search_clicked (event) {
         } else {
             caption.innerText += ` hits: ${json_body.hits.total.value}`;
         }
+        caption.style.color = null;
         tbody.replaceChildren(...result_rows);
     });
 };
