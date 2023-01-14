@@ -1,7 +1,7 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
-    version='0.22101002',
+    version='0.22101102',
     name = 'rpkilog',
     author = 'Jeff Wheeler',
     author_email = 'jeffsw6@gmail.com',
@@ -17,6 +17,7 @@ setup(
         'netaddr',
         'opensearch-py',
         'psutil',
+        'python-dateutil',
         'pyyaml',
         'requests',
         'requests_aws4auth',

@@ -70,6 +70,11 @@ data "aws_acm_certificate" "es_prod" {
     statuses = [ "ISSUED" ]
 }
 
+data "aws_acm_certificate" "rpkilog_com" {
+    domain = "rpkilog.com"
+    statuses = [ "ISSUED" ]
+}
+
 ##############################
 # IAM roles
 resource "aws_iam_role" "ec2_cron1" {
@@ -168,6 +173,13 @@ resource "aws_iam_role" "es_master" {
                     "cognito-identity.amazonaws.com:amr": "authenticated"
                 }
             }
+        },
+        {
+            "Action": "sts:AssumeRole",
+            "Principal": {
+                "Service": "lambda.amazonaws.com"
+            },
+            "Effect": "Allow"
         }
     ]
 }
@@ -185,6 +197,19 @@ POLICY
             ],
             "Resource": [
                 "arn:aws:es:*:*:*"
+            ]
+        },
+        {
+            "Sid": "Log",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:*:log-group:/aws/lambda/hapi",
+                "arn:aws:logs:*:*:log-group:/aws/lambda/hapi:log-stream:*"
             ]
         }
     ]
@@ -692,9 +717,43 @@ resource "aws_s3_bucket" "rpkilog_diff" {
 resource "aws_s3_bucket_acl" "public_read" {
     for_each = toset([
         aws_s3_bucket.rpkilog_diff.id,
+        aws_s3_bucket.rpkilog_www.id,
     ])
     bucket = each.value
     acl = "public-read"
+}
+
+resource "aws_s3_bucket" "rpkilog_www" {
+    bucket = "rpkilog-www"
+}
+
+resource "aws_s3_bucket_policy" "rpkilog_www" {
+    bucket = aws_s3_bucket.rpkilog_www.id
+    policy = <<EOF
+        {
+            "Version": "2008-10-17",
+            "Statement": [
+                {
+                    "Sid": "AllowPublicRead",
+                    "Effect": "Allow",
+                    "Principal": {"AWS": "*"},
+                    "Action": [
+                        "s3:GetObject"
+                    ],
+                    "Resource": [
+                        "arn:aws:s3:::rpkilog-www/*"
+                    ]
+                }
+            ]
+        }
+    EOF
+}
+
+resource "aws_s3_bucket_website_configuration" "rpkilog_www" {
+    bucket = aws_s3_bucket.rpkilog_www.bucket
+    index_document {
+        suffix = "index.html"
+    }
 }
 
 ##############################
@@ -811,13 +870,15 @@ resource "aws_lambda_function" "hapi" {
     function_name = "hapi"
     s3_bucket = "rpkilog-artifact"
     s3_key = "lambda_hapi.zip"
-    role = aws_iam_role.hapi.arn
+    #TODO: try changing to anonymous_web role.  Eventually, create separate role.
+    role = aws_iam_role.es_master.arn
     runtime = "python3.9"
     handler = "rpkilog.hapi.aws_lambda_entry_point"
     memory_size = 512
     timeout = 30
     environment {
         variables = {
+            RPKILOG_ES_HOST = "es-prod.rpkilog.com"
             es_endpoint = aws_elasticsearch_domain.prod.endpoint
         }
     }
@@ -970,7 +1031,7 @@ EOF
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "OpenSearch_1.3"
+    elasticsearch_version = "OpenSearch_2.3"
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
@@ -1026,10 +1087,14 @@ POLICY
     ebs_options {
         ebs_enabled = true
         volume_size = 200
-        volume_type = "gp2" # gp3 not supported by current version of aws_elasticsearch_domain
+        volume_type = "gp3" # gp3 not supported by current version of aws_elasticsearch_domain
     }
     encrypt_at_rest {
         enabled = true
+    }
+    lifecycle {
+        #WORKAROUND AWS provider 4.49.0 doesn't recognize ebs_options.iops = 3000 is a default.
+        ignore_changes = [ ebs_options["iops"] ]
     }
     node_to_node_encryption {
         enabled = true
@@ -1065,4 +1130,53 @@ resource "aws_route53_record" "es_prod" {
     type = "CNAME"
     ttl = 300
     records = [ aws_elasticsearch_domain.prod.endpoint ]
+}
+
+resource "aws_route53_record" "rpkilog_com" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name = "rpkilog.com"
+    type = "A"
+    alias {
+        name = aws_cloudfront_distribution.rpkilog_com.domain_name
+        zone_id = aws_cloudfront_distribution.rpkilog_com.hosted_zone_id
+        evaluate_target_health = false
+    }
+}
+
+##############################
+# Cloudfront
+
+resource "aws_cloudfront_distribution" "rpkilog_com" {
+    aliases = ["rpkilog.com"]
+    enabled = true
+    default_cache_behavior {
+        allowed_methods = ["GET", "HEAD", "OPTIONS"]
+        cached_methods = ["GET", "HEAD"]
+        default_ttl = 300
+        forwarded_values {
+            query_string = false
+            cookies {
+                forward = "none"
+            }
+        }
+        max_ttl = 300
+        target_origin_id = "s3.us-east-1"
+        viewer_protocol_policy = "redirect-to-https"
+    }
+    default_root_object = "index.html"
+    is_ipv6_enabled = true
+    origin {
+        domain_name = aws_s3_bucket.rpkilog_www.bucket_regional_domain_name
+        origin_id = "s3.us-east-1"
+    }
+    restrictions {
+        geo_restriction {
+            restriction_type = "none"
+        }
+    }
+    retain_on_delete = true
+    viewer_certificate {
+        acm_certificate_arn = data.aws_acm_certificate.rpkilog_com.arn
+        ssl_support_method = "sni-only"
+    }
 }

@@ -50,7 +50,9 @@ def aws_lambda_entry_point(event:dict, context:dict):
         query_args[int_arg_name] = body_dict[int_arg_name]
 
     if 'prefix' in body_dict:
-        get_history_for_prefix(**query_args)
+        result = get_history_for_prefix(**query_args)
+    
+    return result
 
 def cli_entry_point():
     import argparse
