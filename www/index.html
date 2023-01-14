@@ -1,5 +1,7 @@
+<!DOCTYPE HTML>
 <html>
 <head>
+    <title>rpkilog history search tool for RPKI data</title>
     <link rel="stylesheet" href="rpkilog.css">
     <script>
         var rpkilog_config = {
@@ -8,6 +10,45 @@
     </script>
     <script defer src="main.js" type="module"></script>
 </head>
+<body>
+
+<p><code>rpkilog.com</code> is available for use, but please consider it a work-in-progress!  There is an
+HTTP API but it should not yet be considered stable/supported.  The source is available on 
+<A href="https://github.com/jeffsw/rpkilog">GitHub: jeffsw/rpkilog</A>.  Please give me a star if this
+helps you.</p>
+
+<p>Thanks to Job Snijders for making his VRP cache snapshots available.</p>
+
+<p>This service runs on AWS.  If you work there and can help get this project sponsored, please reach out.</p>
+
+<p>Thanks!</p>
+
+<fieldset>
+    <legend>RPKI History Search</legend>
+    
+    <label for="prefix">Prefix</label>
+    <input id="prefix" value="1.6.16.0/22" type="text" name="prefix" autofocus required minlength="4" maxlength="43" size="20">
+
+    <button id="rpki_history_search_button" type="button">Search</button>
+</fieldset>
+
+<table id="vrp_history_table" class="vrp_history">
+    <caption></caption>
+    <thead>
+        <th>prefix</th>
+        <th>maxLength</th>
+        <th>asn</th>
+        <th>ta</th>
+        <th>expires</th>
+        <th>verb</th>
+        <th>observation_timestamp</th>
+    </thead>
+    <tbody>
+        <tr><td colspan="7">Input search parameters, above, to retrieve history records.</td></tr>
+    </tbody>
+</table>
+
+</body>
 <template id="vrp_history_row">
     <tr class="vrp_history">
         <td data-field-name="prefix"></td>
@@ -19,31 +60,4 @@
         <td data-field-name="observation_timestamp"></td>
     </tr>
 </template>
-<body>
-<form>
-    <fieldset>
-        <legend>RPKI History Search</legend>
-        
-        <label for="prefix">Prefix</label>
-        <input id="prefix" type="text" name="prefix" autofocus required minlength="4" maxlength="43" size="20">
-
-        <button type="button">Search</button>
-    </fieldset>
-</form>
-
-<table id="vrp_history_table" class="vrp_history">
-    <thead>
-        <th>prefix</th>
-        <th>maxLength</th>
-        <th>asn</th>
-        <th>ta</th>
-        <th>expires</th>
-        <th>verb</th>
-        <th>observation_timestamp</th>
-    </thead>
-    <tbody></tbody>
-</table>
-
-
-</body>
 </html>

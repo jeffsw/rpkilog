@@ -70,6 +70,11 @@ data "aws_acm_certificate" "es_prod" {
     statuses = [ "ISSUED" ]
 }
 
+data "aws_acm_certificate" "rpkilog_com" {
+    domain = "rpkilog.com"
+    statuses = [ "ISSUED" ]
+}
+
 ##############################
 # IAM roles
 resource "aws_iam_role" "ec2_cron1" {
@@ -712,9 +717,43 @@ resource "aws_s3_bucket" "rpkilog_diff" {
 resource "aws_s3_bucket_acl" "public_read" {
     for_each = toset([
         aws_s3_bucket.rpkilog_diff.id,
+        aws_s3_bucket.rpkilog_www.id,
     ])
     bucket = each.value
     acl = "public-read"
+}
+
+resource "aws_s3_bucket" "rpkilog_www" {
+    bucket = "rpkilog-www"
+}
+
+resource "aws_s3_bucket_policy" "rpkilog_www" {
+    bucket = aws_s3_bucket.rpkilog_www.id
+    policy = <<EOF
+        {
+            "Version": "2008-10-17",
+            "Statement": [
+                {
+                    "Sid": "AllowPublicRead",
+                    "Effect": "Allow",
+                    "Principal": {"AWS": "*"},
+                    "Action": [
+                        "s3:GetObject"
+                    ],
+                    "Resource": [
+                        "arn:aws:s3:::rpkilog-www/*"
+                    ]
+                }
+            ]
+        }
+    EOF
+}
+
+resource "aws_s3_bucket_website_configuration" "rpkilog_www" {
+    bucket = aws_s3_bucket.rpkilog_www.bucket
+    index_document {
+        suffix = "index.html"
+    }
 }
 
 ##############################
@@ -1091,4 +1130,53 @@ resource "aws_route53_record" "es_prod" {
     type = "CNAME"
     ttl = 300
     records = [ aws_elasticsearch_domain.prod.endpoint ]
+}
+
+resource "aws_route53_record" "rpkilog_com" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name = "rpkilog.com"
+    type = "A"
+    alias {
+        name = aws_cloudfront_distribution.rpkilog_com.domain_name
+        zone_id = aws_cloudfront_distribution.rpkilog_com.hosted_zone_id
+        evaluate_target_health = false
+    }
+}
+
+##############################
+# Cloudfront
+
+resource "aws_cloudfront_distribution" "rpkilog_com" {
+    aliases = ["rpkilog.com"]
+    enabled = true
+    default_cache_behavior {
+        allowed_methods = ["GET", "HEAD", "OPTIONS"]
+        cached_methods = ["GET", "HEAD"]
+        default_ttl = 300
+        forwarded_values {
+            query_string = false
+            cookies {
+                forward = "none"
+            }
+        }
+        max_ttl = 300
+        target_origin_id = "s3.us-east-1"
+        viewer_protocol_policy = "redirect-to-https"
+    }
+    default_root_object = "index.html"
+    is_ipv6_enabled = true
+    origin {
+        domain_name = aws_s3_bucket.rpkilog_www.bucket_regional_domain_name
+        origin_id = "s3.us-east-1"
+    }
+    restrictions {
+        geo_restriction {
+            restriction_type = "none"
+        }
+    }
+    retain_on_delete = true
+    viewer_certificate {
+        acm_certificate_arn = data.aws_acm_certificate.rpkilog_com.arn
+        ssl_support_method = "sni-only"
+    }
 }

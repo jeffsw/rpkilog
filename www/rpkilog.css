@@ -1,21 +1,31 @@
 body {
     background-color: #000;
-    color: rgb(10, 202, 49);
+    color: rgb(13, 157, 42);
 }
 
-tr.vrp_history {
+body a:visited, body a:link, body a:active {
+    color: rgb(228, 216, 2);
+}
+
+table.vrp_history {
     font-family: monospace;
-}
-
-tr.vrp_history:nth-child(even) {
-    background-color: rgb(20, 44, 73);
-}
-
-td.vrp_history {
     text-align: left;
     vertical-align: bottom;
+}
+
+tr.vrp_history:nth-child(odd) {
+    background-color: rgb(64, 50, 39);
 }
 
 td[data-field-name="prefix"] {
     font-family: monospace;
 }
+
+td[data-field-name="maxLength"] {
+    text-align: center;
+}
+
+td[data-field-name="asn"] {
+    text-align: left;
+}
+
