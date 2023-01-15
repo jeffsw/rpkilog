@@ -3,6 +3,7 @@ HTTP API with AWS lambda entry-point
 '''
 import base64
 from datetime import datetime
+import dateutil.parser
 import json
 import logging
 import os
@@ -12,13 +13,17 @@ import netaddr
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 
+date_parser = dateutil.parser.parser()
 logger = logging.getLogger(__name__)
 
 def aws_lambda_entry_point(event:dict, context:dict):
+    global date_parser
     #TODO: do I need the timestamp in cloudwatch? decide when testing
+    #TODO: Seems something is calling basicConfig before us?  Try force=true
     logging.basicConfig(
         datefmt='%Y-%m-%dT%H:%M:%S',
         format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        force=True,
     )
     if not isinstance(event, dict):
         raise TypeError(f'event argument expected to be a dict but it is a {type(event)}')
@@ -33,7 +38,10 @@ def aws_lambda_entry_point(event:dict, context:dict):
     body_dict = json.loads(body_plain)
 
     query_args = dict()
-    query_args['prefix'] = netaddr.IPNetwork(body_dict['prefix'])
+
+    if 'prefix' in body_dict:
+        query_args['prefix'] = netaddr.IPNetwork(body_dict['prefix'])
+
     for bool_arg_name in ['exact', 'max_len']:
         if bool_arg_name not in body_dict:
             continue
@@ -41,7 +49,8 @@ def aws_lambda_entry_point(event:dict, context:dict):
             wrong_type = type(body_dict[bool_arg_name])
             raise TypeError(f'argument {bool_arg_name} must be a boolean.  Its type is {wrong_type}')
         query_args[bool_arg_name] = body_dict[bool_arg_name]
-    for int_arg_name in ['max_len']:
+
+    for int_arg_name in ['asn', 'max_len']:
         if int_arg_name not in body_dict:
             continue
         if type(body_dict[int_arg_name]) != int:
@@ -49,20 +58,30 @@ def aws_lambda_entry_point(event:dict, context:dict):
             raise TypeError(f'argument {int_arg_name} must be an int.  Its type is {wrong_type}')
         query_args[int_arg_name] = body_dict[int_arg_name]
 
-    if 'prefix' in body_dict:
-        result = get_history_for_prefix(**query_args)
-    
+    for datetime_arg_name in ['observation_timestamp_start', 'observation_timestamp_end']:
+        if datetime_arg_name not in body_dict:
+            continue
+        query_args[datetime_arg_name] = date_parser.parse(body_dict[datetime_arg_name])
+
+    if not ('asn' in query_args or 'prefix' in query_args):
+        return {
+            'statusCode': 400,
+            'body': 'Both asn and prefix arguments missing from request.  At least one of them is required.',
+        }
+
+    query = get_history_es_query(**query_args)
+    result = invoke_es_query(query)
     return result
 
 def cli_entry_point():
+    global date_parser
     import argparse
-    import dateutil.parser
 
-    date_parser = dateutil.parser.parser()
     ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
-    ap.add_argument('prefix', type=netaddr.IPNetwork, help='Query the DB for given prefix')
-    ap.add_argument('--exact', default=False, action='store_true', help='Exact prefix-length matches only')
-    ap.add_argument('--max-len', default=None, type=int, help='Maximum prefix-length')
+    ap.add_argument('--asn', type=int, help='Query for given ASN')
+    ap.add_argument('--prefix', type=netaddr.IPNetwork, help='Query the DB for given prefix')
+    ap.add_argument('--exact', action='store_true', help='Exact prefix-length matches only')
+    ap.add_argument('--max-len', type=int, help='Maximum prefix-length')
     ap.add_argument('--observation-timestamp-start', type=date_parser.parse, help='Optional start time for DB query')
     ap.add_argument('--observation-timestamp-end', type=date_parser.parse, help='Optional end time for DB query')
     ap.add_argument('--debug', action='store_true', help='Break to debugger immediately after argument parsing')
@@ -72,7 +91,8 @@ def cli_entry_point():
         pdb.set_trace()
         args.pop('debug')
 
-    result = get_history_for_prefix(**args)
+    query = get_history_es_query(**args)
+    result = invoke_es_query(query)
     pretty_result = pretty_stringify_es_result(result)
     print(pretty_result)
 
@@ -184,6 +204,87 @@ def get_es_query_for_ip_prefix(
             raise TypeError('search_after must be a list containing two integers obtained from "sort" ' +
                 'key of previously-returned record'
             )
+        query['search_after'] = search_after
+
+    return query
+
+def get_history_es_query(
+    asn: int = None,
+    exact: bool = None,
+    max_len: int = None,
+    observation_timestamp_start: datetime = None,
+    observation_timestamp_end: datetime = None,
+    paginate_size: int = 20,
+    prefix: netaddr.IPNetwork = None,
+    search_after: list = None,
+    verb: str = None,
+):
+    if bool(exact):
+        raise ValueError(f'UNIMPLEMENTED: exact not yet supported')
+    if max_len != None:
+        raise ValueError(f'UNIMPLEMENTED: max_len not yet supported')
+    
+    # query must include at least a prefix or an asn
+    if asn == None and prefix == None:
+        raise KeyError(f'NOT ENOUGH ARGUMENTS: query must include at least a prefix OR asn.  Both are missing.')
+
+    query = {
+        'size': paginate_size,
+        'query': {
+            'bool': {
+                'filter': [
+                    # Add filters here
+                ]
+            }
+        },
+        # sorting docs https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
+        'sort': [
+            {'observation_timestamp': 'desc'},
+            {'_doc': 'asc'}
+        ],
+    }
+    filter_list = query['query']['bool']['filter']
+
+    if asn != None:
+        filter_list.append({
+            'query_string': {
+                'analyze_wildcard': 'true',
+                'query': f'asn:{asn}',
+            }
+        })
+
+    if prefix != None:
+        prefix_first_addr = netaddr.IPAddress(prefix.first)
+        prefix_last_addr = netaddr.IPAddress(prefix.last)
+        filter_list.append({
+            'query_string': {
+                'analyze_wildcard': 'true',
+                'query': f'prefix: ["{str(prefix_first_addr)}" TO "{str(prefix_last_addr)}"]',
+                'time_zone': 'UTC',
+            }
+        })
+
+    if observation_timestamp_start != None or observation_timestamp_end != None:
+        if observation_timestamp_start != None:
+            obs_ts_start_str = datetime_to_es_format(observation_timestamp_start)
+        else:
+            obs_ts_start_str = '1981-10-26T00:00:00.000Z'
+        if observation_timestamp_end != None:
+            obs_ts_end_str = datetime_to_es_format(observation_timestamp_end)
+        else:
+            obs_ts_end_str = '2038-01-01T00:00:00.000Z'
+        filter_list.append({
+            'range': {
+                'observation_timestamp': {
+                    'format': 'strict_date_optional_time',
+                    'gte': obs_ts_start_str,
+                    'lte': obs_ts_end_str,
+                }
+            }
+        })
+    
+    if search_after != None:
+        assert(len(search_after))
         query['search_after'] = search_after
 
     return query
