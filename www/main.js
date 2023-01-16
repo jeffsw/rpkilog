@@ -69,17 +69,31 @@ function create_vrp_history_row (history_entry) {
 var rpki_result = {};
 
 function search_clicked (event) {
-    let prefix_input = document.querySelector("#prefix");
     let tbody = document.querySelector("table#vrp_history_table > tbody");
     let caption = document.querySelector("#vrp_history_table > caption");
     caption.innerText = 'Posting query to rpkilog API...';
     caption.style.color = '#e4d802';
     tbody.replaceChildren();
 
+    let copy_fields_to_query = [
+        "asn",
+        "observation_timestamp_start",
+        "observation_timestamp_end",
+        "prefix",
+    ];
+    let query = {};
+    // Copy input form fields which require no manipulation (except URI encoding) before posting to API
+    for (let field of copy_fields_to_query) {
+        let input_element = document.querySelector("#" + field);
+        if (input_element.value.length) {
+            query[field] = input_element.value;
+        }
+    }
+
     fetch(rpkilog_config.api_url, {
         method: 'POST',
         headers: {'Accept': 'application/json'},
-        body: JSON.stringify({prefix: prefix_input.value}),
+        body: JSON.stringify(query),
     })
     .then(fetch_response => fetch_response.json())
     .then(json_body => {

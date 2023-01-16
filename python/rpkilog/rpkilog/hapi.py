@@ -18,17 +18,14 @@ logger = logging.getLogger(__name__)
 
 def aws_lambda_entry_point(event:dict, context:dict):
     global date_parser
-    #TODO: do I need the timestamp in cloudwatch? decide when testing
-    #TODO: Seems something is calling basicConfig before us?  Try force=true
+    # AWS Lambda runtime performs a basicConfig before we get the chance.  Override it with force=True.
     logging.basicConfig(
         datefmt='%Y-%m-%dT%H:%M:%S',
-        format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        format=f'{context.aws_request_id} %(levelname)s %(filename)s:%(lineno)d %(funcName)s %(message)s',
         force=True,
     )
     if not isinstance(event, dict):
         raise TypeError(f'event argument expected to be a dict but it is a {type(event)}')
-    if 'rawPath' in event:
-        logger.info(f'event.rawPath: {event["rawPath"]}')
     if 'body' not in event:
         raise KeyError('event argument is missing the "body" key')
     if event.get('isBase64Encoded', False) == True:
@@ -37,31 +34,26 @@ def aws_lambda_entry_point(event:dict, context:dict):
         body_plain = event['body']
     body_dict = json.loads(body_plain)
 
+    request_source_ip = event.get('requestContext', {}).get('http', {}).get('sourceIp', None)
+    logger.info(f'request from sourceIp {request_source_ip} body_dict: {body_dict}')
+
     query_args = dict()
+
+    if 'asn' in body_dict:
+        query_args['asn'] = int(body_dict['asn'])
+
+    if 'exact' in body_dict:
+        query_args['exact'] = bool(body_dict['exact'])
+
+    if 'max_len' in body_dict:
+        query_args['max_len'] = int(body_dict['max_len'])
 
     if 'prefix' in body_dict:
         query_args['prefix'] = netaddr.IPNetwork(body_dict['prefix'])
 
-    for bool_arg_name in ['exact', 'max_len']:
-        if bool_arg_name not in body_dict:
-            continue
-        if type(body_dict[bool_arg_name]) != bool:
-            wrong_type = type(body_dict[bool_arg_name])
-            raise TypeError(f'argument {bool_arg_name} must be a boolean.  Its type is {wrong_type}')
-        query_args[bool_arg_name] = body_dict[bool_arg_name]
-
-    for int_arg_name in ['asn', 'max_len']:
-        if int_arg_name not in body_dict:
-            continue
-        if type(body_dict[int_arg_name]) != int:
-            wrong_type = type(body_dict[int_arg_name])
-            raise TypeError(f'argument {int_arg_name} must be an int.  Its type is {wrong_type}')
-        query_args[int_arg_name] = body_dict[int_arg_name]
-
-    for datetime_arg_name in ['observation_timestamp_start', 'observation_timestamp_end']:
-        if datetime_arg_name not in body_dict:
-            continue
-        query_args[datetime_arg_name] = date_parser.parse(body_dict[datetime_arg_name])
+    for arg_name in ['observation_timestamp_start', 'observation_timestamp_end']:
+        if arg_name in body_dict:
+            query_args[arg_name] = date_parser.parse(body_dict[arg_name])
 
     if not ('asn' in query_args or 'prefix' in query_args):
         return {
