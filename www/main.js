@@ -1,5 +1,28 @@
 import { VrpHistoryEntry } from './rpkilog.js';
 
+function check_for_deeplink_in_url (event) {
+    // Invoked at DOMContentLoaded.  Check the document URL and if it has get params, populate the
+    // search form and invoke a query.  This allows sharing links right to a set of search results.
+
+    url = new URL(document.URL);
+    if (url.search.length == 0) {
+        return;
+    }
+    params = new URLSearchParams(url.search);
+    field_list = [
+        'asn',
+        'observation_timestamp_start',
+        'observation_timestamp_end',
+        'prefix',
+    ];
+    for (field of field_list) {
+        if ('prefix' in params) {
+            document.querySelector('#' + field).value = params[field];
+        }
+    }
+    document.querySelector('#rpki_history_search_button').click();
+}
+
 function create_vrp_history_row (history_entry) {
     // Munge some data for presentation
     let history_clone = JSON.parse(JSON.stringify(history_entry));
@@ -91,13 +114,13 @@ function search_clicked (event) {
     }
 
     let get_params = new URLSearchParams(query)
-    fetch(rpkilog_config.api_url + get_params.toString(), {
+    fetch(rpkilog_config.api_url + '?' + get_params.toString(), {
         method: 'GET',
         cache: 'no-store',
         headers: {'Accept': 'application/json'},
-        mode: 'no-cors',
+        mode: 'cors',
     })
-    .then(fetch_response => fetch_response.json())
+    .then(fetch_response => { return fetch_response.json(); } )
     .then(json_body => {
         rpki_result = json_body;
         let result_rows = new Array();
@@ -114,7 +137,9 @@ function search_clicked (event) {
         }
         caption.style.color = null;
         tbody.replaceChildren(...result_rows);
+        window.history.pushState('', '', '/?' + get_params.toString());
     });
 };
 
 document.querySelector("#rpki_history_search_button").addEventListener("click", search_clicked);
+addEventListener('DOMContentLoaded', check_for_deeplink_in_url);

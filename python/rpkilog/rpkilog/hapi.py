@@ -28,25 +28,25 @@ def aws_lambda_entry_point(event:dict, context:dict):
         raise TypeError(f'event argument expected to be a dict but it is a {type(event)}')
 
     request_source_ip = event.get('requestContext', {}).get('http', {}).get('sourceIp', None)
-    logger.info(f'request from sourceIp {request_source_ip} queryStringParameters: {event.queryStringParameters}')
+    logger.info(f'request from sourceIp {request_source_ip} queryStringParameters: {event["queryStringParameters"]}')
 
     query_args = dict()
 
-    if 'asn' in event.queryStringParameters:
-        query_args['asn'] = int(event.queryStringParameters['asn'])
+    if 'asn' in event['queryStringParameters']:
+        query_args['asn'] = int(event['queryStringParameters']['asn'])
 
-    if 'exact' in event.queryStringParameters:
-        query_args['exact'] = bool(event.queryStringParameters['exact'])
+    if 'exact' in event['queryStringParameters']:
+        query_args['exact'] = bool(event['queryStringParameters']['exact'])
 
-    if 'max_len' in event.queryStringParameters:
-        query_args['max_len'] = int(event.queryStringParameters['max_len'])
+    if 'max_len' in event['queryStringParameters']:
+        query_args['max_len'] = int(event['queryStringParameters']['max_len'])
 
-    if 'prefix' in event.queryStringParameters:
-        query_args['prefix'] = netaddr.IPNetwork(event.queryStringParameters['prefix'])
+    if 'prefix' in event['queryStringParameters']:
+        query_args['prefix'] = netaddr.IPNetwork(event['queryStringParameters']['prefix'])
 
     for arg_name in ['observation_timestamp_start', 'observation_timestamp_end']:
-        if arg_name in event.queryStringParameters:
-            query_args[arg_name] = date_parser.parse(event.queryStringParameters[arg_name])
+        if arg_name in event['queryStringParameters']:
+            query_args[arg_name] = date_parser.parse(event['queryStringParameters'][arg_name])
 
     if not ('asn' in query_args or 'prefix' in query_args):
         return {
