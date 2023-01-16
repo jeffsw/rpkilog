@@ -90,10 +90,12 @@ function search_clicked (event) {
         }
     }
 
-    fetch(rpkilog_config.api_url, {
-        method: 'POST',
+    let get_params = new URLSearchParams(query)
+    fetch(rpkilog_config.api_url + get_params.toString(), {
+        method: 'GET',
+        cache: 'no-store',
         headers: {'Accept': 'application/json'},
-        body: JSON.stringify(query),
+        mode: 'no-cors',
     })
     .then(fetch_response => fetch_response.json())
     .then(json_body => {

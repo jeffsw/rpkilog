@@ -26,34 +26,27 @@ def aws_lambda_entry_point(event:dict, context:dict):
     )
     if not isinstance(event, dict):
         raise TypeError(f'event argument expected to be a dict but it is a {type(event)}')
-    if 'body' not in event:
-        raise KeyError('event argument is missing the "body" key')
-    if event.get('isBase64Encoded', False) == True:
-        body_plain = base64.b64decode(event['body'])
-    else:
-        body_plain = event['body']
-    body_dict = json.loads(body_plain)
 
     request_source_ip = event.get('requestContext', {}).get('http', {}).get('sourceIp', None)
-    logger.info(f'request from sourceIp {request_source_ip} body_dict: {body_dict}')
+    logger.info(f'request from sourceIp {request_source_ip} queryStringParameters: {event.queryStringParameters}')
 
     query_args = dict()
 
-    if 'asn' in body_dict:
-        query_args['asn'] = int(body_dict['asn'])
+    if 'asn' in event.queryStringParameters:
+        query_args['asn'] = int(event.queryStringParameters['asn'])
 
-    if 'exact' in body_dict:
-        query_args['exact'] = bool(body_dict['exact'])
+    if 'exact' in event.queryStringParameters:
+        query_args['exact'] = bool(event.queryStringParameters['exact'])
 
-    if 'max_len' in body_dict:
-        query_args['max_len'] = int(body_dict['max_len'])
+    if 'max_len' in event.queryStringParameters:
+        query_args['max_len'] = int(event.queryStringParameters['max_len'])
 
-    if 'prefix' in body_dict:
-        query_args['prefix'] = netaddr.IPNetwork(body_dict['prefix'])
+    if 'prefix' in event.queryStringParameters:
+        query_args['prefix'] = netaddr.IPNetwork(event.queryStringParameters['prefix'])
 
     for arg_name in ['observation_timestamp_start', 'observation_timestamp_end']:
-        if arg_name in body_dict:
-            query_args[arg_name] = date_parser.parse(body_dict[arg_name])
+        if arg_name in event.queryStringParameters:
+            query_args[arg_name] = date_parser.parse(event.queryStringParameters[arg_name])
 
     if not ('asn' in query_args or 'prefix' in query_args):
         return {
