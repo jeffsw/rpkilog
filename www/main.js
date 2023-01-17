@@ -16,8 +16,8 @@ function check_for_deeplink_in_url (event) {
         'prefix',
     ];
     for (let field of field_list) {
-        if ('prefix' in params) {
-            document.querySelector('#' + field).value = params[field];
+        if (params.has(field)) {
+            document.querySelector('#' + field).value = params.get(field);
         }
     }
     document.querySelector('#rpki_history_search_button').click();
