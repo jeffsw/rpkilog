@@ -507,7 +507,7 @@ resource "aws_cognito_user_group" "es_superuser" {
     name = "es_superuser"
     user_pool_id = aws_cognito_user_pool.es.id
     role_arn = aws_iam_role.es_superuser.arn
-    precedence = 0
+    precedence = 1
 }
 
 resource "aws_cognito_identity_provider" "google" {
@@ -569,7 +569,7 @@ resource "aws_cognito_identity_pool" "es" {
 resource "aws_cognito_identity_pool_roles_attachment" "es" {
     identity_pool_id = aws_cognito_identity_pool.es.id
     roles = {
-        authenticated = aws_iam_role.es_master.arn
+        authenticated = aws_iam_role.anonymous_web.arn
         unauthenticated = aws_iam_role.anonymous_web.arn
     }
     role_mapping {
