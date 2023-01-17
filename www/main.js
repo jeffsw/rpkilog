@@ -4,18 +4,18 @@ function check_for_deeplink_in_url (event) {
     // Invoked at DOMContentLoaded.  Check the document URL and if it has get params, populate the
     // search form and invoke a query.  This allows sharing links right to a set of search results.
 
-    url = new URL(document.URL);
+    let url = new URL(document.URL);
     if (url.search.length == 0) {
         return;
     }
-    params = new URLSearchParams(url.search);
-    field_list = [
+    let params = new URLSearchParams(url.search);
+    let field_list = [
         'asn',
         'observation_timestamp_start',
         'observation_timestamp_end',
         'prefix',
     ];
-    for (field of field_list) {
+    for (let field of field_list) {
         if ('prefix' in params) {
             document.querySelector('#' + field).value = params[field];
         }
