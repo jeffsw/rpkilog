@@ -1,6 +1,7 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
     <title>rpkilog history search tool for RPKI data</title>
     <link rel="stylesheet" href="rpkilog.css">
     <script>
@@ -8,7 +9,7 @@
             "api_url": "https://lv67q6w52abgu2igfbpef5vhsm0jahqq.lambda-url.us-east-1.on.aws/"
         };
     </script>
-    <script defer src="main.js" type="module"></script>
+    <script src="main.js" type="module"></script>
 </head>
 <body>
 
@@ -31,7 +32,7 @@ helps you.</p>
     <label for="prefix">Prefix</label>
     <input id="prefix" value="8.8.8.8/24" type="text" name="prefix" autofocus required minlength="4" maxlength="43" size="20">
 
-    <label for="ASN">ASN</label>
+    <label for="asn">ASN</label>
     <input id="asn" value="" type="text" name="asn" size="7">
 
     <label for="observation_timestamp_start">Observed Date/Time Range From</label>
@@ -46,20 +47,21 @@ helps you.</p>
 <table id="vrp_history_table" class="vrp_history">
     <caption></caption>
     <thead>
-        <th>prefix</th>
-        <th>maxLength</th>
-        <th>asn</th>
-        <th>ta</th>
-        <th>expires</th>
-        <th>verb</th>
-        <th>observation_timestamp</th>
+        <tr>
+            <th>prefix</th>
+            <th>maxLength</th>
+            <th>asn</th>
+            <th>ta</th>
+            <th>expires</th>
+            <th>verb</th>
+            <th>observation_timestamp</th>
+        </tr>
     </thead>
     <tbody>
         <tr><td colspan="7">Input search parameters, above, to retrieve history records.</td></tr>
     </tbody>
 </table>
 
-</body>
 <template id="vrp_history_row">
     <tr class="vrp_history">
         <td data-field-name="prefix"></td>
@@ -71,4 +73,5 @@ helps you.</p>
         <td data-field-name="observation_timestamp"></td>
     </tr>
 </template>
+</body>
 </html>
