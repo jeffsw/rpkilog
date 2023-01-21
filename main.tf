@@ -902,10 +902,19 @@ resource "aws_lambda_function" "hapi" {
         ignore_changes = [ filename ]
     }
 }
+resource "aws_lambda_permission" "hapi_by_apigw" {
+    # Allow APIGW to invoke the hapi lambda
+    function_name = aws_lambda_function.hapi.function_name
+    statement_id = "AllowApiGateway"
+    action = "lambda:invokeFunction"
+    principal = "apigateway.amazonaws.com"
+}
 resource "aws_lambda_permission" "hapi" {
+    # Allow function URL to invoke the hapi lambda
     function_name = aws_lambda_function.hapi.function_name
     statement_id = "AllowExecutionFromWeb"
     action = "lambda:InvokeFunction"
+    #FIXME: This should be something like lambda.amazonaws.com, not "*"
     principal = "*"
 }
 resource "aws_lambda_function_url" "hapi" {
@@ -1230,19 +1239,13 @@ resource "aws_api_gateway_rest_api" "public_api" {
     description = "RPKILog Public API"
 }
 
-resource "aws_api_gateway_stage" "unstable" {
-    deployment_id = aws_api_gateway_deployment.unstable.id
+resource "aws_api_gateway_method_settings" "unstable" {
     rest_api_id = aws_api_gateway_rest_api.public_api.id
     stage_name = "unstable"
-}
-
-resource "aws_api_gateway_method_settings" "example" {
-    rest_api_id = aws_api_gateway_rest_api.public_api.id
-    stage_name = aws_api_gateway_stage.unstable.stage_name
     method_path = "*/*"
-    logging_level = "INFO"
     settings {
-        metrics_enabled = True
+        logging_level = "INFO"
+        metrics_enabled = true
     }
     #TODO: throttling_rate_limit (requests/sec) & throttling_burst_limit can be set here
     # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method_settings
@@ -1253,7 +1256,7 @@ resource "aws_api_gateway_base_path_mapping" "public_api" {
     api_id = aws_api_gateway_rest_api.public_api.id
     base_path = "unstable"
     domain_name = aws_api_gateway_domain_name.api_rpkilog_com.domain_name
-    stage_name = api_gateway_stage.unstable.stage_name
+    stage_name = aws_api_gateway_stage.unstable.stage_name
 }
 
 # APIGW resource-paths/methods/integrations are defined below
@@ -1262,14 +1265,14 @@ resource "aws_api_gateway_resource" "unstable_history" {
     # resource for querying the VRP history records e.g. api.rpkilog.com/unstable/history
     #FIXME: how does it get connected to the stage?
     rest_api_id = aws_api_gateway_rest_api.public_api.id
-    resource_id = aws_api_gateway_rest_api.public_api.root_resource_id
+    parent_id = aws_api_gateway_rest_api.public_api.root_resource_id
     path_part = "history"
 }
 
 resource "aws_api_gateway_method" "unstable_history_GET" {
     rest_api_id = aws_api_gateway_resource.unstable_history.rest_api_id
     resource_id = aws_api_gateway_resource.unstable_history.id
-    http_method = "GET"
+    http_method = "ANY"
     authorization = "NONE"
 }
 
@@ -1279,6 +1282,33 @@ resource "aws_api_gateway_integration" "hapi" {
     http_method = "GET"
     # Terraform documentation says use POST when invoking a lambda.  Only supported method.
     integration_http_method = "POST"
-    type = "AWX_PROXY"
+    type = "AWS_PROXY"
     uri = aws_lambda_function.hapi.invoke_arn
 }
+
+# APIGW deployment
+resource "aws_api_gateway_deployment" "public_api" {
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    lifecycle {
+        create_before_destroy = true
+    }
+    triggers = {
+        redeployment = sha1(jsonencode([
+            aws_api_gateway_method_settings.unstable,
+            aws_api_gateway_resource.unstable_history,
+            aws_api_gateway_method.unstable_history_GET,
+            aws_api_gateway_integration.hapi,
+        ]))
+    }
+}
+
+# APIGW stage
+
+resource "aws_api_gateway_stage" "unstable" {
+    deployment_id = aws_api_gateway_deployment.public_api.id
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    stage_name = "unstable"
+}
+
+# APIGW end
+##############################
