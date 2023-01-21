@@ -65,6 +65,22 @@ resource "aws_key_pair" "jeffsw" {
 # This needs to be manually created.
 # When ready to create certs as part of terraform workflow, see this helpful example:
 # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate_validation
+resource "aws_acm_certificate" "api_rpkilog_com" {
+    domain_name = "api.rpkilog.com"
+    validation_method = "DNS"
+    lifecycle {
+        create_before_destroy = true
+    }
+}
+
+resource "aws_acm_certificate_validation" "api_rpkilog_com" {
+    # Waits for certificate validation
+    certificate_arn = aws_acm_certificate.api_rpkilog_com.arn
+    validation_record_fqdns = [
+        for record in aws_route53_record.validate_acm_for_api_rpkilog_com : record.fqdn
+    ]
+}
+
 data "aws_acm_certificate" "es_prod" {
     domain = "es-prod.rpkilog.com"
     statuses = [ "ISSUED" ]
@@ -1143,6 +1159,25 @@ resource "aws_route53_record" "rpkilog_com" {
     }
 }
 
+resource "aws_route53_record" "validate_acm_for_api_rpkilog_com" {
+    # Validates the ACM certificate requested for api.rpkilog.com
+    # See docs on DNS Validation with Route 53
+    # https://registry.terraform.io/providers/hashicorp/aws/4.49.0/docs/resources/acm_certificate_validation
+    for_each = {
+        for dvo in aws_acm_certificate.api_rpkilog_com.domain_validation_options : dvo.domain_name => {
+            name   = dvo.resource_record_name
+            record = dvo.resource_record_value
+            type   = dvo.resource_record_type
+        }
+    }
+    allow_overwrite = true
+    name = each.value.name
+    records = [ each.value.record ]
+    ttl = 300
+    type = each.value.type
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+}
+
 ##############################
 # Cloudfront
 
@@ -1179,4 +1214,71 @@ resource "aws_cloudfront_distribution" "rpkilog_com" {
         acm_certificate_arn = data.aws_acm_certificate.rpkilog_com.arn
         ssl_support_method = "sni-only"
     }
+}
+
+##############################
+# APIGW gateway itself, domain name, stage ("/unstable" only, for now), and similar
+# The resource-paths (/history) and integrations are a bit further down
+
+resource "aws_api_gateway_domain_name" "api_rpkilog_com" {
+    domain_name = aws_acm_certificate.api_rpkilog_com.domain_name
+    regional_certificate_arn = aws_acm_certificate_validation.api_rpkilog_com.certificate_arn
+}
+
+resource "aws_api_gateway_rest_api" "public_api" {
+    name = "public_api"
+    description = "RPKILog Public API"
+}
+
+resource "aws_api_gateway_stage" "unstable" {
+    deployment_id = aws_api_gateway_deployment.unstable.id
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    stage_name = "unstable"
+}
+
+resource "aws_api_gateway_method_settings" "example" {
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    stage_name = aws_api_gateway_stage.unstable.stage_name
+    method_path = "*/*"
+    logging_level = "INFO"
+    settings {
+        metrics_enabled = True
+    }
+    #TODO: throttling_rate_limit (requests/sec) & throttling_burst_limit can be set here
+    # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method_settings
+    # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-usage-plans-with-console.html#api-gateway-usage-plan-create
+}
+
+resource "aws_api_gateway_base_path_mapping" "public_api" {
+    api_id = aws_api_gateway_rest_api.public_api.id
+    base_path = "unstable"
+    domain_name = aws_api_gateway_domain_name.api_rpkilog_com.domain_name
+    stage_name = api_gateway_stage.unstable.stage_name
+}
+
+# APIGW resource-paths/methods/integrations are defined below
+
+resource "aws_api_gateway_resource" "unstable_history" {
+    # resource for querying the VRP history records e.g. api.rpkilog.com/unstable/history
+    #FIXME: how does it get connected to the stage?
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    resource_id = aws_api_gateway_rest_api.public_api.root_resource_id
+    path_part = "history"
+}
+
+resource "aws_api_gateway_method" "unstable_history_GET" {
+    rest_api_id = aws_api_gateway_resource.unstable_history.rest_api_id
+    resource_id = aws_api_gateway_resource.unstable_history.id
+    http_method = "GET"
+    authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "hapi" {
+    rest_api_id = aws_api_gateway_resource.unstable_history.rest_api_id
+    resource_id = aws_api_gateway_resource.unstable_history.id
+    http_method = "GET"
+    # Terraform documentation says use POST when invoking a lambda.  Only supported method.
+    integration_http_method = "POST"
+    type = "AWX_PROXY"
+    uri = aws_lambda_function.hapi.invoke_arn
 }
