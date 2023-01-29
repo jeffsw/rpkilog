@@ -93,6 +93,37 @@ data "aws_acm_certificate" "rpkilog_com" {
 
 ##############################
 # IAM roles
+data "aws_iam_policy" "AmazonAPIGatewayPushToCloudWatchLogs" {
+    name = "AmazonAPIGatewayPushToCloudWatchLogs"
+    #arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_iam_role" "apigw_logging_accountwide_role" {
+    # If a terraform apply error like "CloudWatch Logs role ARN must be set in account settings to enable logging"
+    # even though it is set by this resource, retry the apply operation after a minute.
+    # It seems like terraform thinks the modification is complete even though it isn't.  Probably an AWS
+    # race condition.
+    name = "apigw_logging_accountwide_role"
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowApiGwToAssumeThisRole",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "apigateway.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+        }
+    ]
+}
+POLICY
+    managed_policy_arns = [
+        data.aws_iam_policy.AmazonAPIGatewayPushToCloudWatchLogs.arn
+    ]
+}
+
 resource "aws_iam_role" "ec2_cron1" {
     name = "ec2_cron1"
     assume_role_policy = file("aws_iam/ec2_generic_assume_role.json")
@@ -1225,6 +1256,11 @@ resource "aws_cloudfront_distribution" "rpkilog_com" {
     }
 }
 
+# API Gateway requires this bit of account-wide config for logging
+resource "aws_api_gateway_account" "apigw_account" {
+    cloudwatch_role_arn = aws_iam_role.apigw_logging_accountwide_role.arn
+}
+
 ##############################
 # APIGW gateway itself, domain name, stage ("/unstable" only, for now), and similar
 # The resource-paths (/history) and integrations are a bit further down
@@ -1232,11 +1268,20 @@ resource "aws_cloudfront_distribution" "rpkilog_com" {
 resource "aws_api_gateway_domain_name" "api_rpkilog_com" {
     domain_name = aws_acm_certificate.api_rpkilog_com.domain_name
     regional_certificate_arn = aws_acm_certificate_validation.api_rpkilog_com.certificate_arn
+    endpoint_configuration {
+        # Using REGIONAL instead of EDGE for simplicity
+        types = [ "REGIONAL" ]
+    }
 }
 
 resource "aws_api_gateway_rest_api" "public_api" {
     name = "public_api"
     description = "RPKILog Public API"
+    endpoint_configuration {
+        # Using REGIONAL instead of EDGE for simplicity
+        # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-endpoint-types.html
+        types = [ "REGIONAL" ]
+    }
 }
 
 resource "aws_api_gateway_method_settings" "unstable" {
@@ -1250,6 +1295,10 @@ resource "aws_api_gateway_method_settings" "unstable" {
     #TODO: throttling_rate_limit (requests/sec) & throttling_burst_limit can be set here
     # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method_settings
     # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-usage-plans-with-console.html#api-gateway-usage-plan-create
+    depends_on = [
+        aws_api_gateway_deployment.public_api,
+        aws_api_gateway_stage.unstable
+    ]
 }
 
 resource "aws_api_gateway_base_path_mapping" "public_api" {
@@ -1272,7 +1321,7 @@ resource "aws_api_gateway_resource" "unstable_history" {
 resource "aws_api_gateway_method" "unstable_history_GET" {
     rest_api_id = aws_api_gateway_resource.unstable_history.rest_api_id
     resource_id = aws_api_gateway_resource.unstable_history.id
-    http_method = "ANY"
+    http_method = "GET"
     authorization = "NONE"
 }
 
@@ -1294,7 +1343,6 @@ resource "aws_api_gateway_deployment" "public_api" {
     }
     triggers = {
         redeployment = sha1(jsonencode([
-            aws_api_gateway_method_settings.unstable,
             aws_api_gateway_resource.unstable_history,
             aws_api_gateway_method.unstable_history_GET,
             aws_api_gateway_integration.hapi,
