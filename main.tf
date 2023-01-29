@@ -933,6 +933,8 @@ resource "aws_lambda_function" "hapi" {
         ignore_changes = [ filename ]
     }
 }
+#FIXME: Correct permissions issues.  Currently, it is too permissive.
+#       See https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway.html#apigateway-permissions
 resource "aws_lambda_permission" "hapi_by_apigw" {
     # Allow APIGW to invoke the hapi lambda
     function_name = aws_lambda_function.hapi.function_name
