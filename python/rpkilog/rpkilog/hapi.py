@@ -59,6 +59,10 @@ def aws_lambda_entry_point(event:dict, context:dict):
     # AWS REST API (APIGW 1.0) requires older response format
     # https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html#http-api-develop-integrations-lambda.response
     return {
+        'headers': {
+            'Access-Control-Allow-Methods': 'GET,OPTIONS,POST',
+            'Access-Control-Allow-Origin': '*',
+        },
         'isBase64Encoded': False,
         'statusCode': 200,
         'body': json.dumps(result),
