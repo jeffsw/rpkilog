@@ -56,7 +56,13 @@ def aws_lambda_entry_point(event:dict, context:dict):
 
     query = get_history_es_query(**query_args)
     result = invoke_es_query(query)
-    return result
+    # AWS REST API (APIGW 1.0) requires older response format
+    # https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html#http-api-develop-integrations-lambda.response
+    return {
+        'isBase64Encoded': False,
+        'statusCode': 200,
+        'body': json.dumps(result),
+    }
 
 def cli_entry_point():
     global date_parser
@@ -129,7 +135,7 @@ def get_es_query_for_ip_prefix(
     observation_timestamp_end: datetime = None,
     paginate_size: int = 20,
     search_after: list = None,
-):
+) -> dict:
     if bool(exact):
         raise ValueError(F'UNIMPLEMENTED: exact not yet supported')
     if max_len != None:
@@ -203,7 +209,7 @@ def get_history_es_query(
     prefix: netaddr.IPNetwork = None,
     search_after: list = None,
     verb: str = None,
-):
+) -> dict:
     if bool(exact):
         raise ValueError(f'UNIMPLEMENTED: exact not yet supported')
     if max_len != None:
@@ -291,8 +297,7 @@ def get_history_for_prefix(
     retval = invoke_es_query(query=es_query)
     return retval
 
-def invoke_es_query(query):
-    #TODO: get_es_client needs arguments!
+def invoke_es_query(query) -> dict:
     es_client = get_es_client()
     qresult = es_client.search(
         body = query,
