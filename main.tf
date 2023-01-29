@@ -1218,6 +1218,18 @@ resource "aws_route53_record" "validate_acm_for_api_rpkilog_com" {
     zone_id = aws_route53_zone.rpkilog_com.zone_id
 }
 
+resource "aws_route53_record" "api_rpkilog_com" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name = "api.rpkilog.com"
+    type = "A"
+    alias {
+        evaluate_target_health = false
+        # If changing APIGW from REGIONAL to EDGE, the below should change from regional_ to cloudfront_.
+        name = aws_api_gateway_domain_name.api_rpkilog_com.regional_domain_name
+        zone_id = aws_api_gateway_domain_name.api_rpkilog_com.regional_zone_id
+    }
+}
+
 ##############################
 # Cloudfront
 
@@ -1301,6 +1313,8 @@ resource "aws_api_gateway_method_settings" "unstable" {
     ]
 }
 
+# In the AWS WWW Console, navigate to APIGW -> Custom domain names -> api.rpkilog.com -> API mappings
+# to understand how this applies.  Effectively, it maps api.rpkilog.com/unstable to aws_api_gateway_stage.unstable.
 resource "aws_api_gateway_base_path_mapping" "public_api" {
     api_id = aws_api_gateway_rest_api.public_api.id
     base_path = "unstable"
