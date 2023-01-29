@@ -65,6 +65,22 @@ resource "aws_key_pair" "jeffsw" {
 # This needs to be manually created.
 # When ready to create certs as part of terraform workflow, see this helpful example:
 # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate_validation
+resource "aws_acm_certificate" "api_rpkilog_com" {
+    domain_name = "api.rpkilog.com"
+    validation_method = "DNS"
+    lifecycle {
+        create_before_destroy = true
+    }
+}
+
+resource "aws_acm_certificate_validation" "api_rpkilog_com" {
+    # Waits for certificate validation
+    certificate_arn = aws_acm_certificate.api_rpkilog_com.arn
+    validation_record_fqdns = [
+        for record in aws_route53_record.validate_acm_for_api_rpkilog_com : record.fqdn
+    ]
+}
+
 data "aws_acm_certificate" "es_prod" {
     domain = "es-prod.rpkilog.com"
     statuses = [ "ISSUED" ]
@@ -77,6 +93,37 @@ data "aws_acm_certificate" "rpkilog_com" {
 
 ##############################
 # IAM roles
+data "aws_iam_policy" "AmazonAPIGatewayPushToCloudWatchLogs" {
+    name = "AmazonAPIGatewayPushToCloudWatchLogs"
+    #arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_iam_role" "apigw_logging_accountwide_role" {
+    # If a terraform apply error like "CloudWatch Logs role ARN must be set in account settings to enable logging"
+    # even though it is set by this resource, retry the apply operation after a minute.
+    # It seems like terraform thinks the modification is complete even though it isn't.  Probably an AWS
+    # race condition.
+    name = "apigw_logging_accountwide_role"
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowApiGwToAssumeThisRole",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "apigateway.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+        }
+    ]
+}
+POLICY
+    managed_policy_arns = [
+        data.aws_iam_policy.AmazonAPIGatewayPushToCloudWatchLogs.arn
+    ]
+}
+
 resource "aws_iam_role" "ec2_cron1" {
     name = "ec2_cron1"
     assume_role_policy = file("aws_iam/ec2_generic_assume_role.json")
@@ -886,10 +933,21 @@ resource "aws_lambda_function" "hapi" {
         ignore_changes = [ filename ]
     }
 }
+#FIXME: Correct permissions issues.  Currently, it is too permissive.
+#       See https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway.html#apigateway-permissions
+resource "aws_lambda_permission" "hapi_by_apigw" {
+    # Allow APIGW to invoke the hapi lambda
+    function_name = aws_lambda_function.hapi.function_name
+    statement_id = "AllowApiGateway"
+    action = "lambda:invokeFunction"
+    principal = "apigateway.amazonaws.com"
+}
 resource "aws_lambda_permission" "hapi" {
+    # Allow function URL to invoke the hapi lambda
     function_name = aws_lambda_function.hapi.function_name
     statement_id = "AllowExecutionFromWeb"
     action = "lambda:InvokeFunction"
+    #FIXME: This should be something like lambda.amazonaws.com, not "*"
     principal = "*"
 }
 resource "aws_lambda_function_url" "hapi" {
@@ -1143,6 +1201,37 @@ resource "aws_route53_record" "rpkilog_com" {
     }
 }
 
+resource "aws_route53_record" "validate_acm_for_api_rpkilog_com" {
+    # Validates the ACM certificate requested for api.rpkilog.com
+    # See docs on DNS Validation with Route 53
+    # https://registry.terraform.io/providers/hashicorp/aws/4.49.0/docs/resources/acm_certificate_validation
+    for_each = {
+        for dvo in aws_acm_certificate.api_rpkilog_com.domain_validation_options : dvo.domain_name => {
+            name   = dvo.resource_record_name
+            record = dvo.resource_record_value
+            type   = dvo.resource_record_type
+        }
+    }
+    allow_overwrite = true
+    name = each.value.name
+    records = [ each.value.record ]
+    ttl = 300
+    type = each.value.type
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+}
+
+resource "aws_route53_record" "api_rpkilog_com" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name = "api.rpkilog.com"
+    type = "A"
+    alias {
+        evaluate_target_health = false
+        # If changing APIGW from REGIONAL to EDGE, the below should change from regional_ to cloudfront_.
+        name = aws_api_gateway_domain_name.api_rpkilog_com.regional_domain_name
+        zone_id = aws_api_gateway_domain_name.api_rpkilog_com.regional_zone_id
+    }
+}
+
 ##############################
 # Cloudfront
 
@@ -1180,3 +1269,110 @@ resource "aws_cloudfront_distribution" "rpkilog_com" {
         ssl_support_method = "sni-only"
     }
 }
+
+# API Gateway requires this bit of account-wide config for logging
+resource "aws_api_gateway_account" "apigw_account" {
+    cloudwatch_role_arn = aws_iam_role.apigw_logging_accountwide_role.arn
+}
+
+##############################
+# APIGW gateway itself, domain name, stage ("/unstable" only, for now), and similar
+# The resource-paths (/history) and integrations are a bit further down
+
+resource "aws_api_gateway_domain_name" "api_rpkilog_com" {
+    domain_name = aws_acm_certificate.api_rpkilog_com.domain_name
+    regional_certificate_arn = aws_acm_certificate_validation.api_rpkilog_com.certificate_arn
+    endpoint_configuration {
+        # Using REGIONAL instead of EDGE for simplicity
+        types = [ "REGIONAL" ]
+    }
+}
+
+resource "aws_api_gateway_rest_api" "public_api" {
+    name = "public_api"
+    description = "RPKILog Public API"
+    endpoint_configuration {
+        # Using REGIONAL instead of EDGE for simplicity
+        # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-endpoint-types.html
+        types = [ "REGIONAL" ]
+    }
+}
+
+resource "aws_api_gateway_method_settings" "unstable" {
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    stage_name = "unstable"
+    method_path = "*/*"
+    settings {
+        logging_level = "INFO"
+        metrics_enabled = true
+    }
+    #TODO: throttling_rate_limit (requests/sec) & throttling_burst_limit can be set here
+    # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/api_gateway_method_settings
+    # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-usage-plans-with-console.html#api-gateway-usage-plan-create
+    depends_on = [
+        aws_api_gateway_deployment.public_api,
+        aws_api_gateway_stage.unstable
+    ]
+}
+
+# In the AWS WWW Console, navigate to APIGW -> Custom domain names -> api.rpkilog.com -> API mappings
+# to understand how this applies.  Effectively, it maps api.rpkilog.com/unstable to aws_api_gateway_stage.unstable.
+resource "aws_api_gateway_base_path_mapping" "public_api" {
+    api_id = aws_api_gateway_rest_api.public_api.id
+    base_path = "unstable"
+    domain_name = aws_api_gateway_domain_name.api_rpkilog_com.domain_name
+    stage_name = aws_api_gateway_stage.unstable.stage_name
+}
+
+# APIGW resource-paths/methods/integrations are defined below
+
+resource "aws_api_gateway_resource" "unstable_history" {
+    # resource for querying the VRP history records e.g. api.rpkilog.com/unstable/history
+    #FIXME: how does it get connected to the stage?
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    parent_id = aws_api_gateway_rest_api.public_api.root_resource_id
+    path_part = "history"
+}
+
+resource "aws_api_gateway_method" "unstable_history_GET" {
+    rest_api_id = aws_api_gateway_resource.unstable_history.rest_api_id
+    resource_id = aws_api_gateway_resource.unstable_history.id
+    http_method = "GET"
+    authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "hapi" {
+    rest_api_id = aws_api_gateway_resource.unstable_history.rest_api_id
+    resource_id = aws_api_gateway_resource.unstable_history.id
+    http_method = "GET"
+    # Terraform documentation says use POST when invoking a lambda.  Only supported method.
+    integration_http_method = "POST"
+    type = "AWS_PROXY"
+    uri = aws_lambda_function.hapi.invoke_arn
+}
+
+# APIGW deployment
+resource "aws_api_gateway_deployment" "public_api" {
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    lifecycle {
+        create_before_destroy = true
+    }
+    triggers = {
+        redeployment = sha1(jsonencode([
+            aws_api_gateway_resource.unstable_history,
+            aws_api_gateway_method.unstable_history_GET,
+            aws_api_gateway_integration.hapi,
+        ]))
+    }
+}
+
+# APIGW stage
+
+resource "aws_api_gateway_stage" "unstable" {
+    deployment_id = aws_api_gateway_deployment.public_api.id
+    rest_api_id = aws_api_gateway_rest_api.public_api.id
+    stage_name = "unstable"
+}
+
+# APIGW end
+##############################
