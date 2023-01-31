@@ -7,6 +7,7 @@ import dateutil.parser
 import json
 import logging
 import os
+import re
 
 import boto3
 import netaddr
@@ -73,18 +74,29 @@ def cli_entry_point():
     import argparse
 
     ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
-    ap.add_argument('--asn', type=int, help='Query for given ASN')
-    ap.add_argument('--prefix', type=netaddr.IPNetwork, help='Query the DB for given prefix')
-    ap.add_argument('--exact', action='store_true', help='Exact prefix-length matches only')
-    ap.add_argument('--max-len', type=int, help='Maximum prefix-length')
-    ap.add_argument('--observation-timestamp-start', type=date_parser.parse, help='Optional start time for DB query')
-    ap.add_argument('--observation-timestamp-end', type=date_parser.parse, help='Optional end time for DB query')
+    ag1 = ap.add_argument_group('search parameters')
+    ag1.add_argument('--asn', type=int, help='Query for given ASN')
+    ag1.add_argument('--prefix', type=netaddr.IPNetwork, help='Query the DB for given prefix')
+    ag1.add_argument('--exact', action='store_true', help='Exact prefix-length matches only')
+    ag1.add_argument('--max-len', type=int, help='Maximum prefix-length')
+    ag1.add_argument('--observation-timestamp-start', type=date_parser.parse, help='Optional start time for DB query')
+    ag1.add_argument('--observation-timestamp-end', type=date_parser.parse, help='Optional end time for DB query')
+    ag3 = ap.add_argument_group('paginate')
+    ag3.add_argument('--paginate-from', type=int, help='Optional offset for pagination')
+    ag3.add_argument('--paginate-size', type=int, help='Number of records per page (default: 20)')
+    ag3.add_argument('--search-after', help='Optional pagination cursor e.g. 1675074991000,7694822')
     ap.add_argument('--debug', action='store_true', help='Break to debugger immediately after argument parsing')
     args = vars(ap.parse_args())
     if args.get('debug', False):
         import pdb
         pdb.set_trace()
         args.pop('debug')
+    if 'search_after' in args:
+        # search_after must be an integer, a comma, then a second integer; e.g. 1675074991000,7694822
+        if rem := re.match('^(\d+),(\d+)$', args['search_after']):
+            args['search_after'] = [int(rem.group(1)), int(rem.group(2))]
+        else:
+            raise ValueError('--search-after argument must be formatted like: 1675074991000,7694822')
 
     query = get_history_es_query(**args)
     result = invoke_es_query(query)
@@ -131,84 +143,13 @@ def get_es_client(
     )
     return es
 
-def get_es_query_for_ip_prefix(
-    prefix: netaddr.IPNetwork,
-    exact: bool = None,
-    max_len: int = None,
-    observation_timestamp_start: datetime = None,
-    observation_timestamp_end: datetime = None,
-    paginate_size: int = 20,
-    search_after: list = None,
-) -> dict:
-    if bool(exact):
-        raise ValueError(F'UNIMPLEMENTED: exact not yet supported')
-    if max_len != None:
-        raise ValueError(F'UNIMPLEMENTED: max_len not yet supported')
-
-    # ES query actually needs the first & last addresses in the prefix, not the CIDR format.
-    # For example, prefix_first_addr: 192.0.2.0 prefix_last_addr: 192.0.2.255
-    prefix_first_addr = netaddr.IPAddress(prefix.first)
-    prefix_last_addr = netaddr.IPAddress(prefix.last)
-    # ES documentation: https://www.elastic.co/guide/en/elasticsearch/reference/current/search-search.html
-    query = {
-        # pagination:
-        # https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html
-        'size': paginate_size,
-        'query': {
-            'bool': {
-                'filter': [
-                    {
-                        'range': {
-                            'observation_timestamp': {
-                                'format': 'strict_date_optional_time',
-                                'gte': '1981-10-26T00:00:00.000Z',
-                                'lte': '2035-01-01T00:00:00.000Z'
-                            }
-                        }
-                    }
-                ],
-                'filter': [
-                    {
-                        'query_string': {
-                            'analyze_wildcard': 'true',
-                            'query': f'prefix: ["{str(prefix_first_addr)}" TO "{str(prefix_last_addr)}"]',
-                            'time_zone': 'UTC'
-                        }
-                    }
-                ]
-            }
-        },
-        # sorting docs https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
-        'sort': [
-            {'observation_timestamp': 'desc'},
-            {'_doc': 'asc'}
-        ],
-    }
-    # ES query timestamps are like 2022-10-30T18:35:00.123Z
-    # Default values (year 1981 & 2035) are used for the timestamp range in the above query dict.
-    # If this function was invoked with non-None start/end values, we update the query, below.
-    if observation_timestamp_start != None:
-        obs_ts_start_str = datetime_to_es_format(observation_timestamp_start)
-        query['query']['bool']['filter'][0]['range']['observation_timestamp']['gte'] = obs_ts_start_str
-    if observation_timestamp_end != None:
-        obs_ts_end_str = datetime_to_es_format(observation_timestamp_end)
-        query['query']['bool']['filter'][0]['range']['observation_timestamp']['lte'] = obs_ts_end_str
-    # Pagination support uses sort_after to continue retrieving records after previous page
-    if search_after != None:
-        if len(search_after) != 2 or type(search_after[0]) != int or type(search_after[1]) != int:
-            raise TypeError('search_after must be a list containing two integers obtained from "sort" ' +
-                'key of previously-returned record'
-            )
-        query['search_after'] = search_after
-
-    return query
-
 def get_history_es_query(
     asn: int = None,
     exact: bool = None,
     max_len: int = None,
     observation_timestamp_start: datetime = None,
     observation_timestamp_end: datetime = None,
+    paginate_from: int = None,
     paginate_size: int = 20,
     prefix: netaddr.IPNetwork = None,
     search_after: list = None,
@@ -218,7 +159,7 @@ def get_history_es_query(
         raise ValueError(f'UNIMPLEMENTED: exact not yet supported')
     if max_len != None:
         raise ValueError(f'UNIMPLEMENTED: max_len not yet supported')
-    
+
     # query must include at least a prefix or an asn
     if asn == None and prefix == None:
         raise KeyError(f'NOT ENOUGH ARGUMENTS: query must include at least a prefix OR asn.  Both are missing.')
@@ -277,29 +218,23 @@ def get_history_es_query(
                 }
             }
         })
-    
+
+    if paginate_from != None:
+        query['from'] = int(paginate_from)
+
     if search_after != None:
-        assert(len(search_after))
-        query['search_after'] = search_after
+        # Pagination support uses sort_after to continue retrieving records after previous page
+        if len(search_after) == 2 and type(search_after[0]) == int and type(search_after[1]) == int:
+            query['search_after'] = [
+                jstime_to_es_no_millis_format(search_after[0]),
+                search_after[1]
+            ]
+        else:
+            raise TypeError('search_after must be a list containing two integers obtained from "sort" ' +
+                'key of previously-returned record'
+            )
 
     return query
-
-def get_history_for_prefix(
-    prefix:netaddr.IPNetwork,
-    exact: bool = None,
-    max_len: int = None,
-    observation_timestamp_start: datetime = None,
-    observation_timestamp_end: datetime = None,
-):
-    es_query = get_es_query_for_ip_prefix(
-        prefix = prefix,
-        exact = exact,
-        max_len = max_len,
-        observation_timestamp_start = observation_timestamp_start,
-        observation_timestamp_end = observation_timestamp_end,
-    )
-    retval = invoke_es_query(query=es_query)
-    return retval
 
 def invoke_es_query(query) -> dict:
     es_client = get_es_client()
@@ -312,6 +247,17 @@ def invoke_es_query(query) -> dict:
         'hits.total': qresult['hits']['total'],
     })
     return qresult
+
+def jstime_to_es_no_millis_format(jstime:int) -> str:
+    '''
+    Convert argument in JavaScript time format (milliseconds since epoch) to ElasticSearch format.
+
+    >>> jstime_to_es_format(1672000541000)
+    '2022-12-25T15:35:41.000'
+    '''
+    dt = datetime.fromtimestamp(jstime / 1000)
+    retstr = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return retstr
 
 def pretty_stringify_es_result(es_result:dict):
     '''
