@@ -774,6 +774,20 @@ resource "aws_s3_bucket" "rpkilog_www" {
     bucket = "rpkilog-www"
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "snapshot" {
+    bucket = aws_s3_bucket.rpkilog_snapshot.id
+    rule {
+        id = "1"
+        abort_incomplete_multipart_upload {
+            days_after_initiation = 2
+        }
+        expiration {
+            days = 40
+        }
+        status = "Enabled"
+    }
+}
+
 resource "aws_s3_bucket_policy" "rpkilog_www" {
     bucket = aws_s3_bucket.rpkilog_www.id
     policy = <<EOF
