@@ -42,8 +42,18 @@ def aws_lambda_entry_point(event:dict, context:dict):
     if 'max_len' in event['queryStringParameters']:
         query_args['max_len'] = int(event['queryStringParameters']['max_len'])
 
+    if 'paginate_size' in event['queryStringParameters']:
+        query_args['paginate_size'] = int(event['queryStringParameters'])
+
     if 'prefix' in event['queryStringParameters']:
         query_args['prefix'] = netaddr.IPNetwork(event['queryStringParameters']['prefix'])
+
+    if 'search_after' in event['queryStringParameters']:
+        # search_after must be an integer, a comma, then a second integer; e.g. 1675074991000,7694822
+        if rem := re.match('^(\d+),(\d+)$', event['queryStringParameters']['search_after']):
+            query_args['search_after'] = [int(rem.group(1)), int(rem.group(2))]
+        else:
+            raise ValueError('search_after argument must be formatted like: 1675074991000,7694822')
 
     for arg_name in ['observation_timestamp_start', 'observation_timestamp_end']:
         if arg_name in event['queryStringParameters']:
@@ -114,7 +124,7 @@ def datetime_to_es_format(d:datetime):
     return retstr
 
 def get_es_client(
-    aws_region:str = os.getenv('AWS_REGION'),
+    aws_region:str = os.getenv('AWS_REGION', 'us-east-1'),
     es_host:str = os.getenv('RPKILOG_ES_HOST', 'es-prod.rpkilog.com'),
     timeout : int = 30,
 ):

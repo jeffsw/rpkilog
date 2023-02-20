@@ -42,6 +42,9 @@ helps you.</p>
     <input id="observation_timestamp_end" type="datetime-local" value="2038-01-01T00:00" min="1981-01-01T00:00" max="2038-01-01T00:00" name="observation_timestamp_end">
 
     <button id="rpki_history_search_button" type="button">Search</button>
+
+    <label for="display_num_entries">Display Entries/Page</label>
+    <input id="display_num_entries" value="20" type="text" size="5" pattern="^(\d{1,4}|10000)$">
 </fieldset>
 
 <table id="vrp_history_table" class="vrp_history">
@@ -60,6 +63,11 @@ helps you.</p>
     <tbody>
         <tr><td colspan="7">Input search parameters, above, to retrieve history records.</td></tr>
     </tbody>
+    <tfoot>
+        <tr>
+            <th id="vrp_history_pagination" colspan="0"></th>
+        </tr>
+    </tfoot>
 </table>
 
 <template id="vrp_history_row">
