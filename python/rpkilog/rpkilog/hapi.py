@@ -43,7 +43,7 @@ def aws_lambda_entry_point(event:dict, context:dict):
         query_args['max_len'] = int(event['queryStringParameters']['max_len'])
 
     if 'paginate_size' in event['queryStringParameters']:
-        query_args['paginate_size'] = int(event['queryStringParameters'])
+        query_args['paginate_size'] = int(event['queryStringParameters']['paginate_size'])
 
     if 'prefix' in event['queryStringParameters']:
         query_args['prefix'] = netaddr.IPNetwork(event['queryStringParameters']['prefix'])
