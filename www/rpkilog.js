@@ -77,8 +77,14 @@ export class VrpHistoryEntry {
          * Returns a new VrpEntry when given a result entry from our HTTP API.
          * To retrieve some examples, run `rpkilog-hapi --prefix 8.8.8.0/24 --paginate-size 2`
          */
-        let oldVrp = VrpEntry.new_from_json_obj(hapi_result_entry._source.old_roa);
-        let newVrp = VrpEntry.new_from_json_obj(hapi_result_entry._source.new_roa);
+        let oldVrp = null;
+        let newVrp = null;
+        if (['UNCHANGED', 'REPLACE', 'DELETE'].includes(hapi_result_entry._source.verb)) {
+            oldVrp = VrpEntry.new_from_json_obj(hapi_result_entry._source.old_roa);
+        }
+        if (['UNCHANGED', 'REPLACE', 'NEW'].includes(hapi_result_entry._source.verb)) {
+            newVrp = VrpEntry.new_from_json_obj(hapi_result_entry._source.new_roa);
+        }
         let retval = new VrpHistoryEntry(
             oldVrp,
             newVrp,
@@ -88,5 +94,4 @@ export class VrpHistoryEntry {
         );
         return retval
     }
-
 }

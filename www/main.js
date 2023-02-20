@@ -28,6 +28,7 @@ function check_for_deeplink_in_url (event) {
 
 function create_clickable_pagination_span (page_number, entries_per_page) {
     let retspan = document.createElement('SPAN');
+    retspan.classList.add('paginate_clickable');
     retspan.innerText = page_number;
     retspan.dataset.page_number = page_number;
     retspan.addEventListener('click', display_history_page_onclick_handler);
@@ -108,6 +109,9 @@ function display_history_entries (offset) {
 
     let tfoot_pagination = document.querySelector("th#vrp_history_pagination")
     let tfoot_spans = new Array();
+    let tfoot_label = document.createElement('SPAN');
+    tfoot_label.innerText = 'Page: ';
+    tfoot_spans.push(tfoot_label);
     const page_current = Math.floor(offset / numEntries);
     const page_max = Math.floor(RPKI_HISTORY_ENTRIES.length / numEntries);
     for (let off = 0; off < RPKI_HISTORY_ENTRIES.length; off += numEntries) {

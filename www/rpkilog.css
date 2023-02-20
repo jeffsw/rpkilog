@@ -4,7 +4,7 @@ body {
 }
 
 body a:visited, body a:link, body a:active {
-    color: rgb(228, 216, 2);
+    color: #e4d802;
 }
 
 table.vrp_history {
@@ -29,3 +29,6 @@ td[data-field-name="asn"] {
     text-align: left;
 }
 
+span.paginate_clickable {
+    padding-left: 0.4em;
+}
