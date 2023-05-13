@@ -165,8 +165,22 @@ function get_paginate_num_entries_per_page () {
 function search_clicked (event) {
     let tbody = document.querySelector("table#vrp_history_table > tbody");
     let caption = document.querySelector("#vrp_history_table > caption");
-    caption.innerText = 'Posting query to rpkilog API...';
+    caption.innerText = 'Posting query to rpkilog API';
     caption.style.color = '#e4d802';
+
+    let dot1 = document.createElement('SPAN');
+    dot1.innerText = '.';
+    dot1.classList.add('workingDot1');
+    let dot2 = document.createElement('SPAN');
+    dot2.innerText = '.';
+    dot2.classList.add('workingDot2');
+    let dot3 = document.createElement('SPAN');
+    dot3.innerText = '.';
+    dot3.classList.add('workingDot3');
+    caption.appendChild(dot1);
+    caption.appendChild(dot2);
+    caption.appendChild(dot3);
+
     tbody.replaceChildren();
 
     let copy_fields_to_query = [
