@@ -94,13 +94,13 @@ function create_table_row_from_history_entry (entry) {
     return row;
 };
 
+/**
+ * Display history entries by populating the #vrp_history_table.
+ * Entries before offset will not be displayed.
+ * A maximum of size entries will be displayed.
+ * @param {number} offset - Offset of the first history entry to display on the page.
+ */
 function display_history_entries (offset) {
-    /**
-     * Display history entries by populating the #vrp_history_table.
-     * Entries before offset will not be displayed.
-     * A maximum of size entries will be displayed.
-     */
-
     const numEntries = get_paginate_num_entries_per_page();
 
     let table_rows = new Array();

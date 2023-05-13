@@ -38,6 +38,11 @@ export class VrpEntry {
         this.ta = ta;
     }
 
+    /**
+     * Create a VrpEntry object given an argument object which may come from our HTTP API
+     * @param {object} jo
+     * @returns {VrpEntry}
+     */
     static new_from_json_obj (jo) {
         let retval = new VrpEntry(
             jo.asn,
@@ -72,11 +77,13 @@ export class VrpHistoryEntry {
         }
     }
 
+     /**
+     * Returns a new VrpHistoryEntry when given a result entry from our HTTP API.
+     * To retrieve some examples, run `rpkilog-hapi --prefix 8.8.8.0/24 --paginate-size 2`
+     * @param {object} hapi_result_entry -- JSON object from the HTTP API
+     * @return {VrpHistoryEntry}
+     */
     static new_from_hapi_result_entry (hapi_result_entry) {
-        /**
-         * Returns a new VrpEntry when given a result entry from our HTTP API.
-         * To retrieve some examples, run `rpkilog-hapi --prefix 8.8.8.0/24 --paginate-size 2`
-         */
         let oldVrp = null;
         let newVrp = null;
         if (['UNCHANGED', 'REPLACE', 'DELETE'].includes(hapi_result_entry._source.verb)) {
