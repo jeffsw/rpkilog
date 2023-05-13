@@ -32,3 +32,8 @@ td[data-field-name="asn"] {
 span.paginate_clickable {
     padding-left: 0.4em;
 }
+
+span.paginate_currently_displayed {
+    color: #e4d802;
+    padding-left: 0.4em;
+}

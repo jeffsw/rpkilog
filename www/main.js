@@ -26,9 +26,13 @@ function check_for_deeplink_in_url (event) {
     document.querySelector('#rpki_history_search_button').click();
 }
 
-function create_clickable_pagination_span (page_number, entries_per_page) {
+function create_pagination_span (page_number, entries_per_page, is_currently_displayed) {
     let retspan = document.createElement('SPAN');
-    retspan.classList.add('paginate_clickable');
+    if (is_currently_displayed) {
+        retspan.classList.add('paginate_currently_displayed');
+    } else {
+        retspan.classList.add('paginate_clickable');
+    }
     retspan.innerText = page_number;
     retspan.dataset.page_number = page_number;
     retspan.addEventListener('click', display_history_page_onclick_handler);
@@ -115,7 +119,9 @@ function display_history_entries (offset) {
     const page_current = Math.floor(offset / numEntries);
     const page_max = Math.floor(RPKI_HISTORY_ENTRIES.length / numEntries);
     for (let off = 0; off < RPKI_HISTORY_ENTRIES.length; off += numEntries) {
-        const page_span = create_clickable_pagination_span(off / numEntries, numEntries);
+        let page_number = off / numEntries;
+        let is_currently_displayed = Boolean(page_number == page_current)
+        const page_span = create_pagination_span(page_number, numEntries, is_currently_displayed);
         tfoot_spans.push(page_span);
     }
     tfoot_pagination.replaceChildren(...tfoot_spans);
