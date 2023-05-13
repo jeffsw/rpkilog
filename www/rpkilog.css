@@ -4,7 +4,7 @@ body {
 }
 
 body a:visited, body a:link, body a:active {
-    color: rgb(228, 216, 2);
+    color: #e4d802;
 }
 
 table.vrp_history {
@@ -29,3 +29,40 @@ td[data-field-name="asn"] {
     text-align: left;
 }
 
+span.paginate_clickable {
+    padding-left: 0.4em;
+}
+
+span.paginate_currently_displayed {
+    color: #e4d802;
+    padding-left: 0.4em;
+}
+
+@keyframes workingDots {
+    0% { color:rgb(13, 157, 42); }
+    100% { color:#e4d802; }
+}
+
+span.workingDot1 {
+    animation-name: workingDots;
+    animation-direction: alternate;
+    animation-duration: 200ms;
+    animation-iteration-count: infinite;
+    animation-timing-function: jump-none;
+}
+
+span.workingDot2 {
+    animation-name: workingDots;
+    animation-direction: alternate;
+    animation-duration: 500ms;
+    animation-iteration-count: infinite;
+    animation-timing-function: jump-none;
+}
+
+span.workingDot3 {
+    animation-name: workingDots;
+    animation-direction: alternate;
+    animation-duration: 300ms;
+    animation-iteration-count: infinite;
+    animation-timing-function: jump-none;
+}
