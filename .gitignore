@@ -3,4 +3,5 @@
 *.egg-info*
 .terraform
 terraform.tfstate*
+backup/
 build/
