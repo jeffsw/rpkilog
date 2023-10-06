@@ -49,6 +49,8 @@ provider "aws" {
 # Caller
 data "aws_caller_identity" "current" {}
 
+data "aws_region" "current" {}
+
 ##############################
 # SSH key-pairs
 
@@ -576,36 +578,24 @@ resource "aws_cognito_identity_provider" "google" {
     }
 }
 
-resource "aws_cognito_user_pool_client" "es" {
-    #BOOTSTRAP: If creating a new Cognito/ES configuration for the first time, uncomment name="es", allow
-    #the new ES domain to come online, then retrieve the name of the user_pool_client THAT IT CREATED ON ITS OWN
-    #and substitute it for the lenghty name, below.  Then, perform any necessary Terraform state delete/import
-    #operations necessary to get it to work.
-    #Yes, the official Terraform implementation for AWS elasticsearch is seriously buggy, but it can work.
-    #name = "es"
-    name = "AWSElasticsearch-prod-us-east-1-3iwnbr2xd6gjgnh6q3eeesutpa"
+resource "aws_cognito_managed_user_pool_client" "es_prod" {
+    # This has the string "prod" instead of a reference to aws_elasticsearch_domain.prod.domain_name
+    # because the reference would create a circular reference
+    name_prefix = "AmazonOpenSearchService-prod-${data.aws_region.current.name}-"
     user_pool_id = aws_cognito_user_pool.es.id
-    # access_token_validity = 86400
-    # id_token_validity = 86400
-    # refresh_token_validity = 30
+
     allowed_oauth_flows = [ "code" ]
-    allowed_oauth_flows_user_pool_client = true
-    allowed_oauth_scopes = [
-        "email",
-        "openid",
-        "phone",
-        "profile",
-    ]
+    allowed_oauth_scopes = [ "aws.cognito.signin.user.admin", "email", "openid", "phone", "profile" ]
     prevent_user_existence_errors = "LEGACY"
-    # supported_identity_providers must match an aws_cognito_identity_provider.provider_name or "COGNITO"
     supported_identity_providers = [ "COGNITO", "Google" ]
 }
+
 resource "aws_cognito_identity_pool" "es" {
     identity_pool_name = "es"
     allow_unauthenticated_identities = false
     allow_classic_flow = false
     cognito_identity_providers {
-        client_id = aws_cognito_user_pool_client.es.id
+        client_id = aws_cognito_managed_user_pool_client.es_prod.id
         provider_name = aws_cognito_user_pool.es.endpoint
         server_side_token_check = true
     }
@@ -620,7 +610,7 @@ resource "aws_cognito_identity_pool_roles_attachment" "es" {
         unauthenticated = aws_iam_role.anonymous_web.arn
     }
     role_mapping {
-        identity_provider = "${aws_cognito_user_pool.es.endpoint}:${aws_cognito_user_pool_client.es.id}"
+        identity_provider = "${aws_cognito_user_pool.es.endpoint}:${aws_cognito_managed_user_pool_client.es_prod.id}"
         ambiguous_role_resolution = "AuthenticatedRole"
         type = "Token"
     }
@@ -1103,7 +1093,7 @@ EOF
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "OpenSearch_2.3"
+    elasticsearch_version = "OpenSearch_2.9"
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
