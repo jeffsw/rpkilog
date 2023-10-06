@@ -1103,7 +1103,7 @@ EOF
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "OpenSearch_2.3"
+    elasticsearch_version = "OpenSearch_2.9"
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
