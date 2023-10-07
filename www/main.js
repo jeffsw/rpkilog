@@ -1,5 +1,6 @@
 import { VrpEntry, VrpHistoryEntry } from './rpkilog.js';
 
+let RPKI_API_URL;
 var RPKI_HAPI_RESULT = {};
 var RPKI_HISTORY_ENTRIES = [];
 
@@ -151,6 +152,11 @@ function display_result_caption (elapsed_time, hits, shards) {
     caption.style.color = null; // WTF what is this for?
 }
 
+function get_config_from_html (event) {
+    let body = document.querySelector("body");
+    RPKI_API_URL = body.dataset.rpkilogApiUrl;
+}
+
 function get_paginate_num_entries_per_page () {
     const input_elem = document.querySelector('input#display_num_entries');
     let retval = parseInt(input_elem.value);
@@ -201,7 +207,7 @@ function search_clicked (event) {
     }
 
     let get_params = new URLSearchParams(query)
-    fetch(rpkilog_config.api_url + '?' + get_params.toString(), {
+    fetch(RPKI_API_URL + '?' + get_params.toString(), {
         method: 'GET',
         cache: 'no-store',
         headers: {'Accept': 'application/json'},
@@ -221,5 +227,6 @@ function search_clicked (event) {
     });
 };
 
+addEventListener('DOMContentLoaded', get_config_from_html);
 document.querySelector("#rpki_history_search_button").addEventListener("click", search_clicked);
 addEventListener('DOMContentLoaded', check_for_deeplink_in_url);

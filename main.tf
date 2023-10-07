@@ -1253,6 +1253,7 @@ resource "aws_cloudfront_distribution" "rpkilog_com" {
             }
         }
         max_ttl = 300
+        response_headers_policy_id = aws_cloudfront_response_headers_policy.policy1.id
         target_origin_id = "s3.us-east-1"
         viewer_protocol_policy = "redirect-to-https"
     }
@@ -1271,6 +1272,18 @@ resource "aws_cloudfront_distribution" "rpkilog_com" {
     viewer_certificate {
         acm_certificate_arn = data.aws_acm_certificate.rpkilog_com.arn
         ssl_support_method = "sni-only"
+    }
+}
+
+resource "aws_cloudfront_response_headers_policy" "policy1" {
+    name = "policy1"
+    comment = "Only allow content from same-origin, rpkilog.com, *.rpkilog.com"
+    security_headers_config {
+        content_security_policy {
+            # see also https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
+            content_security_policy = "default-src 'self' rpkilog.com *.rpkilog.com"
+            override = false
+        }
     }
 }
 
