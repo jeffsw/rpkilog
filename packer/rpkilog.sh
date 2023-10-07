@@ -43,16 +43,6 @@ echo "jsw        ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/rpkilog_config
 chmod 0400 /etc/sudoers.d/rpkilog_config
 
 ##############################
-# AWS EFS
-git clone https://github.com/aws/efs-utils /usr/local/src/aws-efs-utils
-pushd /usr/local/src/aws-efs-utils
-./build-deb.sh
-apt-get -y install ./build/amazon-efs-utils*deb
-popd
-mkdir /rpki_archive
-echo "fs-092450c25ba029d1b.efs.us-east-1.amazonaws.com:/ /rpki_archive nfs4 nfsvers=4,rsize=1048576,wsize=1048576,hard,timeo=60,noresvport 0 2" >> /etc/fstab
-
-##############################
 # AWS CLI
 pushd /usr/local/src
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"

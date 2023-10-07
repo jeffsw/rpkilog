@@ -649,36 +649,6 @@ resource "aws_security_group" "https_allow" {
         to_port = 443
     }
 }
-resource "aws_security_group" "allow_nfs" {
-    name = "allow_nfs"
-    description = "Allow NFS traffic.  This is for EFS Mount Targets."
-    vpc_id = aws_default_vpc.default.id
-    egress {
-        from_port = 0
-        to_port = 0
-        protocol = "-1"
-        cidr_blocks = ["0.0.0.0/0"]
-        ipv6_cidr_blocks = ["::/0"]
-    }
-    ingress {
-        description = "NFS"
-        cidr_blocks = [ "0.0.0.0/0" ]
-        ipv6_cidr_blocks = [ "::/0" ]
-        from_port = 2049
-        protocol = "tcp"
-        to_port = 2049
-        self = true
-    }
-    ingress {
-        description = "NFS"
-        cidr_blocks = [ "0.0.0.0/0" ]
-        ipv6_cidr_blocks = [ "::/0" ]
-        from_port = 2049
-        protocol = "udp"
-        to_port = 2049
-        self = true
-    }
-}
 
 ##############################
 # VPC Gateway Endpoint so Lambda-in-VPC can access S3
@@ -689,38 +659,6 @@ resource "aws_vpc_endpoint" "default_vpc_s3_endpoint" {
     service_name = "com.amazonaws.us-east-1.s3"
     vpc_endpoint_type = "Gateway"
     route_table_ids = [ aws_default_vpc.default.default_route_table_id ]
-}
-
-##############################
-# EFS filesystems, access points, mount targets
-#Terraform produces spurious "changes made outside of Terraform" whenever the amount of data stored in
-#an EFS filesystem changes between terraform invocations.  Ignore these spurious notices.
-#See also: https://github.com/hashicorp/terraform/issues/28803
-resource "aws_efs_file_system" "rpki_archive" {
-    creation_token = "rpki_archive"
-}
-
-resource "aws_efs_access_point" "rpki_archive" {
-    file_system_id = aws_efs_file_system.rpki_archive.id
-    posix_user {
-        uid = 0
-        gid = 0
-    }
-    root_directory {
-        path = "/"
-        creation_info {
-            owner_gid = 0
-            owner_uid = 0
-            permissions = 777
-        }
-    }
-}
-
-resource "aws_efs_mount_target" "rpki_archive" {
-    for_each = var.aws_subnet_ids
-    file_system_id = aws_efs_file_system.rpki_archive.id
-    subnet_id = each.value
-    security_groups = [ aws_security_group.allow_nfs.id ]
 }
 
 ##############################
@@ -856,14 +794,6 @@ resource "aws_lambda_function" "vrp_cache_diff" {
             diff_bucket = aws_s3_bucket.rpkilog_diff.id
         }
     }
-    # file_system_config {
-    #     arn = aws_efs_access_point.rpki_archive.arn
-    #     local_mount_path = "/mnt/rpki_archive"
-    # }
-    # vpc_config {
-    #     subnet_ids = [ for x in data.aws_subnet_ids.default.ids : x ]
-    #     security_group_ids = [ aws_default_security_group.default.id ]
-    # }
     dead_letter_config {
         target_arn = aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn
     }
