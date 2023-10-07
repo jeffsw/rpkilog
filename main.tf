@@ -748,16 +748,12 @@ resource "aws_s3_bucket_website_configuration" "rpkilog_www" {
 ##############################
 # lambda functions & permissions
 
-#Temporarily moved into cron1 EC2 VM
+# Moved into cron1 EC2 VM
 # resource "aws_lambda_function" "archive_site_crawler" {
-#     # Uncomment to deploy to AWS near the archive josephine.sobornost.net
-#     # I found running in us-east-1 fast enough, and it's probably cheaper than downloading in eu than
-#     # uploading to a remote S3 bucket
-#     #provider = aws.eu-central-1
 #     function_name = "archive_site_crawler"
 #     filename = "misc/terraform_lambda_placeholder_python.zip"
 #     role = aws_iam_role.lambda_archive_site_crawler.arn
-#     runtime = "python3.9"
+#     runtime = "python3.11"
 #     handler = "rpkilog.ArchiveSiteCrawler.aws_lambda_entry_point"
 #     memory_size = 256
 #     timeout = 240
@@ -766,10 +762,9 @@ resource "aws_s3_bucket_website_configuration" "rpkilog_www" {
 #             s3_snapshot_bucket_name = aws_s3_bucket.rpkilog_snapshot.id
 #             s3_snapshot_summary_bucket_name = aws_s3_bucket.rpkilog_snapshot_summary.id
 #             site_root = "http://josephine.sobornost.net/josephine.sobornost.net/rpkidata/"
-#             job_max_downloads = 2
+#             job_max_downloads = 1
 #         }
 #     }
-#     #TODO: add file_system_config
 #     lifecycle {
 #         # Never update the lambda deployment package.  We use another tool for that, not Terraform.
 #         ignore_changes = [ filename ]
@@ -784,7 +779,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     s3_bucket = "rpkilog-artifact"
     s3_key = "lambda_vrp_cache_diff.zip"
     role = aws_iam_role.lambda_vrp_cache_diff.arn
-    runtime = "python3.9"
+    runtime = "python3.11"
     handler = "rpkilog.vrp_diff.aws_lambda_entry_point"
     memory_size = 1769
     timeout = 300
@@ -819,7 +814,7 @@ resource "aws_lambda_function" "diff_import" {
     s3_bucket = "rpkilog-artifact"
     s3_key = "lambda_diff_import.zip"
     role = aws_iam_role.lambda_diff_import.arn
-    runtime = "python3.9"
+    runtime = "python3.11"
     handler = "rpkilog.vrp_diff.aws_lambda_entry_point_import"
     memory_size = 256
     timeout = 300
@@ -853,7 +848,7 @@ resource "aws_lambda_function" "hapi" {
     s3_key = "lambda_hapi.zip"
     #TODO: try changing to anonymous_web role.  Eventually, create separate role.
     role = aws_iam_role.es_master.arn
-    runtime = "python3.9"
+    runtime = "python3.11"
     handler = "rpkilog.hapi.aws_lambda_entry_point"
     memory_size = 512
     timeout = 30
