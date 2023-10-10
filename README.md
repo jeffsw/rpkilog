@@ -2,7 +2,27 @@ rpkilog.com is a work in progress.
 
 TODO: insert ref to pipeline.mmd here
 
-TODO: insert ref to ingest.mmd here
+# Data ingest from RPKI system
+
+A cron job, two lambda functions, and two S3 buckets are involved in the data ingest process.
+
+```mermaid
+flowchart LR
+    rpki_archive
+    rpki-archive-site-crawler
+    s3_snapshot_summary
+    vrp_cache_diff
+    s3_diff
+    diff_import
+    elasticsearch
+
+    rpki_archive --> rpki-archive-site-crawler
+    rpki-archive-site-crawler --> s3_snapshot_summary
+    s3_snapshot_summary --> vrp_cache_diff
+    vrp_cache_diff --> s3_diff
+    s3_diff --> diff_import
+    diff_import --> elasticsearch
+```
 
 ```mermaid
 sequenceDiagram
@@ -26,7 +46,7 @@ sequenceDiagram
         end
     deactivate cron1
 
-    Note right of lambda: use JSON summary to generate VRP cache diff
+    Note right of cron1: use JSON summary to generate VRP cache diff
     s3-->>lambda: S3 EVENT: new file arrived in rpkilog-snapshot-summary bucket.  Invoke vrp_cache_diff.
     activate lambda
     s3->>lambda: list files in rpkilog-snapshot-summary bucket
@@ -36,7 +56,7 @@ sequenceDiagram
     lambda->>s3: upload <newly-arrived-date>.vrpdiff.json.gz
     deactivate lambda
 
-    Note right of lambda: insert VrpDiff objects into ElasticSearch
+    Note right of cron1: insert VrpDiff objects into ElasticSearch
     s3-->>lambda: S3 EVENT: new file arrived in rpkilog-diff bucket.  Invoke diff_import.
     activate lambda
     loop
