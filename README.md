@@ -1,20 +1,24 @@
-rpkilog.com is a work in progress.
-
-TODO: insert ref to pipeline.mmd here
+[rpkilog.com](https://rpkilog.com) is a work in progress, but you can query it today for real data.  All
+source code is contained in this repo, including all the Terraform necessary to instantiate the AWS resources
+for hosting it.  Contributions welcome!
 
 # Data ingest from RPKI system
 
-A cron job, two lambda functions, and two S3 buckets are involved in the data ingest process.
+We check for updated VRP cache snapshots every 10 minutes.  When one is found, the VRP summary we need
+is extracted and uploaded to the `rpkilog-snapshot-summary` bucket.  From then, an event-driven pipeline
+processes the data using two Lambda functions, and inserts it into ElasticSearch.
+
+Both the snapshot-summaries and diffs are retained in S3 so we can easily reprocess data in the future.
 
 ```mermaid
 flowchart LR
-    rpki_archive
-    rpki-archive-site-crawler
-    s3_snapshot_summary
-    vrp_cache_diff
-    s3_diff
-    diff_import
-    elasticsearch
+    rpki_archive>RPKI VRP\ncache snapshot]
+    rpki-archive-site-crawler[[rpki-archive-site-crawler\ncron job]]
+    s3_snapshot_summary[(rpkilog-snapshot-summary\nS3)]
+    vrp_cache_diff[[vrp_cache_diff\nLambda]]
+    s3_diff[(rpkilog-diff\nS3)]
+    diff_import[[diff_import\nLambda]]
+    elasticsearch[(es-prod\nElasticSearch DB)]
 
     rpki_archive --> rpki-archive-site-crawler
     rpki-archive-site-crawler --> s3_snapshot_summary
@@ -81,7 +85,12 @@ sequenceDiagram
 pip3 install --upgrade "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpkilog"
 ```
 
-### Lucene query example
+# ElasticSearch query examples
+
+> ⚡ For users who would like to query the ElasticSearch database directly instead of via the https://rpkilog.com
+web site or HTTP API, some examples will be provided here.
+
+### Lucene syntax
 
 Lucene syntax is unforgiving in that the database generally won't give you an error message when executing
 a query with many kinds of malformations.  For example, `maxLength:>=24` requires that `:` after the field
