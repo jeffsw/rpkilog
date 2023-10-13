@@ -9,6 +9,9 @@ terraform {
         aws = {
             source = "hashicorp/aws"
         }
+        opensearch = {
+            source = "opensearch-project/opensearch"
+        }
     }
 }
 
@@ -43,6 +46,16 @@ provider "aws" {
             tf_managed = "main"
         }
     }
+}
+
+provider "opensearch" {
+    # This provider is quite fragile and buggy.  It requires aws_profile & aws_region even if AWS_PROFILE
+    # environment variable is set.
+    url = "https://es-prod.rpkilog.com:443"
+    aws_assume_role_arn = "arn:aws:iam::054500078560:role/es_superuser"
+    aws_profile = "rpkilog"
+    aws_region = "us-east-1"
+    healthcheck = true
 }
 
 ##############################
@@ -283,6 +296,9 @@ resource "aws_iam_role" "anonymous_web" {
         "Condition": {
             "StringEquals": {
                 "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.es.id}"
+            },
+            "ForAnyValue:StringLike": {
+                "cognito-identity.amazonaws.com:amr": "unauthenticated"
             }
         }
     }]
@@ -290,6 +306,52 @@ resource "aws_iam_role" "anonymous_web" {
 POLICY
     inline_policy {
         name = "anonymous_web"
+        policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:*:*:*"
+            ]
+        }
+    ]
+}
+POLICY
+    }
+    depends_on = [
+        aws_cognito_identity_pool.es
+    ]
+}
+
+resource "aws_iam_role" "authenticated_web" {
+    name = "authenticated_web"
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Principal": {
+            "Federated": "cognito-identity.amazonaws.com"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+            "StringEquals": {
+                "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.es.id}"
+            },
+            "ForAnyValue:StringLike": {
+                "cognito-identity.amazonaws.com:amr": "authenticated"
+            }
+        }
+    }]
+}
+POLICY
+    inline_policy {
+        name = "authenticated_web"
         policy = <<POLICY
 {
     "Version": "2012-10-17",
@@ -606,7 +668,7 @@ resource "aws_cognito_identity_pool" "es" {
 resource "aws_cognito_identity_pool_roles_attachment" "es" {
     identity_pool_id = aws_cognito_identity_pool.es.id
     roles = {
-        authenticated = aws_iam_role.anonymous_web.arn
+        authenticated = aws_iam_role.authenticated_web.arn
         unauthenticated = aws_iam_role.anonymous_web.arn
     }
     role_mapping {
@@ -1093,6 +1155,70 @@ POLICY
         aws_cognito_identity_pool.es,
         aws_cognito_user_pool.es
     ]
+}
+
+//noinspection MissingProperty
+resource "opensearch_role" "anonymous" {
+    #name = "anonymous" # pycharm demands `name` but documentation wants `role_name`.  Added a noinspection.
+    role_name = "anonymous"
+    cluster_permissions = [
+        "cluster_composite_ops_ro",
+        "cluster_monitor"
+    ]
+    index_permissions {
+        index_patterns = [ "diff-*" ]
+        allowed_actions = [ "indices_monitor", "read" ]
+    }
+    index_permissions {
+        index_patterns = [ "*" ]
+        allowed_actions = [ "indices_monitor", "read" ]
+    }
+    tenant_permissions {
+        tenant_patterns = [ "global_tenant" ]
+        allowed_actions = [ "kibana_all_read" ]
+    }
+    depends_on = [ aws_elasticsearch_domain.prod ]
+}
+
+resource "opensearch_roles_mapping" "all_access" {
+    role_name = "all_access"
+    users = [
+        # TODO: add a resource and replace this with a reference to it
+        "arn:aws:iam::054500078560:user/jeffsw6@gmail.com",
+    ]
+    backend_roles = [
+        aws_iam_role.ec2_cron1.arn,
+        aws_iam_role.es_superuser.arn,
+    ]
+    depends_on = [ aws_elasticsearch_domain.prod ]
+}
+
+resource "opensearch_roles_mapping" "anonymous" {
+    role_name = "anonymous"
+    backend_roles = [
+        # TODO replace with references
+        "arn:aws:iam::054500078560:role/anonymous_web",
+        "arn:aws:iam::054500078560:role/es_master",
+    ]
+    depends_on = [ aws_elasticsearch_domain.prod ]
+}
+
+resource "opensearch_roles_mapping" "logstash" {
+    role_name = "logstash"
+    backend_roles = [
+        # TODO replace with references
+        "arn:aws:iam::054500078560:role/lambda_diff_import"
+    ]
+    depends_on = [ aws_elasticsearch_domain.prod ]
+}
+
+resource "opensearch_roles_mapping" "security_manager" {
+    role_name = "security_manager"
+    backend_roles = [
+        # TODO replace with references
+        "arn:aws:iam::054500078560:role/es_superuser"
+    ]
+    depends_on = [ aws_elasticsearch_domain.prod ]
 }
 
 ##############################
