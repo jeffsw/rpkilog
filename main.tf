@@ -678,6 +678,25 @@ resource "aws_cognito_identity_pool_roles_attachment" "es" {
     }
 }
 
+resource "aws_cognito_user" "internal_jeffsw6_at_gmail_dot_com" {
+    user_pool_id = aws_cognito_user_pool.es.id
+    username = "4a0d8508-1278-4ed5-a9a9-68729ce4ce26"
+    attributes = {
+        # TODO add a tf_managed attribute to the user pool schema?
+        # see https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cognito_user_pool#schema
+        #tf_managed = "main"
+        email = "jeffsw6@gmail.com"
+        email_verified = true
+        sub = "4a0d8508-1278-4ed5-a9a9-68729ce4ce26"
+    }
+}
+
+resource "aws_cognito_user_in_group" "internal_jeffsw6_at_gmail_dot_com__es_superuser" {
+    user_pool_id = aws_cognito_user_pool.es.id
+    group_name = aws_cognito_user_group.es_superuser.name
+    username = aws_cognito_user.internal_jeffsw6_at_gmail_dot_com.username
+}
+
 ##############################
 # VPCs
 resource "aws_default_vpc" "default" {
