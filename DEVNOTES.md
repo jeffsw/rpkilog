@@ -91,3 +91,93 @@ Something like this could work:
     }
 }
 ```
+
+# VRP Diff Consolidation
+
+## Overview
+
+ROA management software is commonly issuing short-term ROAs and replacing them very frequently, extending
+the expiration by just a few hours each time.  Two typical examples are below.
+
+Because of this behavior, diffs are completely dominated by routine expiration extensions -- not substantive
+modifications to ROAs.  We can consolidate these noisy expiration-extensions into a separate series of
+database indices and improve the usability of the database / history.  The _old behavior_ can still be
+retained and in fact, our GUI might make it easy to switch back and forth between result-sets.
+
+### `8.8.8.0/24` observations
+
+Google appears to maintain ROAs for `8.8.8.0/24` which expire between 24 and 58 hours in the future.
+Often, two or three updates per day are seen for this prefix, observed at roughly 00:35, 10:35, or 14:35.
+However, their updates skip a whole day and then resume at 00:35 the following day.
+
+```json
+{
+    "observation_timestamp": "2023-10-11T14:34:52Z",
+    "verb": "REPLACE",
+    "prefix": "8.8.8.0/24",
+    "maxLength": 24,
+    "asn": 15169,
+    "ta": "arin",
+    "old_expires": "2023-10-12T14:00:00Z",
+    "old_roa": {
+      "asn": 15169,
+      "expires": 1697119200,
+      "maxLength": 24,
+      "prefix": "8.8.8.0/24",
+      "ta": "arin"
+    },
+    "new_expires": "2023-10-14T00:00:00Z",
+    "new_roa": {
+      "asn": 15169,
+      "expires": 1697241600,
+      "maxLength": 24,
+      "prefix": "8.8.8.0/24",
+      "ta": "arin"
+    }
+}
+```
+
+### `156.154.191.0/24` observations from ARIN-hosted service
+
+In this example, the diff observed at 06:34:53Z replaces a ROA expiring in ~23.5 hours with one expiring
+in ~31.5 hours.  It's likely there is a 34-minute delay between when these ROAs are issued and when they're
+observed by our system.  Therefore, this ROA management software appears to have a goal of maintaining
+ROAs with expiration time 24 to 32 hours in the future.  It will issue an update about three times daily.
+
+```json
+{
+    "observation_timestamp": "2023-10-13T06:34:53Z",
+    "verb": "REPLACE",
+    "prefix": "156.154.191.0/24",
+    "maxLength": 24,
+    "asn": 397213,
+    "ta": "arin",
+    "old_expires": "2023-10-14T06:00:00Z",
+    "old_roa": {
+      "asn": 397213,
+      "expires": 1697263200,
+      "maxLength": 24,
+      "prefix": "156.154.191.0/24",
+      "ta": "arin"
+    },
+    "new_expires": "2023-10-14T14:00:00Z",
+    "new_roa": {
+      "asn": 397213,
+      "expires": 1697292000,
+      "maxLength": 24,
+      "prefix": "156.154.191.0/24",
+      "ta": "arin"
+    }
+}
+```
+
+## `condiff` Indexing Plan
+
+When processing each `.vrpdiff.json` file, we will need to look up the previous `condiff` entry in our
+database.  It will no longer be enough to simply  use the previous `vrpdiff` file, because the NotBefore 
+time for an extended ROA could be far in the past.
+
+> ⚠️ Need to check how the data will show up from routinator.  If it gives us the original NotBefore that
+> may allow us to more efficiently update the right ElasticSearch record.  If it doesn't, we have to
+> do a lot of ES queries (costly) or maintain a cache of the most-recent record for each primary key-tuple
+> that hasn't yet expired.  The data we have from rpki-client would require the cache.
