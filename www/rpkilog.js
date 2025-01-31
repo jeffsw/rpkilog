@@ -1,6 +1,6 @@
 export class VrpEntry {
     constructor(asn, expires, maxLength, prefix, ta) {
-        if (!(typeof(asn) === 'number' && Number.isInteger(asn) && asn > 0 && asn < 4294967296)) {
+        if (!(typeof(asn) === 'number' && Number.isInteger(asn) && asn >= 0 && asn < 4294967296)) {
             throw new TypeError('asn must be an integer between 0 and 4294967296');
         }
         this.asn = asn;
