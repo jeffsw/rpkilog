@@ -181,3 +181,38 @@ time for an extended ROA could be far in the past.
 > may allow us to more efficiently update the right ElasticSearch record.  If it doesn't, we have to
 > do a lot of ES queries (costly) or maintain a cache of the most-recent record for each primary key-tuple
 > that hasn't yet expired.  The data we have from rpki-client would require the cache.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    
+    participant proc as con_diff_proc
+    participant consum as consolidated <br> summary
+    participant diff
+    participant condiff as consolidated diff
+    participant os_history as OpenSearch <br> condiff_hist_*
+    participant os_current as OpenSearch <br> condiff_current
+
+    activate proc
+    alt if previous consum exists
+        consum -->> proc: load
+    else if previous consum does not exist
+        consum -->> proc: load summary in place of consum <br> should only happen on first ever run (bootstrap)
+    end
+
+    diff -->> proc: load the diff to be processed
+    
+    proc -> proc: process diff records <br> using consum data as cache <br> for consolidation of new diffs
+
+    proc ->> condiff: upload condiff
+
+    proc ->> os_history: insert expirations
+
+    proc ->> os_current: updates, creates
+    
+    proc ->> os_current: delete expirations we "moved" them to os_history
+
+    proc ->> consum: upload new consum for use by next invocation
+
+    deactivate proc
+```
