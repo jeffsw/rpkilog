@@ -110,7 +110,6 @@ data "aws_acm_certificate" "rpkilog_com" {
 # IAM roles
 data "aws_iam_policy" "AmazonAPIGatewayPushToCloudWatchLogs" {
     name = "AmazonAPIGatewayPushToCloudWatchLogs"
-    #arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonAPIGatewayPushToCloudWatchLogs"
 }
 
 resource "aws_iam_role" "apigw_logging_accountwide_role" {
@@ -134,22 +133,44 @@ resource "aws_iam_role" "apigw_logging_accountwide_role" {
     ]
 }
 POLICY
-    managed_policy_arns = [
-        data.aws_iam_policy.AmazonAPIGatewayPushToCloudWatchLogs.arn
-    ]
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "apigw_logging_accountwide_role" {
+    role_name = "apigw_logging_accountwide_role"
+    policy_arns = [data.aws_iam_policy.AmazonAPIGatewayPushToCloudWatchLogs.arn]
+}
+
+resource "aws_iam_policy" "ec2_cron1" {
+    name = "ec2_cron2"
+    policy = file("aws_iam/ec2_cron1.json")
 }
 
 resource "aws_iam_role" "ec2_cron1" {
     name = "ec2_cron1"
     assume_role_policy = file("aws_iam/ec2_generic_assume_role.json")
-    inline_policy {
-        name = "ec2_cron1"
-        policy = file("aws_iam/ec2_cron1.json")
-    }
+}
+
+resource "aws_iam_role_policies_exclusive" "ec2_cron1" {
+    role_name = aws_iam_role.ec2_cron1.name
+    policy_names = [aws_iam_policy.ec2_cron1.name]
 }
 
 data "aws_iam_policy" "AmazonOpenSearchServiceCognitoAccess" {
     name = "AmazonOpenSearchServiceCognitoAccess"
+}
+
+resource "aws_iam_policy" "es_superuser" {
+    name = "es_superuser"
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow"
+                Action = ["es:ESHttp*"]
+                Resource = "arn:aws:es:*:*:*"
+            },
+        ]
+    })
 }
 
 resource "aws_iam_role" "es_superuser" {
@@ -184,28 +205,41 @@ resource "aws_iam_role" "es_superuser" {
     ]
 }
 POLICY
-    inline_policy {
-        name = "es_superuser"
-        policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "es:ESHttp*"
-            ],
-            "Resource": [
-                "arn:aws:es:*:*:*"
-            ]
-        }
-    ]
-}
-POLICY
-    }
     depends_on = [
         aws_cognito_identity_pool.es
     ]
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "es_superuser" {
+    role_name = aws_iam_role.es_superuser.name
+    policy_arns = [aws_iam_policy.es_superuser.arn]
+}
+
+resource "aws_iam_policy" "es_master" {
+    name = "es_master"
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow",
+                Action = ["es:ESHttp*"]
+                Resource = ["arn:aws:es:*:*:*"]
+            },
+            {
+                Sid = "Log"
+                Effect = "Allow",
+                Action = [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                ]
+                Resource = [
+                    "arn:aws:logs:*:*:log-group:/aws/lambda/hapi",
+                    "arn:aws:logs:*:*:log-group:/aws/lambda/hapi:log-stream:*",
+                ]
+            }
+        ]
+    })
 }
 
 resource "aws_iam_role" "es_master" {
@@ -246,42 +280,30 @@ resource "aws_iam_role" "es_master" {
     ]
 }
 POLICY
-    inline_policy {
-        name = "es_master"
-        policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "es:ESHttp*"
-            ],
-            "Resource": [
-                "arn:aws:es:*:*:*"
-            ]
-        },
-        {
-            "Sid": "Log",
-            "Effect": "Allow",
-            "Action": [
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            "Resource": [
-                "arn:aws:logs:*:*:log-group:/aws/lambda/hapi",
-                "arn:aws:logs:*:*:log-group:/aws/lambda/hapi:log-stream:*"
-            ]
-        }
-    ]
-}
-POLICY
-    }
     depends_on = [
         aws_cognito_identity_pool.es
     ]
 }
+
+resource "aws_iam_role_policy_attachments_exclusive" "es_master" {
+    role_name = aws_iam_role.es_master.name
+    policy_arns = [aws_iam_policy.es_master.arn]
+}
+
+resource "aws_iam_policy" "anonymous_web" {
+    name = "anonymous_web"
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow",
+                Action = ["es:ESHttp*"],
+                Resource = ["arn:aws:es:*:*:*"]
+            },
+        ]
+    })
+}
+
 resource "aws_iam_role" "anonymous_web" {
     name = "anonymous_web"
     assume_role_policy = <<POLICY
@@ -304,28 +326,28 @@ resource "aws_iam_role" "anonymous_web" {
     }]
 }
 POLICY
-    inline_policy {
-        name = "anonymous_web"
-        policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "es:ESHttp*"
-            ],
-            "Resource": [
-                "arn:aws:es:*:*:*"
-            ]
-        }
-    ]
-}
-POLICY
-    }
     depends_on = [
         aws_cognito_identity_pool.es
     ]
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "anonymous_web" {
+    role_name = aws_iam_role.anonymous_web.name
+    policy_arns = [aws_iam_policy.anonymous_web.arn]
+}
+
+resource "aws_iam_policy" "authenticated_web" {
+    name = "authenticated_web"
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow",
+                Action = ["es:ESHttp*"],
+                Resource = ["arn:aws:es:*:*:*"]
+            },
+        ]
+    })
 }
 
 resource "aws_iam_role" "authenticated_web" {
@@ -350,36 +372,19 @@ resource "aws_iam_role" "authenticated_web" {
     }]
 }
 POLICY
-    inline_policy {
-        name = "authenticated_web"
-        policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "es:ESHttp*"
-            ],
-            "Resource": [
-                "arn:aws:es:*:*:*"
-            ]
-        }
-    ]
-}
-POLICY
-    }
     depends_on = [
         aws_cognito_identity_pool.es
     ]
 }
 
+resource "aws_iam_role_policy_attachments_exclusive" "authenticated_web" {
+    role_name = aws_iam_role.authenticated_web.name
+    policy_arns = [aws_iam_policy.authenticated_web.arn]
+}
+
 resource "aws_iam_role" "es_cognito" {
     name = "es_cognito"
     description = "ElasticSearch/OpenSearch runs as this role.  The policy is a managed policy supplied by AWS."
-    managed_policy_arns = [
-        data.aws_iam_policy.AmazonOpenSearchServiceCognitoAccess.arn
-    ]
     assume_role_policy = <<POLICY
 {
     "Version": "2012-10-17",
@@ -396,136 +401,161 @@ resource "aws_iam_role" "es_cognito" {
 POLICY
 }
 
+resource "aws_iam_role_policy_attachments_exclusive" "es_cognito" {
+    role_name = aws_iam_role.es_cognito.name
+    policy_arns = [data.aws_iam_policy.AmazonOpenSearchServiceCognitoAccess.arn]
+}
+
+resource "aws_iam_policy" "lambda_archive_site_crawler" {
+    name = "lambda_archive_site_crawler"
+    policy = file("aws_iam/lambda_archive_site_crawler.json")
+}
+
 resource "aws_iam_role" "lambda_archive_site_crawler" {
     name = "lambda_archive_site_crawler"
     assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
-    inline_policy {
-        name = "lambda_archive_site_crawler"
-        policy = file("aws_iam/lambda_archive_site_crawler.json")
-    }
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "lambda_archive_site_crawler" {
+    role_name = aws_iam_role.lambda_archive_site_crawler.name
+    policy_arns = [aws_iam_policy.lambda_archive_site_crawler.arn]
+}
+
+resource "aws_iam_policy" "lambda_snapshot_ingest" {
+    name = "lambda_snapshot_ingest"
+    policy = file("aws_iam/lambda_snapshot_ingest-policy.json")
 }
 
 resource "aws_iam_role" "lambda_snapshot_ingest" {
     name = "lambda_snapshot_ingest"
     assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
-    inline_policy {
-        name = "lambda_snapshot_ingest"
-        policy = file("aws_iam/lambda_snapshot_ingest-policy.json")
-    }
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "lambda_snapshot_ingest" {
+    role_name = aws_iam_role.lambda_snapshot_ingest.name
+    policy_arns = [aws_iam_policy.lambda_snapshot_ingest.arn]
+}
+
+resource "aws_iam_policy" "lambda_vrp_cache_diff" {
+    name = "lambda_vrp_cache_diff"
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow",
+                Action = [
+                    "s3:GetObject",
+                    "s3:GetObjectTagging",
+                    "s3:ListBucket"
+                ]
+                Resource = [
+                    "arn:aws:s3:::rpkilog-snapshot-summary",
+                    "arn:aws:s3:::rpkilog-snapshot-summary/*"
+                ]
+            },
+            {
+                Effect = "Allow",
+                Action = [
+                    "s3:GetObject",
+                    "s3:GetObjectTagging",
+                    "s3:ListBucket",
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:PutObjectRetention",
+                    "s3:PutObjectTagging"
+                ]
+                Resource = [
+                    "arn:aws:s3:::rpkilog-diff",
+                    "arn:aws:s3:::rpkilog-diff/*"
+                ]
+            },
+            {
+                Sid    = "DeadLetterQueue",
+                Effect = "Allow",
+                Action = [
+                    "sqs:SendMessage"
+                ]
+                Resource = [
+                    aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn
+                ]
+            },
+            {
+                Effect = "Allow",
+                Action = [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                ]
+                Resource : [
+                    "arn:aws:logs:*:*:*"
+                ]
+            }
+        ]
+    })
 }
 
 resource "aws_iam_role" "lambda_vrp_cache_diff" {
     name = "lambda_vrp_cache_diff"
     assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
-    inline_policy {
-        name = "lambda_vrp_cache_diff"
-        policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:GetObjectTagging",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::rpkilog-snapshot-summary",
-                "arn:aws:s3:::rpkilog-snapshot-summary/*"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:GetObjectTagging",
-                "s3:ListBucket",
-                "s3:PutObject",
-                "s3:PutObjectAcl",
-                "s3:PutObjectRetention",
-                "s3:PutObjectTagging"
-            ],
-            "Resource": [
-                "arn:aws:s3:::rpkilog-diff",
-                "arn:aws:s3:::rpkilog-diff/*"
-            ]
-        },
-        {
-            "Sid": "DeadLetterQueue",
-            "Effect": "Allow",
-            "Action": [
-                "sqs:SendMessage"
-            ],
-            "Resource": [
-                "${aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn}"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            "Resource": [
-                "arn:aws:logs:*:*:*"
-            ]
-        }
-    ]
 }
-POLICY
-    }
+
+resource "aws_iam_role_policy_attachments_exclusive" "lambda_vrp_cache_diff" {
+    role_name = aws_iam_role.lambda_vrp_cache_diff.name
+    policy_arns = [aws_iam_policy.lambda_vrp_cache_diff.arn]
+}
+
+resource "aws_iam_policy" "lambda_diff_import" {
+    name = "lambda_diff_import"
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Sid = "S3Read"
+                Effect = "Allow"
+                Action = [
+                    "s3:GetObject",
+                    "s3:GetObjectTagging",
+                    "s3:ListBucket",
+                ]
+                Resource = [
+                    "arn:aws:s3:::rpkilog-diff",
+                    "arn:aws:s3:::rpkilog-diff/*",
+                ]
+            },
+            {
+                Sid = "ES"
+                Effect = "Allow"
+                Action = [
+                    "es:ESHttp*",
+                ]
+                Resource = [
+                    "arn:aws:es:*:*:*",
+                ]
+            },
+            {
+                Sid = "Log"
+                Effect = "Allow"
+                Action = [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                ]
+                Resource : [
+                    "arn:aws:logs:*:*:*",
+                ]
+            }
+        ]
+    })
 }
 
 resource "aws_iam_role" "lambda_diff_import" {
     name = "lambda_diff_import"
     assume_role_policy = file("aws_iam/lambda_generic_assume_role_policy.json")
-    inline_policy {
-        name = "lambda_diff_import"
-        policy = <<POLICY
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "S3Read",
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:GetObjectTagging",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::rpkilog-diff",
-                "arn:aws:s3:::rpkilog-diff/*"
-            ]
-        },
-        {
-            "Sid": "ES",
-            "Effect": "Allow",
-            "Action": [
-                "es:ESHttp*"
-            ],
-            "Resource": [
-                "arn:aws:es:*:*:*"
-            ]
-        },
-        {
-            "Sid": "Log",
-            "Effect": "Allow",
-            "Action": [
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            "Resource": [
-                "arn:aws:logs:*:*:*"
-            ]
-        }
-    ]
 }
-POLICY
-    }
+
+resource "aws_iam_role_policy_attachments_exclusive" "lambda_diff_import" {
+    role_name = aws_iam_role.lambda_diff_import.name
+    policy_arns = [aws_iam_policy.lambda_diff_import.arn]
 }
 
 ##############################
@@ -1099,7 +1129,7 @@ EOF
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "OpenSearch_2.9"
+    elasticsearch_version = "OpenSearch_2.17"
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
     access_policies = <<POLICY
@@ -1134,7 +1164,7 @@ POLICY
     }
     cluster_config {
         # Instance types: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/supported-instance-types.html
-        instance_type = "t3.medium.elasticsearch"
+        instance_type = "m6g.large.elasticsearch"
         instance_count = 1
         zone_awareness_enabled = false
     }
