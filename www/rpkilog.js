@@ -24,7 +24,7 @@ export class VrpEntry {
             }
         } else if (prefix.match(/^([0-9A-Fa-f:]+:.+)\/(\d{1,3})$/)) {
             this.family = 6
-            if (! this.maxLength >= 0 && this.maxLength <= 128) {
+            if (!(0 <= this.maxLength && this.maxLength <= 128)) {
                 throw new TypeError('maxLength must be an integer from 0 to 128 for IPv6 prefixes');
             }
         } else {
