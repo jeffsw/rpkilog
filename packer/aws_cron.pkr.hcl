@@ -61,7 +61,7 @@ build {
   provisioner "shell" {
     execute_command = "echo 'packer' | sudo -S sh -c '{{ .Vars }} {{ .Path }}'"
     scripts = [
-        "rpkilog.sh"
+        "aws_cron.sh"
     ]
   }
 }
