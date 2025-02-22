@@ -5,7 +5,7 @@
 packer {
   required_plugins {
     amazon = {
-      version = ">= 1.2.7"
+      version = ">= 1.3.4"
       source  = "github.com/hashicorp/amazon"
     }
   }
@@ -31,14 +31,14 @@ variable "builder_instance_type" {
 }
 
 source "amazon-ebs" "rpkilog" {
-  ami_name      = "rpkilog-22-${var.arch}"
+  ami_name      = "rpkilog-24-${var.arch}"
   force_deregister = true
   force_delete_snapshot = true
-  instance_type = lookup(var.builder_instance_type, var.arch, "none")
+  instance_type = var.builder_instance_type[var.arch]
   region        = "us-east-1"
   source_ami_filter {
     filters = {
-      name                = "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-${var.arch}-server-*"
+      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-${var.arch}-server-*"
       architecture        = lookup({"amd64"="x86_64", "arm64"="arm64"}, var.arch, "none")
       root-device-type    = "ebs"
       virtualization-type = "hvm"
@@ -50,7 +50,7 @@ source "amazon-ebs" "rpkilog" {
 }
 
 build {
-  name = "rpkilog-22-${var.arch}"
+  name = "rpkilog-24-${var.arch}"
   sources = [
     "source.amazon-ebs.rpkilog"
   ]

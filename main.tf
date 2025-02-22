@@ -62,6 +62,8 @@ provider "opensearch" {
 # Caller
 data "aws_caller_identity" "current" {}
 
+data "aws_default_tags" "main" {}
+
 data "aws_region" "current" {}
 
 ##############################
@@ -141,8 +143,11 @@ resource "aws_iam_role_policy_attachments_exclusive" "apigw_logging_accountwide_
 }
 
 resource "aws_iam_policy" "ec2_cron1" {
-    name = "ec2_cron2"
+    name = "ec2_cron1"
     policy = file("aws_iam/ec2_cron1.json")
+    lifecycle {
+        create_before_destroy = true
+    }
 }
 
 resource "aws_iam_role" "ec2_cron1" {
@@ -893,7 +898,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     runtime = "python3.11"
     handler = "rpkilog.vrp_diff.aws_lambda_entry_point"
     memory_size = 1769
-    timeout = 300
+    timeout = 600
     environment {
         variables = {
             snapshot_summary_bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
@@ -1036,13 +1041,13 @@ resource "aws_iam_instance_profile" "cron1" {
 
 ##############################
 # EC2 AMIs
-data "aws_ami" "ubuntu_x86" {
-    owners = ["099720109477"] # Canonical official Ubuntu AMIs
+data "aws_ami" "rpkilog_ubuntu2004" {
+    owners = [data.aws_caller_identity.current.account_id]
     most_recent = true
     filter {
         name = "name"
         values = [
-            "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
+            "rpkilog"
         ]
     }
     filter {
@@ -1055,13 +1060,13 @@ data "aws_ami" "ubuntu_x86" {
     }
 }
 
-data "aws_ami" "rpkilog_ubuntu2004" {
-    owners = ["054500078560"] # rpkilog account
+data "aws_ami" "rpkilog_ubuntu2404" {
+    owners = [data.aws_caller_identity.current.account_id]
     most_recent = true
     filter {
         name = "name"
         values = [
-            "rpkilog"
+            "rpkilog-24-amd64"
         ]
     }
     filter {
@@ -1106,8 +1111,15 @@ resource "aws_instance" "cron1" {
     }
     instance_type = "t3.small"
     iam_instance_profile = aws_iam_instance_profile.cron1.name
-    ami = data.aws_ami.rpkilog_ubuntu2004.id
+    ami = data.aws_ami.rpkilog_ubuntu2404.id
     key_name = "jeffsw-boomer"
+    root_block_device {
+        volume_size = 12
+    }
+    volume_tags = merge(data.aws_default_tags.main.tags, {
+        hostname = "cron2"
+        mount_point = "/"
+    })
     user_data = <<EOF
 #!/bin/bash
 echo cron1 > /etc/hostname
@@ -1126,12 +1138,58 @@ EOF
 # Managing ES with Terraform is quite buggy.  Went through several permutations of config before working
 # around this issue: https://github.com/hashicorp/terraform-provider-aws/issues/13552
 
+resource "aws_cloudwatch_log_resource_policy" "opensearch" {
+    policy_name = "opensearch"
+    policy_document = jsonencode({
+        Version = "2012-10-17"
+        Statement = [
+            {
+                Effect = "Allow"
+                Resource = ["arn:aws:logs:*"]
+                Principal = {
+                    "Service": [
+                        "es.amazonaws.com"
+                    ]
+                }
+                Condition = {
+                    "StringEquals" = {
+                        "aws:SourceAccount": [data.aws_caller_identity.current.account_id]
+                    }
+                }
+                Action = [
+                    "logs:PutLogEvents",
+                    "logs:PutLogEventsBatch",
+                    "logs:CreateLogStream",
+                ]
+            }
+        ]
+    })
+}
+
+resource "aws_cloudwatch_log_group" "opensearch_prod" {
+    name = "opensearch_prod"
+}
+
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
     elasticsearch_version = "OpenSearch_2.17"
+    log_publishing_options {
+        cloudwatch_log_group_arn = aws_cloudwatch_log_group.opensearch_prod.arn
+        log_type                 = "ES_APPLICATION_LOGS"
+    }
+    log_publishing_options {
+        cloudwatch_log_group_arn = aws_cloudwatch_log_group.opensearch_prod.arn
+        log_type                 = "INDEX_SLOW_LOGS"
+    }
+    log_publishing_options {
+        cloudwatch_log_group_arn = aws_cloudwatch_log_group.opensearch_prod.arn
+        log_type                 = "SEARCH_SLOW_LOGS"
+    }
+
     # I'm worried Principal: AWS should be "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
     # to avoid granting access to random public, but maybe that's why we have advanced_security_options?
+
     access_policies = <<POLICY
 {
     "Version": "2012-10-17",
