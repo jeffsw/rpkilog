@@ -1,6 +1,6 @@
 # This packer file can build an amd64 or arm64 AMI.
 # Invoke it like below; the default is arch=amd64.
-#   packer build -var arch=arm64 rpkilog.pkr.hcl
+#   packer build -var arch=arm64 aws_cron.pkr.hcl
 
 packer {
   required_plugins {
