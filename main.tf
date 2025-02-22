@@ -150,9 +150,9 @@ resource "aws_iam_role" "ec2_cron1" {
     assume_role_policy = file("aws_iam/ec2_generic_assume_role.json")
 }
 
-resource "aws_iam_role_policies_exclusive" "ec2_cron1" {
+resource "aws_iam_role_policy_attachments_exclusive" "ec2_cron1" {
     role_name = aws_iam_role.ec2_cron1.name
-    policy_names = [aws_iam_policy.ec2_cron1.name]
+    policy_arns = [aws_iam_policy.ec2_cron1.arn]
 }
 
 data "aws_iam_policy" "AmazonOpenSearchServiceCognitoAccess" {
