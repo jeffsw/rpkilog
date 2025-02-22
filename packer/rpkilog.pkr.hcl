@@ -1,21 +1,45 @@
+# This packer file can build an amd64 or arm64 AMI.
+# Invoke it like below; the default is arch=amd64.
+#   packer build -var arch=arm64 rpkilog.pkr.hcl
+
 packer {
   required_plugins {
     amazon = {
-      version = ">= 1.0.4"
+      version = ">= 1.3.4"
       source  = "github.com/hashicorp/amazon"
     }
   }
 }
 
+variable "arch" {
+  type = string
+  default = "amd64"
+  validation {
+    condition = var.arch == "amd64" || var.arch == "arm64"
+    error_message = "The arch variable must be amd64 or arm64."
+  }
+}
+
+# This is the instance type used for building the AMI.  It does not dictate what instance type is
+# usable by instances created from the AMI.
+variable "builder_instance_type" {
+  type = map(string)
+  default = {
+    "amd64" = "t3.large"
+    "arm64" = "t4g.large"
+  }
+}
+
 source "amazon-ebs" "rpkilog" {
-  ami_name      = "rpkilog-22"
+  ami_name      = "rpkilog-24-${var.arch}"
   force_deregister = true
   force_delete_snapshot = true
-  instance_type = "t3.small"
+  instance_type = var.builder_instance_type[var.arch]
   region        = "us-east-1"
   source_ami_filter {
     filters = {
-      name                = "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
+      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-${var.arch}-server-*"
+      architecture        = lookup({"amd64"="x86_64", "arm64"="arm64"}, var.arch, "none")
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
@@ -26,7 +50,7 @@ source "amazon-ebs" "rpkilog" {
 }
 
 build {
-  name = "rpkilog-22"
+  name = "rpkilog-24-${var.arch}"
   sources = [
     "source.amazon-ebs.rpkilog"
   ]

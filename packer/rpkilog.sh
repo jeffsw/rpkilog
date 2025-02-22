@@ -1,5 +1,8 @@
 #!/bin/bash -e
 
+ARCH=$(uname --machine)
+VENV_DIR=/opt/rpkilog/venv/
+
 ##############################
 # OS packages and apt
 apt-get -y update
@@ -9,18 +12,23 @@ apt-get -y install \
   curl \
   git \
   ipython3 \
-  mlocate \
   nfs-common \
+  plocate \
+  python3-bcdoc \
+  python3-boto3 \
+  python3-botocore \
+  python3-full \
   python3-pip \
   unzip \
   zip \
 
 ##############################
-# Python
-pip3 install \
-  botocore \
-  boto3 \
-  bcdoc \
+# human users
+adduser --uid 2000 --disabled-password jsw
+adduser jsw admin
+adduser jsw sudo
+echo "jsw        ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/rpkilog_config
+chmod 0400 /etc/sudoers.d/rpkilog_config
 
 ##############################
 # ssh
@@ -35,31 +43,41 @@ chmod 0644 /etc/ssh/authorized_keys/*
 popd
 
 ##############################
-# human users
-adduser --uid 2000 --disabled-password jsw
-adduser jsw admin
-adduser jsw sudo
-echo "jsw        ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/rpkilog_config
-chmod 0400 /etc/sudoers.d/rpkilog_config
+# Python
+mkdir -p ${VENV_DIR}
+python3 -m venv ${VENV_DIR}
+${VENV_DIR}/bin/pip install \
+  botocore \
+  boto3 \
+  bcdoc \
 
 ##############################
 # AWS CLI
 pushd /usr/local/src
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+if [[ ${ARCH} = "x86_64" ]]; then
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+elif [[ ${ARCH} = "aarch64" ]]; then
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+else
+    echo "Expecting uname --machine output to be x86_64 or aarch64 but it is ${ARCH}"
+    exit 1
+fi
 unzip awscliv2.zip
 ./aws/install
 popd
 
 ##############################
 # rpkilog python from github
-pip3 install "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpkilog"
+${VENV_DIR}/bin/pip3 install "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpkilog"
 
 ##############################
 # crawler
 groupadd crawler --gid 500
 adduser --uid 500 --gid 500 --disabled-password crawler
 cat <<EOF > /etc/cron.d/crawler
-5,15,25,35,45,55 * * * * crawler rpkilog-archive-site-crawler \
+# Uncomment on production cron runner VM.  Commented in packer provisioner so job won't run on
+# VMs in the image build process or on other types of VM.
+#5,15,25,35,45,55 * * * * crawler ${VENV_DIR}/bin/rpkilog-archive-site-crawler \
 --s3-snapshot-bucket-name rpkilog-snapshot \
 --s3-snapshot-summary-bucket-name rpkilog-snapshot-summary \
 --site-root http://josephine.sobornost.net/josephine.sobornost.net/rpkidata/ \
