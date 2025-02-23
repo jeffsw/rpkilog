@@ -1222,8 +1222,8 @@ POLICY
     }
     cluster_config {
         # Instance types: https://docs.aws.amazon.com/opensearch-service/latest/developerguide/supported-instance-types.html
-        instance_type = "m6g.large.elasticsearch"
-        instance_count = 1
+        instance_type = "r7g.large.elasticsearch"
+        instance_count = 2
         zone_awareness_enabled = false
     }
     cognito_options {
