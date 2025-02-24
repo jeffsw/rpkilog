@@ -9,6 +9,10 @@ terraform {
         aws = {
             source = "hashicorp/aws"
         }
+        linode = {
+            source = "linode/linode"
+            version = ">= 2.34.1"
+        }
         opensearch = {
             source = "opensearch-project/opensearch"
         }
@@ -39,6 +43,22 @@ variable "aws_subnet_ids" {
     ]
 }
 
+variable "jump_servers_ipv4" {
+    description = "jump servers ipv4"
+    type = list(string)
+    default = [
+        "198.58.103.30/32"
+    ]
+}
+
+variable "jump_servers_ipv6" {
+    description = "jump servers ipv6"
+    type = list(string)
+    default = [
+        "2600:3c00::f03c:91ff:fe91:5c9d/128"
+    ]
+}
+
 provider "aws" {
     region = "us-east-1"
     default_tags {
@@ -47,6 +67,8 @@ provider "aws" {
         }
     }
 }
+
+provider "linode" {}
 
 provider "opensearch" {
     # This provider is quite fragile and buggy.  It requires aws_profile & aws_region even if AWS_PROFILE
@@ -1550,4 +1572,66 @@ resource "aws_api_gateway_stage" "unstable" {
 }
 
 # APIGW end
+##############################
+
+##############################
+# Routinator on linode
+data "linode_images" "routinator" {
+    latest = true
+    filter {
+        name = "created_by"
+        values = ["jeffsw6"]
+    }
+    filter {
+        name = "label"
+        values = ["rpkilog_routinator"]
+    }
+}
+
+resource "linode_firewall" "routinator" {
+    label = "rpkilog_routinator"
+    inbound_policy = "DROP"
+    outbound_policy = "ACCEPT"
+
+    inbound {
+        label = "ssh"
+        action = "ACCEPT"
+        protocol = "TCP"
+        ports = "22"
+        ipv4 = var.jump_servers_ipv4
+        ipv6 = var.jump_servers_ipv6
+    }
+}
+
+resource "linode_instance" "routinator" {
+    backups_enabled = false
+    booted = true
+    firewall_id = linode_firewall.routinator.id
+    image = data.linode_images.routinator.images.0.id
+    label = "rpkilog_routinator"
+    region = "us-southeast"
+    type = "g6-standard-2"
+    watchdog_enabled = true
+    tags = [
+        "routinator",
+        "rpkilog",
+    ]
+}
+
+resource "aws_route53_record" "routinator_rpkilog_com__A" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name    = "routinator.rpkilog.com"
+    type    = "A"
+    ttl     = 300
+    records = linode_instance.routinator.ipv4
+}
+
+resource "aws_route53_record" "routinator_rpkilog_com__AAAA" {
+    zone_id = aws_route53_zone.rpkilog_com.zone_id
+    name    = "routinator.rpkilog.com"
+    type    = "AAAA"
+    ttl     = 300
+    records = [cidrhost(linode_instance.routinator.ipv6, 0)]
+}
+# Routinator end
 ##############################
