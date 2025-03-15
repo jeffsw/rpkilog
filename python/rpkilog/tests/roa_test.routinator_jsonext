@@ -1,0 +1,11 @@
+{
+  "metadata": {
+    "generated": 1741556754,
+    "generatedTime": "2025-03-09T21:45:54Z"
+  },
+  "roas": [
+    { "asn": "AS13335", "prefix": "1.0.0.0/24", "maxLength": 24, "source": [ { "type": "roa", "uri": "rsync://rpki.apnic.net/member_repository/A91872ED/ED8C96901D6C11E28A38A3AD08B02CD2/797B4DEC293B11E8B187196DC4F9AE02.roa", "tal": "apnic", "validity": { "notBefore": "2021-02-11T14:20:11Z", "notAfter": "2031-03-31T00:00:00Z" }, "chainValidity": { "notBefore": "2025-03-09T17:50:01Z", "notAfter": "2025-03-15T14:17:32Z" }, "stale": "2025-03-15T14:17:31Z" }] },
+    { "asn": "AS37125", "prefix": "2c0f:fff0::/32", "maxLength": 128, "source": [ { "type": "roa", "uri": "rsync://rpki.afrinic.net/repository/member_repository/F3689F69/B6B5A48C2FC411EFA04CDA8D762E951A/A2FF32042FC511EFBE676196762E951A.roa", "tal": "afrinic", "validity": { "notBefore": "2024-06-21T11:58:53Z", "notAfter": "2049-12-31T11:58:53Z" }, "chainValidity": { "notBefore": "2025-03-09T03:01:28Z", "notAfter": "2025-03-11T00:06:07Z" }, "stale": "2025-03-11T00:06:05Z" }] }
+  ]
+}
+

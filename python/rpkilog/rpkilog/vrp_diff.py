@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+
 from pathlib import Path
 
 import boto3
@@ -40,7 +41,7 @@ class Roa():
             rem = re.match(r'^AS(?P<asn>\d+)$', asn)
             if not rem:
                 raise ValueError(F'Cannot get integer ASN from asn argument passed as string: {asn}')
-            asn = int(rem.group(asn))
+            asn = int(rem.group('asn'))
         if asn < 0 or asn > 2**32-1:
             raise ValueError(F'Invalid asn F{asn}')
         self.asn = int(asn)
@@ -102,6 +103,75 @@ class Roa():
             F' }}'
         )
         return retstr
+
+    @classmethod
+    def new_from_routinator_jsonext(
+            cls,
+            routinator_json: dict,
+            source_host: str = None,
+            source_time: datetime = None,
+        ):
+        """
+        Routinator `jsonext` format is different than rpki-client's and contains a *list* of source attestations
+        associated with a given `(asn, prefix, maxLength)` combination.
+
+        TODO: From the *list* of attestations I'm just picking the first entry.  This might be wrong.
+
+        See also: https://routinator.docs.nlnetlabs.nl/en/stable/output-formats.html#term-jsonext
+
+        >>> routinator_roa = \
+            [{'asn': 'AS13335',
+              'maxLength': 24,
+              'prefix': '1.0.0.0/24',
+              'source': [{'chainValidity': {'notAfter': '2025-03-15T14:17:32Z',
+                                            'notBefore': '2025-03-09T17:50:01Z'},
+                          'stale': '2025-03-15T14:17:31Z',
+                          'tal': 'apnic',
+                          'type': 'roa',
+                          'uri': 'rsync://rpki.apnic.net/member_repository/A91872ED/ED8C96901D6C11E28A38A3AD08B02CD2/797B4DEC293B11E8B187196DC4F9AE02.roa',
+                          'validity': {'notAfter': '2031-03-31T00:00:00Z',
+                                       'notBefore': '2021-02-11T14:20:11Z'}
+                         }]
+             }]
+        >>> roa = Roa.new_from_routinator_jsonext(routinator_json=routinator_roa)
+        """
+        if missing := {'asn', 'prefix', 'maxLength'} - routinator_json.keys():
+            raise KeyError(f'argument routinator_json dict is missing required keys: {missing}; arg: {routinator_json}')
+        selected_source = routinator_json['source'][0]
+        constructor_args = {
+            'prefix': routinator_json['prefix'],
+            'maxLength': routinator_json['maxLength'],
+            'ta': selected_source['tal'],
+        }
+        if type(routinator_json['asn'] == int):
+            constructor_args['asn'] = routinator_json['asn']
+        elif rem := re.match(r'^AS(?P<asn>\d+)$', routinator_json['asn']):
+            constructor_args['asn'] = rem.group('asn')
+        else:
+            raise ValueError(f'unrecognizable asn field in ROA: {routinator_json}')
+        constructor_args['expires'] = int(dateutil.parser.parse(selected_source['stale']).timestamp())
+
+        if source_host:
+            constructor_args['source_host'] = source_host
+        if source_time:
+            constructor_args['source_time'] = source_time
+        retval = cls(**constructor_args)
+        return retval
+
+    @classmethod
+    def new_from_rpkiclient_json(
+            cls,
+            rpkiclient_json: dict,
+            source_host: str = None,
+            source_time: datetime = None,
+    ):
+        constructor_args = {
+            **rpkiclient_json,
+            'source_host': source_host,
+            'source_time': source_time,
+        }
+        retval = cls(**constructor_args)
+        return retval
 
     def primary_key(self):
         '''

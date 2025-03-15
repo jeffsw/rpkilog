@@ -2,14 +2,44 @@
 requires = ['setuptools', 'wheel']
 build-backend = 'setuptools.build_meta'
 
-[lambda_zipper]
-local_dependency = [
+[project]
+name = 'rpkilog'
+version = '0.25031501'
+authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
+dependencies = ['boto3',
+    'netaddr',
+    'opensearch-py',
+    'psutil',
+    'python-dateutil',
+    'pyyaml',
+    'requests',
+    'requests_aws4auth',
+    'tqdm',
 ]
-zip_omit = [
-    "^botocore",
-    "^boto3",
+description = 'A web tool for searching RPKI history'
+keywords = ['BGP',
+    'RPKI',
 ]
+license.text = 'MIT'
+optional-dependencies.tests = ['pytest']
+requires-python = '>=3.10'
+urls.homepage = 'https://rpkilog.com'
+urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
+
+[project.scripts]
+rpkilog-archive-site-crawler = 'rpkilog.archive_site_crawler:ArchiveSiteCrawler.cli_entry_point'
+rpkilog-diff-import = 'rpkilog:VrpDiff.cli_entry_point_import'
+rpkilog-hapi = 'rpkilog.hapi:cli_entry_point'
+rpkilog-ingest-tar = 'rpkilog:IngestTar.cli_entry_point'
+rpkilog-routinator-vrp-fetcher = 'rpkilog.routinator_vrp_fetcher:cli_entry_point'
+rpkilog-vrp-cache-differ = 'rpkilog:VrpDiff.cli_entry_point'
 
 [tool.black]
 line-length = 120
 
+[tool.lambda_zip]
+upload_s3_url = 's3://rpkilog-artifact/lambda_rpkilog.zip'
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+testpaths = ["tests"]
