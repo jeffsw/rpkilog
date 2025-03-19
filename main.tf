@@ -805,6 +805,26 @@ resource "aws_s3_bucket" "rpkilog_artifact" {
     bucket = "rpkilog-artifact"
 }
 
+resource "aws_s3_bucket_versioning" "rpkilog_artifact" {
+    bucket = aws_s3_bucket.rpkilog_artifact.id
+    versioning_configuration {
+        status = "Enabled"
+        mfa_delete = "Disabled"
+    }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "rpkilog_artifact" {
+    bucket = aws_s3_bucket.rpkilog_artifact.id
+    rule {
+        id = "1"
+        status = "Enabled"
+        noncurrent_version_expiration {
+            newer_noncurrent_versions = "10"
+            noncurrent_days = 100
+        }
+    }
+}
+
 resource "aws_s3_bucket" "rpkilog_snapshot" {
     bucket = "rpkilog-snapshot"
 }
@@ -954,8 +974,9 @@ resource "aws_lambda_function" "diff_import" {
     role = aws_iam_role.lambda_diff_import.arn
     runtime = "python3.11"
     handler = "rpkilog.vrp_diff.aws_lambda_entry_point_import"
-    memory_size = 256
-    timeout = 300
+    # increased from previous 256 MB & 300s values which weren't sufficient to complete some imports
+    memory_size = 1024
+    timeout = 900
     environment {
         variables = {
             es_endpoint = aws_elasticsearch_domain.prod.endpoint

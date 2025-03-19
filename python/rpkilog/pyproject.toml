@@ -1,12 +1,13 @@
 [build-system]
-requires = ['setuptools', 'wheel']
+requires = ['build', 'setuptools']
 build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
 version = '0.25031501'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
-dependencies = ['boto3',
+dependencies = [
+    'boto3',
     'netaddr',
     'opensearch-py',
     'psutil',
@@ -17,11 +18,15 @@ dependencies = ['boto3',
     'tqdm',
 ]
 description = 'A web tool for searching RPKI history'
-keywords = ['BGP',
+keywords = [
+    'BGP',
     'RPKI',
 ]
-license.text = 'MIT'
+# setuptools doesn't implement PEP 639 (yet).  This causes `python -m build` to fail when both `project.license`
+# is set AND the `LICENSE` **file** exists.  I'll comment out project.license for now.
+#license = 'MIT'
 optional-dependencies.tests = ['pytest']
+readme = 'README.md'
 requires-python = '>=3.10'
 urls.homepage = 'https://rpkilog.com'
 urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
