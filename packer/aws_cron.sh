@@ -80,7 +80,7 @@ cat <<EOF > /etc/cron.d/crawler
 #5,15,25,35,45,55 * * * * crawler ${VENV_DIR}/bin/rpkilog-archive-site-crawler \
 --s3-snapshot-bucket-name rpkilog-snapshot \
 --s3-snapshot-summary-bucket-name rpkilog-snapshot-summary \
---site-root http://josephine.sobornost.net/josephine.sobornost.net/rpkidata/ \
+--site-root https://aws.rpkiviews.org/josephine.sobornost.net/ \
 --job-max-runtime 300 \
 --job-max-downloads 1 \
 
