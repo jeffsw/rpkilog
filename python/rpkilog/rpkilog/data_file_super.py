@@ -1,14 +1,16 @@
 import os
 from abc import ABC, abstractmethod
 import bz2
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
+import re
 from typing import TextIO, Union
 import urllib.parse
 
 import boto3
+import dateutil.parser
 
 from rpkilog.local_storage_type import LocalStorageType
 
@@ -68,6 +70,25 @@ class DataFileSuper(ABC):
                     os.unlink(self.local_filepath_bz2)
                     self.local_storage_type = LocalStorageType.UNCACHED
 
+    def __repr__(self):
+        # TODO: move this to a classvar so it can be overridden
+        include_attrs = [
+            'datetimestamp',
+            'local_filepath_uncompressed',
+            'local_filepath_bz2',
+            'local_storage_type',
+            's3_url',
+            's3_stored',
+        ]
+        brief_dict = {}
+        for aname in include_attrs:
+            if avalue := getattr(self, aname, None):
+                brief_dict[aname] = avalue
+        cname = self.__class__.__name__
+        retstr = f'{cname}({brief_dict})'
+        return retstr
+    __str__ = __repr__
+
     def bzip2_compress(self):
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
@@ -116,6 +137,45 @@ class DataFileSuper(ABC):
             cls._default_s3_base_url = s1 + '/'
         else:
             cls._default_s3_base_url = s1
+
+    @classmethod
+    def infer_datetimestamp_from_path(cls, path) -> datetime:
+        """
+        Parse a datetime stamp from the given path and return it.
+
+        May return a ParserError from dateutil.parser, or ValueError if our regex does not match, upon error.
+        """
+        rem = re.search(r'(?P<dt>\d{4}\D?\d{2}\D?\d{2}T?\d{2}\D?\d{2}\D\d{2}Z?)', path.name)
+        if not rem:
+            raise ValueError(f'regex did not match a recognized datetimestamp in given path: {path}')
+        dt = dateutil.parser.parse(rem.group('dt'))
+        retval = dt.replace(tzinfo=timezone.utc)
+        return retval
+
+    def infer_local_storage_type(self, path) -> LocalStorageType:
+        """
+        Examine the given file, trying to open as a bzip2 and then as a json.
+        Raise an exception if neither are successful (type of exception depends on how json.load() fails)
+
+        Update self.local_storage_type and self.local_filepath_uncompressed or self.local_filepath_bz2.
+        """
+        try:
+            fh = bz2.open(filename=path, mode='r')
+            json_data = json.load(fh)
+            fh.close()
+            self.local_storage_type = LocalStorageType.BZIP2
+            self.local_filepath_bz2 = path
+            return self.local_storage_type
+        except OSError:
+            # bz2 raises OSError when you open a non-bz2 file and try to read from it.
+            pass
+
+        fh = open(file=path, mode='rt')
+        json_data = json.load(fh)
+        fh.close()
+        self.local_storage_type = LocalStorageType.UNCOMPRESSED
+        self.local_filepath_uncompressed = path
+        return self.local_storage_type
 
     @property
     def json_data_cache(self):

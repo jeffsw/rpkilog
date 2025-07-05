@@ -4,6 +4,7 @@
 .terraform
 terraform.tfstate*
 backup/
+bucket_clones/
 build/
 dist/
 

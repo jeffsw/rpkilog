@@ -55,13 +55,17 @@ class RoutinatorSnapshotFile(DataFileSuper):
         return retval
 
     def iterate_roas(self):
+        """
+        Iterate over the ROAs contained with the file.  Yield a Roa object for each one.
+        """
         if 'roas' not in self.json_data_cache:
             raise ValueError(f'"roas" key missing from JSON data')
         if not isinstance(self.json_data_cache['roas'], list):
             weirdtype = type(self.json_data_cache['roas'])
             raise TypeError(f'"roas" key within JSON data expected to be a list but it is a: {weirdtype}')
-        for roa in self.json_data_cache['roas']:
-            yield roa
+        for roa_j in self.json_data_cache['roas']:
+            roa_obj = Roa.new_from_routinator_jsonext(routinator_json=roa_j, source_time=self.datetimestamp)
+            yield roa_obj
 
     def summarize(self):
         summary = {

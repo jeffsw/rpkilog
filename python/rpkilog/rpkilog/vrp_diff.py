@@ -29,6 +29,28 @@ logger = logging.getLogger(__name__)
 
 
 class VrpDiff():
+    """
+    Encapsulates a single ROA's diff.
+
+    The JSON representation is:
+    {
+       "new_roa" : {
+          "asn" : 64500,
+          "expires" : 1981000000,
+          "maxLength" : 24,
+          "prefix" : "192.0.2.0/24",
+          "ta" : "arin"
+       },
+       "old_roa" : {
+          "asn" : 64500,
+          "expires" : 1999000000,
+          "maxLength" : 24,
+          "prefix" : "192.0.2.0/24",
+          "ta" : "arin"
+       },
+       "verb" : "REPLACE"
+    }
+    """
     def __init__(self, old_roa:Roa, new_roa:Roa):
         if not (isinstance(old_roa, Roa) or old_roa==None):
             raise TypeError(F'Argument old_roa should be an Roa (or None) but it is a {type(old_roa)}')
@@ -871,6 +893,91 @@ class VrpDiff():
             'runtime': runtime,
         }
         return retdict
+
+    def pgsql_insert(self, pg_connection):
+        """
+        Using the supplied pg8000.native.Connection, insert the VrpDiff into the given roa_history table.
+        Should be idempotent if the record already exists.
+
+        This actually performs *two* actions on the roa_history SQL table:
+        1. Upsert the SQL record associated with self.old_roa so observation_end is assured to be populated
+        2. Upsert the SQL record associated with self.new_roa so observation_start is assured to be populated
+
+        The reason we do upserts for both is so VrpDiffs can be inserted into the roa_history table in
+        *forward* or *backward* order.  Initializing roa_history could be done from current time, "backwards"
+        based on historic diff files; and this is how it really will be done when first loading the database.
+        However, as new diffs become avaailable, we go "forwards".
+
+        EXPERIMENT comparison vs our current OpenSearch database.
+        """
+        # TODO: the business logic isn't quite right here.  Every time we see a VrpDiff it should result
+        #       in a new primary key in the database, and the observation_end of the old one updated.
+        #
+        #       I think we learn observation_start when a Roa is seen as self.new_roa and we learn obs_end
+        #       when it's seen as self.old_roa.
+        #       This means when going "forwards" (real-time, ongoing updates) things are simple.
+        #       When going "backwards" (initialize from history files) we don't know the value of obs_start
+        #       for self.old_roa so we can't create those records unless it can be null.
+
+        # see https://stackoverflow.com/a/51375782/10879815 for a good example of pgsql 15+ MERGE INTO
+
+        # self.old_roa INSERT everything INCLUDING observation_end OR UPDATE observation_end
+        old_roa_col_names_list = ['prefix', 'max_len', 'asn', 'ta', 'observation_start', 'expires', 'observation_end']
+        old_roa_col_names = ','.join(old_roa_col_names_list)
+        old_roa_placeholders = ','.join(map(lambda name: ':'+name, old_roa_col_names_list))
+        old_roa_col_names_prefixed_with_t1 = ','.join(map(lambda name: 't1.'+name, old_roa_col_names_list))
+        old_roa_statement = f"""
+        MERGE INTO roa_history dst
+          USING (VALUES({old_roa_placeholders})) AS t1 ({old_roa_col_names})
+          ON t1.prefix = dst.prefix AND
+             t1.max_len = dst.max_len AND
+             t1.asn = dst.asn AND
+             t1.ta = dst.ta AND
+             t1.observation_start = dst.observation_start
+        WHEN MATCHED THEN
+          UPDATE SET roa_history.observation_end = t1.observation_end
+        WHEN NOT MATCHED THEN
+          INSERT ({old_roa_col_names})
+          /* the values here look like t1.prefix, t1.max_len, ... refering to USING(VALUES(..)) AS t1 */
+          VALUES ({old_roa_col_names_prefixed_with_t1})
+        """
+        old_roa_prepared = pg_connection.prepare(old_roa_statement)
+
+        # TODO: self.new_roa INSERT everything EXCEPT observation_end OR update observation_start
+        new_roa_col_names_list = ['prefix', 'max_len', 'asn', 'ta', 'observation_start', 'expires']
+        new_roa_col_names = ','.join(new_roa_col_names_list)
+        new_roa_placeholders = ','.join(map(lambda name: ':'+name, new_roa_col_names_list))
+        new_roa_col_names_prefixed_with_t1 = ','.join(map(lambda name: 't1.'+name, new_roa_col_names_list))
+        new_roa_statement = f"""
+        MERGE INTO roa_history dst
+          USING (VALUES({new_roa_placeholders})) AS t1 ({new_roa_col_names}
+          ON t1.prefix = dst.prefix AND
+             t1.max_len = dst.max_len AND
+             t1.asn = dst.asn AND
+             t1.ta = dst.ta AND
+             t1.observation_start = dst.observation_start
+        WHEN MATCHED THEN
+          UPDATE SET roa_history.observation_start = t1.observation_start
+        WHEN NOT MATCHED THEN
+          INSERT ({new_roa_col_names})
+          VALUES ({new_roa_col_names_prefixed_with_t1})
+        """
+
+        # do the inserts/updates
+
+        old_roa_sql_values = {
+            'prefix': self.old_roa.prefix,
+            'max_len': self.old_roa.maxLength,
+            'asn': self.old_roa.asn,
+            'ta': self.old_roa.ta,
+            'observation_start': None, # TODO: old_roa observation_start value goes here
+            'expires': self.old_roa.expires,
+            'observation_end': None, # TODO: new_roa observation_start value goes here
+        }
+        old_roa_prepared.run(**old_roa_sql_values)
+
+
+
 
 def aws_lambda_entry_point(event, context):
     retval = VrpDiff.aws_lambda_entry_point(event, context)
