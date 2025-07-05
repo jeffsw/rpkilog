@@ -5,3 +5,5 @@
 terraform.tfstate*
 backup/
 build/
+dist/
+

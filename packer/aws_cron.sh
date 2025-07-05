@@ -83,5 +83,6 @@ cat <<EOF > /etc/cron.d/crawler
 --site-root https://aws.rpkiviews.org/josephine.sobornost.net/ \
 --job-max-runtime 300 \
 --job-max-downloads 1 \
+2>&1 | logger -t rpkilog-archive-site-crawler \
 
 EOF
