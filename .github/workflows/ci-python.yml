@@ -1,0 +1,64 @@
+name: ci-python
+
+on:
+  push:
+  pull_request:
+    branches: [ $default-branch ]
+
+permissions:
+  contents: read
+
+jobs:
+  ci-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.13"
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: "pip"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: flake8
+      run: |
+        # only lint certain files for now
+        LINT_FILES=(
+            python/rpkilog/rpkilog/data_file_super.py
+            python/rpkilog/rpkilog/diff_file.py
+            python/rpkilog/rpkilog/diff_import_to_pgsql.py
+            python/rpkilog/rpkilog/local_storage_type.py
+            python/rpkilog/rpkilog/roa.py
+            python/rpkilog/rpkilog/routinator_snapshot_file.py
+            python/rpkilog/rpkilog/routinator_vrp_fetcher.py
+            python/rpkilog/rpkilog/summary_file.py
+            python/rpkilog/tests
+        )
+        flake8 --count --show-source --statistics "${LINT_FILES[@]}"
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: install our dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install python/rpkilog[dev]
+    - name: Test with pytest
+      run: |
+        pushd python/
+        pytest --verbose
+        popd
+    - name: build
+      run: |
+        python -m build
