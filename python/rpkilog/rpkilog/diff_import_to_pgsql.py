@@ -1,6 +1,7 @@
 import argparse
 
-import pg8000.native
+# TODO: lots
+# import pg8000.native
 
 
 def cli_entry_point(passed_args):
@@ -12,4 +13,3 @@ def cli_entry_point(passed_args):
     if args.debug:
         import pdb
         pdb.set_trace()
-

@@ -69,6 +69,7 @@ def test_as_json_obj(test_roa):
         raise TypeError(f'test setup problem; given test_roa is not a Roa object: {test_roa}')
     jo = test_roa.as_json_obj()
     jstr = json.dumps(jo)
+    _ = jstr
 
 
 def test_as_json_str(test_roa):
@@ -82,7 +83,9 @@ def test_eq(test_roa):
 
 def test_primary_key(test_roa):
     pk = test_roa.primary_key()
+    _ = pk
 
 
 def test_sortable(test_roa):
     sortable_tuple = test_roa.sortable()
+    _ = sortable_tuple

@@ -1,5 +1,5 @@
 import os
-from abc import ABC, abstractmethod
+from abc import ABC
 import bz2
 from datetime import datetime, timezone
 import json
@@ -161,7 +161,7 @@ class DataFileSuper(ABC):
         """
         try:
             fh = bz2.open(filename=path, mode='r')
-            json_data = json.load(fh)
+            _ = json.load(fh)
             fh.close()
             self.local_storage_type = LocalStorageType.BZIP2
             self.local_filepath_bz2 = path
@@ -171,7 +171,7 @@ class DataFileSuper(ABC):
             pass
 
         fh = open(file=path, mode='rt')
-        json_data = json.load(fh)
+        _ = json.load(fh)
         fh.close()
         self.local_storage_type = LocalStorageType.UNCOMPRESSED
         self.local_filepath_uncompressed = path

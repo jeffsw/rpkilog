@@ -5,7 +5,6 @@ Given a Routinator base URL, fetch a VRP snapshot.  Optionally, upload it to S3.
 Optionally, produce a *summary* in our internal format.  Optionally, upload that to S3.
 """
 import argparse
-from datetime import datetime, timezone
 import logging
 import pdb
 import urllib.parse
@@ -19,18 +18,16 @@ logger = logging.getLogger()
 
 
 def cli_entry_point(args_passed=None):
-    startup_time = datetime.now(timezone.utc)
-    default_filename_prefix = startup_time.strftime('%Y-%m-%dT%H%M%SZ')
     ap = argparse.ArgumentParser(
         description='Given a Routinator base URL, fetch a VRP snapshot.  Optionally summarize it.', )
     ap.add_argument('--debug', action='store_true', help='break to debugger upon start-up')
     ap.add_argument('--routinator-base-url', type=urllib.parse.urlparse,
                     default='http://localhost:8323', help='routinator base url like http://localhost:8323')
     ap.add_argument('--snapshot-dir', required=True, type=Path, help='Destination directory for snapshot')
-    ap.add_argument('--snapshot-keep', action='store_true', default=False, help='Keep snapshot on disk after completion (default NO)')
+    ap.add_argument('--snapshot-keep', action='store_true', help='Keep snapshot on disk after completion (default NO)')
     ap.add_argument('--snapshot-upload', type=urllib.parse.urlparse, help='S3 upload prefix like s3://buck/snap-')
     ap.add_argument('--summary-dir', type=Path, help='Destination directory for summary')
-    ap.add_argument('--summary-keep', action='store_true', default=False, help='Keep summary on disk after completion (default NO)')
+    ap.add_argument('--summary-keep', action='store_true', help='Keep summary on disk after completion (default NO)')
     ap.add_argument('--summary-upload', type=urllib.parse.urlparse, help='S3 upload prefix like s3://buck/sum-')
     args = ap.parse_args(args_passed)
     if args.debug:

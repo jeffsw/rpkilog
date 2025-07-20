@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 import re
 
 import dateutil.parser
@@ -8,13 +8,13 @@ import netaddr
 class Roa():
     def __init__(
             self,
-            asn:int,
-            prefix:netaddr.IPNetwork,
-            maxLength:int,
-            ta:str,
-            expires:int=0,
-            source_host:str=None,
-            source_time:datetime=None,
+            asn: int,
+            prefix: netaddr.IPNetwork,
+            maxLength: int,
+            ta: str,
+            expires: int = 0,
+            source_host: str = None,
+            source_time: datetime = None,
     ):
         if isinstance(asn, str) and asn.startswith('AS'):
             # tolerate old VRP Cache files with asn="AS64496" instead of asn=64496
@@ -22,11 +22,11 @@ class Roa():
             if not rem:
                 raise ValueError(F'Cannot get integer ASN from asn argument passed as string: {asn}')
             asn = int(rem.group('asn'))
-        if asn < 0 or asn > 2**32-1:
+        if asn < 0 or asn > 2 ** 32 - 1:
             raise ValueError(F'Invalid asn F{asn}')
         self.asn = int(asn)
         if not isinstance(prefix, netaddr.IPNetwork):
-            prefix=netaddr.IPNetwork(prefix)
+            prefix = netaddr.IPNetwork(prefix)
         self.prefix = prefix
         if maxLength < prefix.prefixlen:
             raise ValueError(F'Invalid maxLength {maxLength} for prefix {prefix}')
@@ -41,9 +41,9 @@ class Roa():
         if expires < 0:
             raise ValueError(F'Invalid expires {expires}')
         self.expires = expires
-        if source_host!=None:
+        if source_host is not None:
             self.source_host = source_host
-        if source_time!=None:
+        if source_time is not None:
             self.source_time = source_time
 
     def __eq__(self, other):
@@ -114,7 +114,7 @@ class Roa():
                          }]
              }]
         >>> roa = Roa.new_from_routinator_jsonext(routinator_json=routinator_roa)
-        """
+        """  # noqa E501
         if missing := {'asn', 'prefix', 'maxLength'} - routinator_json.keys():
             raise KeyError(f'argument routinator_json dict is missing required keys: {missing}; arg: {routinator_json}')
         selected_source = routinator_json['source'][0]
