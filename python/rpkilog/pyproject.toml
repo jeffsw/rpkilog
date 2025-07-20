@@ -25,11 +25,17 @@ keywords = [
 # setuptools doesn't implement PEP 639 (yet).  This causes `python -m build` to fail when both `project.license`
 # is set AND the `LICENSE` **file** exists.  I'll comment out project.license for now.
 #license = 'MIT'
-optional-dependencies.tests = ['pytest']
 readme = 'README.md'
 requires-python = '>=3.10'
 urls.homepage = 'https://rpkilog.com'
 urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
+[project.optional-dependencies]
+dev = [
+    'build',
+]
+tests = [
+    'pytest'
+]
 
 [dependency-groups]
 dev = [
