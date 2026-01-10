@@ -396,11 +396,12 @@ class ArchiveSiteCrawler():
                 # we've previously downloaded this tar from the archive site
                 continue
             available_tar_datetime = dateutil.parser.parse(available_tar_datetimestr)
-            available_tar_age = datetime.now(UTC) - available_tar_datetime
+            available_tar_age = datetime.now(UTC).replace(tzinfo=None) - available_tar_datetime
             if available_tar_age < minimum_file_age:
                 # file is too young; skip it.  A future iteration will download it.
                 # This is a workaround for some archive sites writing files into their public directories
                 # progressively as they're built, rather than moving files into it when complete.
+                logger.info(f'DEFER too-young available_tar_url {available_tar_url}')
                 continue
 
             # new tar we need from archive site
