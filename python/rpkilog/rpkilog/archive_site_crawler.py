@@ -9,7 +9,7 @@ TODO: Move to its own module.
 import argparse
 import boto3
 import bz2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import dateutil
 from html.parser import HTMLParser
 import inspect
@@ -315,6 +315,7 @@ class ArchiveSiteCrawler():
         s3_snapshot_summary_bucket_name:str,
         site_root:str,
         start_date:datetime=None,
+        minimum_file_age:timedelta=None,
         job_deadline:datetime=None,
         job_max_downloads:int=None,
     ):
@@ -341,9 +342,11 @@ class ArchiveSiteCrawler():
 
         Abort if a download fails, or if an upload fails, to avoid skipping any files.
         '''
-        if start_date==None:
-            start_date=datetime.utcnow() - timedelta(days=7)
-        
+        if start_date is None:
+            start_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+        if minimum_file_age is None:
+            minimum_file_age = timedelta(minutes=5)
+
         # list files in relevant s3 buckets
         # figure out what snapshots we already have (in either S3 bucket) based on datetime-like filenames
         logger.info('LISTING relevant s3 buckets')
@@ -392,6 +395,15 @@ class ArchiveSiteCrawler():
             if available_tar_datetimestr in already_have_by_datetime:
                 # we've previously downloaded this tar from the archive site
                 continue
+            available_tar_datetime = dateutil.parser.parse(available_tar_datetimestr)
+            available_tar_age = datetime.now(UTC).replace(tzinfo=None) - available_tar_datetime
+            if available_tar_age < minimum_file_age:
+                # file is too young; skip it.  A future iteration will download it.
+                # This is a workaround for some archive sites writing files into their public directories
+                # progressively as they're built, rather than moving files into it when complete.
+                logger.info(f'DEFER too-young available_tar_url {available_tar_url}')
+                continue
+
             # new tar we need from archive site
             if job_deadline!=None and job_deadline < datetime.utcnow():
                 # We're past the deadline.  Could run out of lambda execution time.  Stop here.
