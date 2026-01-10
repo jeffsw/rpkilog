@@ -50,6 +50,7 @@ ${VENV_DIR}/bin/pip install \
   botocore \
   boto3 \
   bcdoc \
+  ipython \
 
 ##############################
 # AWS CLI
