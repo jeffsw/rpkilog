@@ -343,7 +343,7 @@ class ArchiveSiteCrawler():
         Abort if a download fails, or if an upload fails, to avoid skipping any files.
         '''
         if start_date is None:
-            start_date = datetime.now(UTC) - timedelta(days=30)
+            start_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
         if minimum_file_age is None:
             minimum_file_age = timedelta(minutes=5)
 
