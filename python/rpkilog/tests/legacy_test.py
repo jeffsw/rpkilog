@@ -28,16 +28,17 @@ def rpkiclient_snapshot_filepath(request) -> Path:
     return request.param
 
 
-def test_vrp_diff_from_files(vrp_diff_test_filepath: Path):
-    """
-    Taking a vrp_diff_test.yml file as input, run vrp_diff_from_files on the given input files and
-    compare result to the given expected-output file.
-
-    Note: the reason this is one yml file per set of test data, not a big yml file with a list of all
-    the tests, is so a subset of the files could be committed to the repo and run by GHA while larger
-    tests might run only locally.
-    """
-    yaml.load(vrp_diff_test_filepath.read_text(), Loader=yaml.SafeLoader)
+# TODO: implement below
+# def test_vrp_diff_from_files(vrp_diff_test_filepath: Path):
+#     """
+#     Taking a vrp_diff_test.yml file as input, run vrp_diff_from_files on the given input files and
+#     compare result to the given expected-output file.
+#
+#     Note: the reason this is one yml file per set of test data, not a big yml file with a list of all
+#     the tests, is so a subset of the files could be committed to the repo and run by GHA while larger
+#     tests might run only locally.
+#     """
+#     yaml.load(vrp_diff_test_filepath.read_text(), Loader=yaml.SafeLoader)
 
 
 def test_summarize(rpkiclient_snapshot_filepath: Path, tmp_path: Path):
