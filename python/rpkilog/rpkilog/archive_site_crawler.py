@@ -345,7 +345,7 @@ class ArchiveSiteCrawler():
         if start_date is None:
             start_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
         if minimum_file_age is None:
-            minimum_file_age = timedelta(minutes=5)
+            minimum_file_age = timedelta(minutes=10)
 
         # list files in relevant s3 buckets
         # figure out what snapshots we already have (in either S3 bucket) based on datetime-like filenames
