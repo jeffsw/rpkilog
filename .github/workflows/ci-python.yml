@@ -1,9 +1,10 @@
+---
 name: ci-python
 
-on:
+"on":
   push:
   pull_request:
-    branches: [ $default-branch ]
+    branches: [$default-branch]
 
 permissions:
   contents: read
@@ -18,39 +19,43 @@ jobs:
           - "3.13"
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        architecture: x64
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 pytest build
-        python -m pip install python/rpkilog[dev] python/rpkilog[tests]
-    - name: flake8
-      run: |
-        # only lint certain files for now
-        LINT_FILES=(
-#            python/rpkilog/rpkilog/data_file_super.py
-#            python/rpkilog/rpkilog/diff_file.py
-#            python/rpkilog/rpkilog/diff_import_to_pgsql.py
-#            python/rpkilog/rpkilog/local_storage_type.py
-#            python/rpkilog/rpkilog/roa.py
-#            python/rpkilog/rpkilog/routinator_snapshot_file.py
-#            python/rpkilog/rpkilog/routinator_vrp_fetcher.py
-#            python/rpkilog/rpkilog/summary_file.py
-            python/rpkilog/tests
-        )
-        flake8 --count --show-source --statistics "${LINT_FILES[@]}"
-    - name: Test with pytest
-      run: |
-        pushd python/
-        pytest --verbose
-        popd
-    - name: build
-      run: |
-        pushd python/rpkilog/
-        python -m build
-        popd
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          architecture: x64
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest build
+          python -m pip install python/rpkilog[dev] python/rpkilog[tests]
+      - name: flake8
+        run: |
+          # only lint certain files for now
+          LINT_FILES=(
+              # versions of these files in GH-29 branch should pass linting.
+              # un-comment as they are merged.
+              #
+              # python/rpkilog/rpkilog/data_file_super.py
+              # python/rpkilog/rpkilog/diff_file.py
+              # python/rpkilog/rpkilog/diff_import_to_pgsql.py
+              # python/rpkilog/rpkilog/local_storage_type.py
+              # python/rpkilog/rpkilog/roa.py
+              # python/rpkilog/rpkilog/routinator_snapshot_file.py
+              # python/rpkilog/rpkilog/routinator_vrp_fetcher.py
+              # python/rpkilog/rpkilog/summary_file.py
+              python/rpkilog/tests
+          )
+          flake8 --count --show-source --statistics "${LINT_FILES[@]}"
+      - name: Test with pytest
+        run: |
+          pushd python/
+          pytest --verbose
+          popd
+      - name: build
+        run: |
+          pushd python/rpkilog/
+          python -m build
+          popd
+...
