@@ -216,3 +216,76 @@ sequenceDiagram
 
     deactivate proc
 ```
+
+## Class Relationships
+
+```mermaid
+---
+title: rpkilog Class Diagram
+---
+classDiagram
+    class DataFileSuper {
+        bzip2_compress()
+        default_filename()
+        default_s3_base_url_get()
+        default_s3_base_url_set()
+        infer_datetimestamp_from_path()
+        infer_local_storage_type()
+        json_data_cache
+        local_filepath_bz2
+        local_filepath_bz2
+        local_filepath_uncompressed
+        local_storage_dir
+        open_for_read()
+        s3_bucket()
+        s3_download()
+        s3_path()
+        s3_upload()
+        s3_url
+        unlink_cached()
+    }
+    DataFileSuper --|> LocalStorageType
+
+    class DiffFile {
+        
+    }
+    DiffFile --|> DataFileSuper
+    DiffFile ..> VrpDiff
+
+    class LocalStorageType {
+        <<enumeration>>
+        UNSPECIFIED
+        UNCACHED
+        UNCOMPRESSED
+        BZIP2
+    }
+    class Roa {
+        as_json_obj()
+        as_json_str()
+        new_from_routinator_jsonext()
+        new_from_rpkiclient_json()
+        primary_key()
+        sortable()
+    }
+
+    class RoutinatorSnapshotFile {
+        fetch_from_routinator()
+        iterate_roas()
+        summarize()
+        summarize_to_file()
+    }
+    RoutinatorSnapshotFile --|> DataFileSuper
+    RoutinatorSnapshotFile ..>  LocalStorageType
+    RoutinatorSnapshotFile ..> Roa
+    RoutinatorSnapshotFile ..> SummaryFile
+
+    class SummaryFile {
+        
+    }
+    SummaryFile --|> DataFileSuper
+    SummaryFile ..> LocalStorageType
+
+    class VrpDiff {
+        
+    }
+```
