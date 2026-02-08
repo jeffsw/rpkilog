@@ -37,10 +37,10 @@ jobs:
               # versions of these files in GH-29 branch should pass linting.
               # un-comment as they are merged.
               #
-              # python/rpkilog/rpkilog/data_file_super.py
+              python/rpkilog/rpkilog/data_file_super.py
               # python/rpkilog/rpkilog/diff_file.py
               # python/rpkilog/rpkilog/diff_import_to_pgsql.py
-              # python/rpkilog/rpkilog/local_storage_type.py
+              python/rpkilog/rpkilog/local_storage_type.py
               # python/rpkilog/rpkilog/roa.py
               # python/rpkilog/rpkilog/routinator_snapshot_file.py
               # python/rpkilog/rpkilog/routinator_vrp_fetcher.py
