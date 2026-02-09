@@ -7,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import TextIO, Union, IO
+from typing import Union, IO
 import urllib.parse
 
 import boto3
