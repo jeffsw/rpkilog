@@ -1,4 +1,5 @@
 import os
+import shutil
 from abc import ABC
 import bz2
 from datetime import datetime, timezone
@@ -6,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import TextIO, Union
+from typing import TextIO, Union, IO
 import urllib.parse
 
 import boto3
@@ -60,6 +61,10 @@ class DataFileSuper(ABC):
         could override that by setting it back to false after an upload.
 
         Caller can also manually set it to True.  Maybe they want this after summarization.
+
+        TODO: Consider adding context manager support to DataFileSuper and using for cleanup instead
+         of destructor.  Copilot PR review points out exceptions during destructor phase aren't ergonomic
+         and mutating external state in destructor may be surprising.
         """
         if self.cleanup_upon_destroy:
             match self.local_storage_type:
@@ -103,10 +108,9 @@ class DataFileSuper(ABC):
             case _:
                 raise ValueError(f'unexpected value of local_storage_type: {self}')
 
-        uncomp_fh = open(self.local_filepath_uncompressed, mode='rb')
-        bz2_fh = bz2.open(self.local_filepath_bz2, mode='xb')
-        bz2_fh.write(uncomp_fh.read())
-        bz2_fh.close()
+        with open(self.local_filepath_uncompressed, mode='rb') as uncomp_fh:
+            with bz2.open(self.local_filepath_bz2, mode='xb') as bz2_fh:
+                shutil.copyfileobj(uncomp_fh, bz2_fh, length=1024*1024)
         self.local_storage_type = LocalStorageType.BZIP2
         os.unlink(self.local_filepath_uncompressed)
 
@@ -218,7 +222,7 @@ class DataFileSuper(ABC):
     def local_storage_dir(self, value: Path):
         self._local_storage_dir = value
 
-    def open_for_read(self) -> TextIO:
+    def open_for_read(self) -> IO[bytes] | IO[str]:
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
                 retfh = open(self.local_filepath_uncompressed)
@@ -268,17 +272,21 @@ class DataFileSuper(ABC):
         return s3_object
 
     @property
-    def s3_url(self) -> str:
-        if self._s3_url:
-            return self._s3_url
-        retstr = self.default_s3_base_url_get() + str(self.default_filename()) + '.bz2'
-        return retstr
+    def s3_url(self) -> str | None:
+        return self._s3_url
 
     @s3_url.setter
-    def s3_url(self, value: str):
-        # allow exception to be raised if urlparse fails even though we don't need the value immediately
-        _ = urllib.parse.urlparse(value)
+    def s3_url(self, value: str | None):
+        if value is not None:
+            # validate & allow exception to be raised if urlparse fails
+            _ = urllib.parse.urlparse(value)
         self._s3_url = value
+
+    def s3_url_default(self):
+        # set and return the default s3_url based on filename & '.bz2' suffix
+        retstr = self.default_s3_base_url_get() + str(self.default_filename()) + '.bz2'
+        self.s3_url = retstr
+        return retstr
 
     def unlink_cached(self):
         """
@@ -303,6 +311,7 @@ class DataFileSuper(ABC):
                 except FileNotFoundError:
                     if self.warned_unlink_cached_none_found < 1:
                         logger.warning(f'file already does not exist (warning only once): {self}')
+                        self.warned_unlink_cached_none_found += 1
             case LocalStorageType.UNCACHED:
                 logger.warning(f'file already does not exist (warning only once): {self}')
             case _:
