@@ -233,7 +233,6 @@ classDiagram
         infer_local_storage_type()
         json_data_cache
         local_filepath_bz2
-        local_filepath_bz2
         local_filepath_uncompressed
         local_storage_dir
         open_for_read()
@@ -244,7 +243,7 @@ classDiagram
         s3_url
         unlink_cached()
     }
-    DataFileSuper --|> LocalStorageType
+    DataFileSuper ..> LocalStorageType
 
     class DiffFile {
         
