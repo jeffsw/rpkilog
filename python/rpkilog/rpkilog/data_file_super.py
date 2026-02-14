@@ -30,6 +30,7 @@ class DataFileSuper(ABC):
     # warning deduplication so log won't get spammy about minor issues
     warned_compress_invoked_on_already_compressed_snapshot = 0
     warned_default_local_storage_dir_unconfigured = 0
+    warned_file_already_does_not_exist = 0
     warned_unlink_cached_none_found = 0
 
     def __init__(
@@ -313,6 +314,8 @@ class DataFileSuper(ABC):
                         logger.warning(f'file already does not exist (warning only once): {self}')
                         self.warned_unlink_cached_none_found += 1
             case LocalStorageType.UNCACHED:
-                logger.warning(f'file already does not exist (warning only once): {self}')
+                if self.warned_file_already_does_not_exist < 1:
+                    logger.warning(f'file already does not exist (warning only once): {self}')
+                    self.warned_file_already_does_not_exist += 1
             case _:
                 logger.warning(f'unexpected value of LocalStorageType: {self}')
