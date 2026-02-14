@@ -1,5 +1,21 @@
 The "release" process could use work.
 
+# CLI End-to-End Testing
+
+ℹ️ These tools are primarily used on the back-end and there aren't any other known use-cases.
+
+## rpkilog-routinator-vrp-fetcher
+
+```shell
+export AWS_PROFILE=rpkilog
+rpkilog-routinator-vrp-fetcher \
+  --snapshot-dir ~/src/rpkilog/tmp \
+  --summary-dir ~/src/rpkilog/tmp \
+  --snapshot-upload s3://rpkilog-test/ \
+  --summary-upload s3://rpkilog-test/
+
+```
+
 # QA End-to-End GUI Testing
 
 I don't know how to automate browser end-to-end testing.  We'll rely on manual tests for now.  Writing

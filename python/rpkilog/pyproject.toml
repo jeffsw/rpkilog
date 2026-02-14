@@ -45,7 +45,7 @@ tests = [
 dev = [
     'boto3-stubs',
     'build',
-    'flake',
+    'flake8',
     'pytest',
 ]
 
