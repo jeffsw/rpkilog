@@ -24,8 +24,8 @@ def test_roa(request):
     and IPv6 or something like that.
     """
     source = request.param
-    fh = open(source['filename'])
-    json_data = json.load(fh)
+    with open(source['filename']) as fh:
+        json_data = json.load(fh)
     roa_dict = json_data['roas'][source['offset']]
     # ducktype
     if 'source' in roa_dict:
@@ -39,24 +39,24 @@ def test_roa(request):
 
 def test_routinator_jsonext():
     data_filename = Path(__file__).with_suffix('.routinator_jsonext')
-    data_fh = open(data_filename)
-    data_dict = json.load(data_fh)
+    with open(data_filename) as data_fh:
+        data_dict = json.load(data_fh)
     for routinator_json_roa in data_dict['roas']:
         Roa.new_from_routinator_jsonext(routinator_json=routinator_json_roa)
 
 
 def test_rpkiclient_2021json():
     data_filename = Path(__file__).with_suffix('.rpkiclient2021_json')
-    data_fh = open(data_filename)
-    data_dict = json.load(data_fh)
+    with open(data_filename) as data_fh:
+        data_dict = json.load(data_fh)
     for rpkiclient_json_roa in data_dict['roas']:
         Roa(**rpkiclient_json_roa)
 
 
 def test_rpkiclient_2023json():
     data_filename = Path(__file__).with_suffix('.rpkiclient2023_json')
-    data_fh = open(data_filename)
-    data_dict = json.load(data_fh)
+    with open(data_filename) as data_fh:
+        data_dict = json.load(data_fh)
     for rpkiclient_json_roa in data_dict['roas']:
         Roa(**rpkiclient_json_roa)
 
