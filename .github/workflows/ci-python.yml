@@ -41,7 +41,7 @@ jobs:
               # python/rpkilog/rpkilog/diff_file.py
               # python/rpkilog/rpkilog/diff_import_to_pgsql.py
               python/rpkilog/rpkilog/local_storage_type.py
-              # python/rpkilog/rpkilog/roa.py
+              python/rpkilog/rpkilog/roa.py
               # python/rpkilog/rpkilog/routinator_snapshot_file.py
               # python/rpkilog/rpkilog/routinator_vrp_fetcher.py
               # python/rpkilog/rpkilog/summary_file.py
