@@ -8,4 +8,5 @@ bucket_clones/
 build/
 dist/
 test_data/*
+__pycache__/
 
