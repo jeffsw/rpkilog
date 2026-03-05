@@ -47,7 +47,8 @@ variable "jump_servers_ipv4" {
     description = "jump servers ipv4"
     type = list(string)
     default = [
-        "198.58.103.30/32"
+        "52.86.232.165/32",
+        "198.58.103.30/32",
     ]
 }
 
@@ -940,7 +941,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     runtime = "python3.11"
     handler = "rpkilog.vrp_diff.aws_lambda_entry_point"
     memory_size = 1769
-    timeout = 600
+    timeout = 900
     environment {
         variables = {
             snapshot_summary_bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
@@ -1125,21 +1126,26 @@ data "aws_ami" "rpkilog_ubuntu2404" {
 ##############################
 # EC2 Security Groups
 resource "aws_security_group" "util_vm" {
-    name = "util_vm"
-    description = "Allow SSH access"
+    vpc_id = aws_default_vpc.default.id
+    name_prefix = "util_vm"
     ingress {
+        description = "jump servers"
         from_port = 0
-        to_port = 22
-        protocol = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = var.jump_servers_ipv4
         ipv6_cidr_blocks = ["::/0"]
     }
     egress {
+        description = "allow all egress"
         from_port = 0
         to_port = 0
         protocol = "-1"
         cidr_blocks = ["0.0.0.0/0"]
         ipv6_cidr_blocks = ["::/0"]
+    }
+    lifecycle {
+        create_before_destroy = true
     }
 }
 
@@ -1216,7 +1222,7 @@ resource "aws_cloudwatch_log_group" "opensearch_prod" {
 #This configuration is intended for IAM ES-API auth and Cognito Dashboards/Kibana auth
 resource "aws_elasticsearch_domain" "prod" {
     domain_name = "prod"
-    elasticsearch_version = "OpenSearch_2.17"
+    elasticsearch_version = "OpenSearch_2.19"
     log_publishing_options {
         cloudwatch_log_group_arn = aws_cloudwatch_log_group.opensearch_prod.arn
         log_type                 = "ES_APPLICATION_LOGS"
@@ -1285,7 +1291,7 @@ POLICY
     }
     ebs_options {
         ebs_enabled = true
-        volume_size = 300
+        volume_size = 400
         volume_type = "gp3" # gp3 not supported by current version of aws_elasticsearch_domain
     }
     encrypt_at_rest {
