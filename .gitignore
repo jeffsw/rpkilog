@@ -1,6 +1,7 @@
 *.terraform
 *.zip
 *.egg-info*
+.env
 .terraform
 terraform.tfstate*
 backup/
@@ -9,4 +10,3 @@ build/
 dist/
 test_data/*
 __pycache__/
-
