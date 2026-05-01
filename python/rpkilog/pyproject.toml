@@ -15,7 +15,7 @@ dependencies = [
     'pyyaml',
     'requests',
     'requests_aws4auth',
-    "tenacity",
+    'tenacity',
     'tqdm',
 ]
 description = 'A web tool for searching RPKI history'
