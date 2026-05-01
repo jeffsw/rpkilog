@@ -20,10 +20,11 @@ import os
 import re
 import requests
 from pathlib import Path
-import re
 import tarfile
+import tempfile
 from urllib.parse import urlparse
-import urllib.request
+
+import tenacity
 
 logger = logging.getLogger()
 
@@ -57,10 +58,17 @@ class MyHTMLParser(HTMLParser):
             found_url = self.page_url + attrdict['href']
         self.href_urls.add(found_url)
 
+
 class ArchiveSiteCrawler():
     '''
     Web-crawl an RPKI archive site.  Retrieve TAR files we haven't previously downloaded (by comparing)
     '''
+    fetch_headers = {
+        'User-Agent': 'rpkilog.com'
+    }
+    fetch_index_page_timeout = 10
+    fetch_snapshot_timeout = 300
+    s3_snapshot_bucket_name: str
 
     @classmethod
     def extract_matching_file_from_tar(
@@ -102,89 +110,102 @@ class ArchiveSiteCrawler():
             raise KeyError(F'No matching file found in TAR file {input_tar}')
 
     @classmethod
-    def fetch_day_urls_from_month_page(cls, month_page_url:str, site_root:str, start_date:datetime) -> set:
-        '''
-        Fetch a "month page," which contains a list of links to pages for individual days.
+    @tenacity.retry(before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
+                    stop=tenacity.stop_after_attempt(5),
+                    wait=tenacity.wait_random(min=3, max=10),
+                    )
+    def fetch_tar_file_and_extract_summary(
+            cls,
+            s3_snapshot_destination_filename: str,
+            uploaded: list,
+            url,
+    ):
+        """
+        Passing the list `uploaded` into this function and modifying it is ugly.  It should instead return
+        a complex type, or modify something like cls.uploaded_snapshots.  We'll be ugly for now.
 
-        Parse that page and find all the URLs of day-pages.
-        Excluse any days before start_date.
+        Additionally, this method does too much.  It's an improvement from what we had before, but this
+        can be de-composed a bit more sensibly.
+        """
+        logger.info(F'DOWNLOADING {url}')
+        # get a temporary file
+        with tempfile.NamedTemporaryFile(mode='w+b', delete=True) as tar_tempfile:
+            # download
+            try:
+                count_bytes_downloaded = 0
+                with requests.get(url=url, stream=True, timeout=cls.fetch_snapshot_timeout) as tar_response:
+                    tar_response.raise_for_status()
+                    for chunk in tar_response.iter_content(chunk_size=1024*64):
+                        count_bytes_downloaded += len(chunk)
+                        tar_tempfile.write(chunk)
+            except Exception as exc:
+                if 'Content-Length' in tar_response.headers:
+                    content_length = tar_response.headers['Content-Length']
+                    percent_downloaded = count_bytes_downloaded / content_length
+                    raise RuntimeError(
+                        f'Failed downloading {url} after {percent_downloaded}%'
+                        f' bytes {count_bytes_downloaded} of {content_length}'
+                    ) from exc
+                else:
+                    raise RuntimeError(f'Failed downloading {url} after {count_bytes_downloaded}') from exc
+            # iterate through the tar file's members
+            # if the file is truncated, this should raise an exception, eliminating partial downloads
+            with tarfile.open(tar_tempfile.name, 'r:*') as tar_test_reader:
+                for member in tar_test_reader.getmembers():
+                    if not member.isfile():
+                        continue
+                    member_reader = tar_test_reader.extractfile(member)
+                    member_size = 0
+                    while readlen := member_reader.read(1024*64):
+                        member_size += readlen
 
-        Return a set containing the appropriate day-page URLs.
-        '''
-        logger.info(F'FETCHING month page {month_page_url}')
-        urls_on_month_page = cls.fetch_page_href_urls(page_url=month_page_url)
-        day_urls = set()
-        for url in sorted(urls_on_month_page):
-            if not url.startswith(month_page_url):
-                continue
-            relative_url = url[len(site_root):]
-            rem = re.match(r'\/?(?P<date>(?P<year>\d{4})\/(?P<month>\d{2})\/(?P<day>\d{2}))\/', relative_url)
-            if not rem:
-                continue
-            if dateutil.parser.parse(rem.group('date')) < start_date:
-                logger.debug(F'Not crawling into {relative_url} because it is before {start_date.isoformat()}')
-                continue
-            day_urls.add(url)
-        return(day_urls)
+            logger.info(F'UPLOADING {tar_tempfile.name} to {cls.s3_snapshot_bucket_name}')
+            cls.s3.upload_file(
+                Filename=str(tar_tempfile.name),
+                Bucket=cls.s3_snapshot_bucket_name,
+                Key=s3_snapshot_destination_filename,
+            )
+            uploaded.append(s3_snapshot_destination_filename)
+            logger.info(F'EXTRACTING useful summary file from tar')
+            json_file_path = cls.extract_matching_file_from_tar(
+                input_tar=Path(tar_tempfile.name),
+                output_dir=Path('/tmp'),
+            )
+            return json_file_path
 
     @classmethod
-    def fetch_month_urls_from_year_page(cls, year_page_url:str, site_root:str, start_date:datetime) -> set:
-        '''
-        Fetch the "year page," conaining a list of links to month-pages.
-
-        Parse that page and find all the URLs of the month-pages.
-        Exclude month-pages before the start_date.
-
-        Return a set containing the desired month-page URLs.
-        '''
-        logger.info(F'FETCHING year page {year_page_url}')
-        urls_on_year_page = cls.fetch_page_href_urls(page_url=year_page_url)
-        month_urls = set()
-        for url in sorted(urls_on_year_page):
-            if not url.startswith(year_page_url):
-                continue
-            relative_url = url[len(site_root):]
-            rem = re.match(r'\/?(?P<year>\d{4})\/(?P<month>\d{2})\/', relative_url)
-            if not rem:
-                continue
-            if (int(rem.group('year')) == start_date.year) and (int(rem.group('month')) < start_date.month):
-                logger.debug(F'Not crawling into {relative_url} because it is before {start_date.isoformat()}')
-                continue
-            month_urls.add(url)
-        return month_urls
-
-    @classmethod
-    def fetch_tar_urls_from_archive_site(cls, site_root:str, start_date:datetime) -> set:
+    def fetch_tar_urls_from_archive_site(
+        cls,
+        site_root: str,
+        start_date: datetime,
+        max_date: datetime = datetime.now(UTC)
+    ) -> set:
         '''
         Crawl the specified RPKI archive site_root and get the URLs of TARs beginning with start_date.
+        Depends on the URL scheme for index pages being site_root/YYYY/MM/DD/
 
         Return the URLs in a set.
         '''
-        desired_tar_urls = set()
-        year_urls = cls.fetch_year_urls_from_root_page(site_root=site_root, start_date=start_date)
-        for y_url in sorted(year_urls):
-            month_urls = cls.fetch_month_urls_from_year_page(
-                year_page_url=y_url,
+        start_date = start_date.replace(tzinfo=None)
+        discovered_tar_urls = set()
+        for day_offset in range((max_date.replace(tzinfo=None) - start_date).days + 2):
+            day = start_date + timedelta(days=day_offset)
+            url_fragment = day.strftime('%Y/%m/%d/')  # e.g. 2026/05/01
+            day_page_url = site_root + ('' if site_root.endswith('/') else '/') + url_fragment
+            daily_tar_file_urls = cls.fetch_tar_urls_from_day_page(
+                day_page_url=day_page_url,
                 site_root=site_root,
-                start_date=start_date
+                start_date=start_date,
             )
-            for m_url in sorted(month_urls):
-                day_urls = cls.fetch_day_urls_from_month_page(
-                    month_page_url=m_url,
-                    site_root=site_root,
-                    start_date=start_date
-                )
-                for d_url in sorted(day_urls):
-                    tar_file_urls = cls.fetch_tar_urls_from_day_page(
-                        day_page_url=d_url,
-                        site_root=site_root,
-                        start_date=start_date
-                    )
-                    for t_url in tar_file_urls:
-                        desired_tar_urls.add(t_url)
-        return(desired_tar_urls)
+            for tar_url in daily_tar_file_urls:
+                discovered_tar_urls.add(tar_url)
+        return discovered_tar_urls
 
     @classmethod
+    @tenacity.retry(before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
+                    stop=tenacity.stop_after_attempt(15),
+                    wait=tenacity.wait_random(min=1, max=3),
+                    )
     def fetch_tar_urls_from_day_page(cls, day_page_url:str, site_root:str, start_date:datetime) -> set:
         '''
         Fetch the "day page," which contains a list of files for a given date.
@@ -211,39 +232,59 @@ class ArchiveSiteCrawler():
         return(tar_file_urls)
 
     @classmethod
-    def fetch_year_urls_from_root_page(cls, site_root:str, start_date:datetime) -> set:
-        '''
-        Fetch the "site root," which contains a list of links to year-pages.
-
-        Parse that "site root" page and find the year-page URLs on it.
-        Ignore any year-URLs before start_date.
-
-        Return a set containing the desired year-page URLs.
-        '''
-        logger.info(F'FETCHING root page {site_root}')
-        urls = cls.fetch_page_href_urls(page_url=site_root)
-        year_urls = set()
-        for url in sorted(urls):
-            if not url.startswith(site_root):
-                continue
-            relative_url = url[len(site_root):]
-            rem = re.match(r'^\/?(?P<year>\d{4})\/', relative_url)
-            if not rem:
-                continue
-            if int(rem.group('year')) < start_date.year:
-                logger.debug(F'Not crawling into {relative_url} because it is before {start_date.isoformat()}')
-                continue
-            year_urls.add(url)
-        return(year_urls)
-
-    @classmethod
     def fetch_page_href_urls(cls, page_url:str) -> set:
         'Fetch page_url, parse it, and return a set of all the a-tag href attributes found on the page.'
-        res = requests.get(url=page_url)
-        res.raise_for_status()
+        try:
+            res = requests.get(url=page_url, timeout=cls.fetch_index_page_timeout, headers=cls.fetch_headers)
+            res.raise_for_status()
+        except Exception as exc:
+            raise RuntimeError(f'Exception fetching {page_url}') from exc.with_traceback(None)
         parser = MyHTMLParser(page_url=page_url)
         parser.feed(res.text)
         return parser.href_urls
+
+    @classmethod
+    def list_s3_snapshot_files_within_range(
+        cls,
+        bucket,
+        start_datetime: datetime,
+        end_datetime: datetime,
+    ) -> set:
+        """
+        Returns the S3 object summaries for snapshot files within the given start_datetime ... end_datetime range.
+
+        The given range is approximate; we query the S3 API by day, e.g. prefix: `rpki-20260430T`.
+        """
+        retval = set()
+        time_range = end_datetime - start_datetime
+        for day_offset in range(time_range.days + 1):
+            day = start_datetime + timedelta(days=day_offset)
+            snapshot_prefix = 'rpki-' + day.strftime('%Y%m%dT')
+            objects = bucket.objects.filter(Prefix=snapshot_prefix)
+            for obj in objects:
+                retval.add(obj)
+        return retval
+
+    @classmethod
+    def list_s3_summary_files_within_range(
+            cls,
+            start_datetime: datetime,
+            end_datetime: datetime,
+    ) -> set:
+        """
+        Returns the S3 object summaries for summary files within the given start_datetime ... end_datetime range.
+
+        The given range is approximate; we query the S3 API by day, e.g. prefix: `20260501T`.
+        """
+        retval = set()
+        time_range = end_datetime - start_datetime
+        for day_offset in range(time_range.days + 1):
+            day = start_datetime + timedelta(days=day_offset)
+            prefix = day.strftime('%Y%m%dT')
+            objects = cls.s3_summary_bucket.objects.filter(Prefix=prefix)
+            for obj in objects:
+                retval.add(obj)
+        return retval
 
     @classmethod
     def aws_lambda_entry_point(cls, event, context):
@@ -281,6 +322,9 @@ class ArchiveSiteCrawler():
         )
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--debug', action='store_true', help='Break into pdb after parsing arguments')
+        ap.add_argument('--debug-save-urls', type=Path, help='Save the list of available tar file URLs to given file')
+        ap.add_argument('--maximum-crawl-age', type=float, default=14,
+                        help='Crawl at most this many days (default: 14)')
         ap.add_argument('--s3-snapshot-bucket-name', help='S3 bucket for uploading RPKI TAR files')
         ap.add_argument('--s3-snapshot-summary-bucket-name', help='S3 bucket containing JSON summary files')
         ap.add_argument('--site-root', help='Root of web archive site')
@@ -295,6 +339,9 @@ class ArchiveSiteCrawler():
             args.pop('debug')
             import pdb
             pdb.set_trace()
+        if 'maximum_crawl_age' in args:
+            args['maximum_crawl_age'] = timedelta(days=args['maximum_crawl_age'])
+
         wrapped_retval = cls.wrapped_entry_point(**args)
         print(json.dumps(wrapped_retval, indent=4))
         times = os.times()
@@ -314,8 +361,10 @@ class ArchiveSiteCrawler():
         s3_snapshot_bucket_name:str,
         s3_snapshot_summary_bucket_name:str,
         site_root:str,
+        debug_save_urls: Path | None = None,
         start_date:datetime=None,
         minimum_file_age:timedelta=None,
+        maximum_crawl_age:timedelta=timedelta(14),
         job_deadline:datetime=None,
         job_max_downloads:int=None,
     ):
@@ -342,32 +391,39 @@ class ArchiveSiteCrawler():
 
         Abort if a download fails, or if an upload fails, to avoid skipping any files.
         '''
+        cls.s3 = boto3.client('s3')
+        cls.s3_snapshot_bucket_name = s3_snapshot_bucket_name
+
         if start_date is None:
-            start_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+            start_date = datetime.now(UTC).replace(tzinfo=None) - maximum_crawl_age
         if minimum_file_age is None:
             minimum_file_age = timedelta(minutes=10)
 
         # list files in relevant s3 buckets
         # figure out what snapshots we already have (in either S3 bucket) based on datetime-like filenames
         logger.info('LISTING relevant s3 buckets')
-        s3 = boto3.client('s3')
         already_have_by_datetime = dict()
         uploaded = list()
 
         snapshot_bucket = boto3.resource('s3').Bucket(s3_snapshot_bucket_name)
-        snapshots = set()
-        for buckobj in snapshot_bucket.objects.all():
-            snapshots.add(buckobj.key)
+        snapshots = cls.list_s3_snapshot_files_within_range(
+            bucket=snapshot_bucket,
+            start_datetime=start_date - timedelta(days=1),
+            end_datetime=datetime.now(UTC).replace(tzinfo=None),
+        )
+        for buckobj in snapshots:
             rem = re.search(r'^rpki-(?P<datetime>\d{8}T\d{6})Z\.', buckobj.key)
             if rem:
                 already_have_by_datetime[rem.group('datetime')] = buckobj
             else:
                 logger.warning('UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
 
-        summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
-        summaries = set()
-        for buckobj in summary_bucket.objects.all():
-            summaries.add(buckobj.key)
+        cls.s3_summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
+        summaries = cls.list_s3_summary_files_within_range(
+            start_datetime=start_date - timedelta(days=1),
+            end_datetime=datetime.now(UTC).replace(tzinfo=None),
+        )
+        for buckobj in summaries:
             rem = re.search(r'^(?P<datetime>\d{8}T\d{6})Z.json', buckobj.key)
             if rem:
                 already_have_by_datetime[rem.group('datetime')] = buckobj
@@ -381,7 +437,15 @@ class ArchiveSiteCrawler():
             start_date=start_date,
         )
         logger.info(F'FETCHED {len(archive_site_available_tar_file_urls)} URLs after {start_date} from {site_root}')
-        
+        if debug_save_urls:
+            with open(debug_save_urls, 'w') as save_url_fh:
+                json.dump(
+                    sorted(list(archive_site_available_tar_file_urls)),
+                    save_url_fh,
+                    sort_keys=True,
+                    indent=4
+                )
+
         # Iterate over available rpki tar files.
         # Determine which ones we don't already have.  Download those from archive and re-upload to snapshot bucket.
         # Stop if we're within 60s of job_deadline (lambda runtime might be exhausted because the downloads are slow.)
@@ -413,25 +477,13 @@ class ArchiveSiteCrawler():
                 logger.warn(F'JOB_MAX_DOWNLOADS reached.')
                 break
 
-            logger.info(F'DOWNLOADING {available_tar_url}')
-            retrieved_filename, retrieved_headers = urllib.request.urlretrieve(
+            json_file_path = cls.fetch_tar_file_and_extract_summary(
+                s3_snapshot_destination_filename=destination_filename,
+                uploaded=uploaded,
                 url=available_tar_url,
             )
-            logger.info(F'UPLOADING {retrieved_filename} to {s3_snapshot_bucket_name}')
-            s3.upload_file(
-                Filename=str(retrieved_filename),
-                Bucket=s3_snapshot_bucket_name,
-                Key=destination_filename,
-            )
-            uploaded.append(destination_filename)
-            logger.info(F'EXTRACTING useful summary file from tar')
-            json_file_path = cls.extract_matching_file_from_tar(
-                input_tar=retrieved_filename,
-                output_dir=Path('/tmp'),
-            )
-            os.remove(retrieved_filename)
             logger.info(F'UPLOADING extracted file {json_file_path.name} to {s3_snapshot_summary_bucket_name}')
-            s3.upload_file(
+            cls.s3.upload_file(
                 Filename=str(json_file_path),
                 Bucket=s3_snapshot_summary_bucket_name,
                 Key=json_file_path.name,
