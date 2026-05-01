@@ -145,7 +145,7 @@ class ArchiveSiteCrawler():
                     percent_downloaded = count_bytes_downloaded / content_length * 100
                     raise RuntimeError(
                         f'Failed downloading {url} after {percent_downloaded}%'
-                        f' bytes {count_bytes_downloaded} of {content_length}'
+                        f' bytes {count_bytes_downloaded:.0f} of {content_length}'
                     ) from exc
                 else:
                     raise RuntimeError(f'Failed downloading {url} after {count_bytes_downloaded}') from exc
@@ -244,7 +244,7 @@ class ArchiveSiteCrawler():
                 return set()
             res.raise_for_status()
         except Exception as exc:
-            raise RuntimeError(f'Exception fetching {page_url}') from exc.with_traceback(None)
+            raise RuntimeError(f'Exception fetching {page_url}') from exc
         parser = MyHTMLParser(page_url=page_url)
         parser.feed(res.text)
         return parser.href_urls
@@ -329,6 +329,8 @@ class ArchiveSiteCrawler():
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         ap.add_argument('--debug', action='store_true', help='Break into pdb after parsing arguments')
         ap.add_argument('--debug-save-urls', type=Path, help='Save the list of available tar file URLs to given file')
+        ap.add_argument('--fetch-snapshot-timeout', default=300,
+                        help='Timeout, in seconds, for fetching snapshot files (default: 300)')
         ap.add_argument('--maximum-crawl-age', type=float, default=14,
                         help='Crawl at most this many days (default: 14)')
         ap.add_argument('--s3-snapshot-bucket-name', help='S3 bucket for uploading RPKI TAR files')
@@ -366,6 +368,7 @@ class ArchiveSiteCrawler():
         s3_snapshot_summary_bucket_name:str,
         site_root:str,
         debug_save_urls: Path | None = None,
+        fetch_snapshot_timeout: str = None,
         start_date:datetime=None,
         minimum_file_age:timedelta=None,
         maximum_crawl_age:str=None,
@@ -406,6 +409,8 @@ class ArchiveSiteCrawler():
             start_date = datetime.now(UTC).replace(tzinfo=None) - maximum_crawl_age
         if minimum_file_age is None:
             minimum_file_age = timedelta(minutes=10)
+        if fetch_snapshot_timeout:
+            cls.fetch_snapshot_timeout = float(fetch_snapshot_timeout)
 
         # list files in relevant s3 buckets
         # figure out what snapshots we already have (in either S3 bucket) based on datetime-like filenames
