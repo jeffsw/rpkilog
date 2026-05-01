@@ -142,7 +142,7 @@ class ArchiveSiteCrawler():
             except Exception as exc:
                 if 'Content-Length' in tar_response.headers:
                     content_length = int(tar_response.headers['Content-Length'])
-                    percent_downloaded = count_bytes_downloaded / content_length
+                    percent_downloaded = count_bytes_downloaded / content_length * 100
                     raise RuntimeError(
                         f'Failed downloading {url} after {percent_downloaded}%'
                         f' bytes {count_bytes_downloaded} of {content_length}'
@@ -160,6 +160,12 @@ class ArchiveSiteCrawler():
                     while chunk := member_reader.read(1024*64):
                         member_size += len(chunk)
 
+            logger.info(F'EXTRACTING useful summary file from tar')
+            json_file_path = cls.extract_matching_file_from_tar(
+                input_tar=Path(tar_tempfile.name),
+                output_dir=Path('/tmp'),
+            )
+
             logger.info(F'UPLOADING {tar_tempfile.name} to {cls.s3_snapshot_bucket_name}')
             cls.s3.upload_file(
                 Filename=str(tar_tempfile.name),
@@ -167,11 +173,6 @@ class ArchiveSiteCrawler():
                 Key=s3_snapshot_destination_filename,
             )
             uploaded.append(s3_snapshot_destination_filename)
-            logger.info(F'EXTRACTING useful summary file from tar')
-            json_file_path = cls.extract_matching_file_from_tar(
-                input_tar=Path(tar_tempfile.name),
-                output_dir=Path('/tmp'),
-            )
             return json_file_path
 
     @classmethod
@@ -237,6 +238,10 @@ class ArchiveSiteCrawler():
         'Fetch page_url, parse it, and return a set of all the a-tag href attributes found on the page.'
         try:
             res = requests.get(url=page_url, timeout=cls.fetch_index_page_timeout, headers=cls.fetch_headers)
+            if res.status_code == 404:
+                logger.info(f'404 when fetching {page_url} which may be normal if that date is in the'
+                            f' future, due to sloppy date arithmetic when fetching index pages')
+                return set()
             res.raise_for_status()
         except Exception as exc:
             raise RuntimeError(f'Exception fetching {page_url}') from exc.with_traceback(None)
@@ -340,8 +345,6 @@ class ArchiveSiteCrawler():
             args.pop('debug')
             import pdb
             pdb.set_trace()
-        if 'maximum_crawl_age' in args:
-            args['maximum_crawl_age'] = timedelta(days=args['maximum_crawl_age'])
 
         wrapped_retval = cls.wrapped_entry_point(**args)
         print(json.dumps(wrapped_retval, indent=4))
@@ -365,7 +368,7 @@ class ArchiveSiteCrawler():
         debug_save_urls: Path | None = None,
         start_date:datetime=None,
         minimum_file_age:timedelta=None,
-        maximum_crawl_age:timedelta=timedelta(14),
+        maximum_crawl_age:str=None,
         job_deadline:datetime=None,
         job_max_downloads:int=None,
     ):
@@ -395,6 +398,10 @@ class ArchiveSiteCrawler():
         cls.s3 = boto3.client('s3')
         cls.s3_snapshot_bucket_name = s3_snapshot_bucket_name
 
+        if maximum_crawl_age:
+            maximum_crawl_age = timedelta(days=float(maximum_crawl_age))
+        else:
+            maximum_crawl_age = timedelta(days=14)
         if start_date is None:
             start_date = datetime.now(UTC).replace(tzinfo=None) - maximum_crawl_age
         if minimum_file_age is None:
