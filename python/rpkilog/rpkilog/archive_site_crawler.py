@@ -138,9 +138,10 @@ class ArchiveSiteCrawler():
                     for chunk in tar_response.iter_content(chunk_size=1024*64):
                         count_bytes_downloaded += len(chunk)
                         tar_tempfile.write(chunk)
+                    tar_tempfile.flush()
             except Exception as exc:
                 if 'Content-Length' in tar_response.headers:
-                    content_length = tar_response.headers['Content-Length']
+                    content_length = int(tar_response.headers['Content-Length'])
                     percent_downloaded = count_bytes_downloaded / content_length
                     raise RuntimeError(
                         f'Failed downloading {url} after {percent_downloaded}%'
@@ -156,8 +157,8 @@ class ArchiveSiteCrawler():
                         continue
                     member_reader = tar_test_reader.extractfile(member)
                     member_size = 0
-                    while readlen := member_reader.read(1024*64):
-                        member_size += readlen
+                    while chunk := member_reader.read(1024*64):
+                        member_size += len(chunk)
 
             logger.info(F'UPLOADING {tar_tempfile.name} to {cls.s3_snapshot_bucket_name}')
             cls.s3.upload_file(
@@ -416,7 +417,7 @@ class ArchiveSiteCrawler():
             if rem:
                 already_have_by_datetime[rem.group('datetime')] = buckobj
             else:
-                logger.warning('UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
+                logger.warning(f'UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
 
         cls.s3_summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
         summaries = cls.list_s3_summary_files_within_range(
