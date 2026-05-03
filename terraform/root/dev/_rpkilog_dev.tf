@@ -51,7 +51,7 @@ resource "incus_instance" "rpkiclient_2" {
     "limits.cpu" = "10,11"
     # would run fine with 2GB RAM
     "limits.memory" = "8GB"
-    "user.user-data" = file("rpkiclient_2.yml")
+    "user.user-data" = file("rpkiclient-2.yml")
   }
   device {
     name = "volume1"
