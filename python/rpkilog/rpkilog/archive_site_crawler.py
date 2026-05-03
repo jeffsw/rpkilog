@@ -28,6 +28,7 @@ import tenacity
 
 logger = logging.getLogger()
 
+
 class MyHTMLParser(HTMLParser):
     '''
     Subclass for extracting useful URLs from RPKI archive web index pages.  Invoke like:
@@ -119,7 +120,7 @@ class ArchiveSiteCrawler():
             s3_snapshot_destination_filename: str,
             uploaded: list,
             url,
-    ):
+    ) -> Path | None:
         """
         Passing the list `uploaded` into this function and modifying it is ugly.  It should instead return
         a complex type, or modify something like cls.uploaded_snapshots.  We'll be ugly for now.
@@ -149,16 +150,22 @@ class ArchiveSiteCrawler():
                     ) from exc
                 else:
                     raise RuntimeError(f'Failed downloading {url} after {count_bytes_downloaded}') from exc
-            # iterate through the tar file's members
-            # if the file is truncated, this should raise an exception, eliminating partial downloads
-            with tarfile.open(tar_tempfile.name, 'r:*') as tar_test_reader:
-                for member in tar_test_reader.getmembers():
-                    if not member.isfile():
-                        continue
-                    member_reader = tar_test_reader.extractfile(member)
-                    member_size = 0
-                    while chunk := member_reader.read(1024*64):
-                        member_size += len(chunk)
+
+            try:
+                logger.info(f'VALIDATING tar file can be read {tar_tempfile.name}')
+                # iterate through the tar file's members
+                # if the file is truncated, this should raise an exception, eliminating partial downloads
+                with tarfile.open(tar_tempfile.name, 'r:*') as tar_test_reader:
+                    for member in tar_test_reader.getmembers():
+                        if not member.isfile():
+                            continue
+                        member_reader = tar_test_reader.extractfile(member)
+                        member_size = 0
+                        while chunk := member_reader.read(1024*64):
+                            member_size += len(chunk)
+            except Exception as exc:
+                logger.exception(f'TAR_FAILED_VALIDATION skipping {url} {tar_tempfile.name}')
+                return None
 
             logger.info(F'EXTRACTING useful summary file from tar')
             json_file_path = cls.extract_matching_file_from_tar(
@@ -495,6 +502,8 @@ class ArchiveSiteCrawler():
                 uploaded=uploaded,
                 url=available_tar_url,
             )
+            if json_file_path is None:
+                continue
             logger.info(F'UPLOADING extracted file {json_file_path.name} to {s3_snapshot_summary_bucket_name}')
             cls.s3.upload_file(
                 Filename=str(json_file_path),
