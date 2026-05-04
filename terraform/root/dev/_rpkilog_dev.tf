@@ -1,0 +1,90 @@
+terraform {
+  required_version = "~> 1.14.0"
+  required_providers {
+    incus = {
+      source  = "lxc/incus"
+      version = "~> 1.0.2"
+    }
+  }
+}
+
+provider "incus" {
+  default_remote = "router26a"
+  remote {
+    name = "router26a"
+  }
+}
+
+data "incus_storage_pool" "default" {
+  name = "default"
+}
+
+resource "incus_storage_volume" "rpkiclient_2_volume_1" {
+  name         = "rpkiclient-2-volume-1"
+  pool         = data.incus_storage_pool.default.name
+  content_type = "block"
+  config = {
+    # Sized for ~5 million inodes at 20_000_000_000 / 4096.
+    size = "20GiB"
+  }
+}
+
+resource "incus_storage_volume" "routinator_1_volume_1" {
+  name         = "routinator-1-volume-1"
+  pool         = data.incus_storage_pool.default.name
+  content_type = "block"
+  config = {
+    # Sized for ~5 million inodes at 20_000_000_000 / 4096.
+    size = "20GiB"
+  }
+}
+
+# https://registry.terraform.io/providers/lxc/incus/latest/docs/resources/instance
+resource "incus_instance" "rpkiclient_2" {
+  name  = "rpkiclient-2"
+  type  = "virtual-machine"
+  image = "images:ubuntu/24.04/cloud"
+  config = {
+    # https://linuxcontainers.org/incus/docs/main/reference/instance_options/
+    "boot.autostart"       = true
+    "boot.autostart.delay" = 60
+    "limits.cpu"           = "10,11"
+    # would run fine with 2GB RAM
+    "limits.memory"  = "8GB"
+    "user.user-data" = file("${path.module}/rpkiclient-2.yml")
+  }
+  device {
+    name = "volume1"
+    type = "disk"
+    # appears as /dev/sdb and cloud-init will partition & create /data filesystem
+    properties = {
+      source   = incus_storage_volume.rpkiclient_2_volume_1.name
+      pool     = data.incus_storage_pool.default.name
+      required = true
+    }
+  }
+}
+
+resource "incus_instance" "routinator_1" {
+  name  = "routinator-1"
+  type  = "virtual-machine"
+  image = "images:ubuntu/24.04/cloud"
+  config = {
+    "boot.autostart"       = true
+    "boot.autostart.delay" = 90
+    "limits.cpu"           = "8,9"
+    # would run fine with 2GB RAM
+    "limits.memory"  = "8GB"
+    "user.user-data" = file("${path.module}/routinator-1.yml")
+  }
+  # appears as /dev/sdb and cloud-init will partition & create /data filesystem
+  device {
+    name = "volume1"
+    type = "disk"
+    properties = {
+      source   = incus_storage_volume.routinator_1_volume_1.name
+      pool     = data.incus_storage_pool.default.name
+      required = true
+    }
+  }
+}
