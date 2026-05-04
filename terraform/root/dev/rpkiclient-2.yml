@@ -50,6 +50,7 @@ write_files:
 
         # rpki-client container from https://hub.docker.com/r/rpki/rpki-client
         docker run --name rpkiclient \
+          --restart unless-stopped \
           --volume /data/rpkiclient/cache:/var/cache/rpki-client \
           --volume /data/rpkiclient/output:/var/lib/rpki-client \
           --publish 9099:9099/tcp \
