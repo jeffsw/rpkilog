@@ -34,6 +34,11 @@ packages:
   - htop
   - incus-agent
   - openssh-server
+  - python3-bcdoc \
+  - python3-boto3 \
+  - python3-botocore \
+  - python3-full \
+  - python3-pip \
   - run-one
   - ssh-import-id
   - bzip2
