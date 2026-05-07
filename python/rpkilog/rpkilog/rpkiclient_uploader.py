@@ -7,7 +7,6 @@ import bz2
 from datetime import datetime, timezone, UTC
 import json
 import logging
-import os
 from pathlib import Path
 
 import boto3
@@ -15,6 +14,7 @@ import dateutil.parser
 
 
 logger = logging.getLogger(__name__)
+MINIMUM_JSON_SIZE = 8_500_000
 
 
 def get_bz2_filename_from_datetime(dt: datetime) -> str:
@@ -35,6 +35,8 @@ def s3_upload(rpkiclient_json: Path, s3_bucket_name: str) -> str | None:
     """
     with open(rpkiclient_json, 'rb') as json_fh:
         json_buffer = json_fh.read()
+    if len(json_buffer) < MINIMUM_JSON_SIZE:
+        raise RuntimeError(f'JSON file is too small to be reliable: {rpkiclient_json} < {MINIMUM_JSON_SIZE}')
     json_datetime = get_rpkiclient_datetime_from_json(json_serialized=json_buffer)
     bz2_filename = get_bz2_filename_from_datetime(json_datetime)
     s3 = boto3.client('s3')
