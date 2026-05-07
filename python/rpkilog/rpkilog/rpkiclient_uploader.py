@@ -45,13 +45,14 @@ def s3_upload(rpkiclient_json: Path, s3_bucket_name: str) -> str | None:
         Prefix = bz2_filename,
     )
     if len(s3_list_result.get('Contents', [])):
-        # the currently-available rpkiclient json file has already been uploaded
+        logger.info(f'Currently available rpkiclient json file {json_datetime} has already been uploaded.')
         return None
+    logger.info(f'Preparing to upload {len(json_buffer)/1048576:.1f} MB by compressing to {bz2_filename}')
     bz2_buffer = bz2.compress(json_buffer)
     bucket = boto3.resource('s3').Bucket(s3_bucket_name)
-    logger.info(f'Uploading {bz2_filename} to {s3_bucket_name} uncompressed: {len(json_buffer)/1048576} MB'
-                f' compressed: {len(bz2_buffer)/1048576} MB')
-    s3_object = bucket.put_object(key=bz2_filename, Body=bz2_buffer)
+    logger.info(f'Uploading {bz2_filename} to {s3_bucket_name} uncompressed: {len(json_buffer)/1048576:1.f} MB'
+                f' compressed: {len(bz2_buffer)/1048576:1.f} MB')
+    s3_object = bucket.put_object(Key=bz2_filename, Body=bz2_buffer)
     logger.info(f'Uploaded successfully: {s3_object}')
     return s3_object.key
 
