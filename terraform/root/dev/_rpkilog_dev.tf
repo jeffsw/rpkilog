@@ -1,6 +1,10 @@
 terraform {
   required_version = "~> 1.14.0"
   required_providers {
+    aws = {
+      source = "hashicorp/aws"
+      version = "~> 6.44.0"
+    }
     incus = {
       source  = "lxc/incus"
       version = "~> 1.0.2"
@@ -8,11 +12,28 @@ terraform {
   }
 }
 
+provider "aws" {
+  allowed_account_ids = [
+    "054500078560",  # rpkilog
+  ]
+  default_tags {
+    tags = {
+      tf_managed = "rpkilog/terraform/root/dev"
+      workspace  = terraform.workspace
+    }
+  }
+  region = "us-east-1"
+}
+
 provider "incus" {
   default_remote = "router26a"
   remote {
     name = "router26a"
   }
+}
+
+data "aws_s3_bucket" "snapshot_summary" {
+  bucket = var.snapshot_bucket_name
 }
 
 data "incus_storage_pool" "default" {
