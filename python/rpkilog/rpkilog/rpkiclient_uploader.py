@@ -49,7 +49,10 @@ def s3_upload(rpkiclient_json: Path, s3_bucket_name: str) -> str | None:
         return None
     bz2_buffer = bz2.compress(json_buffer)
     bucket = boto3.resource('s3').Bucket(s3_bucket_name)
+    logger.info(f'Uploading {bz2_filename} to {s3_bucket_name} uncompressed: {len(json_buffer)/1048576} MB'
+                f' compressed: {len(bz2_buffer)/1048576} MB')
     s3_object = bucket.put_object(key=bz2_filename, Body=bz2_buffer)
+    logger.info(f'Uploaded successfully: {s3_object}')
     return s3_object.key
 
 
@@ -62,4 +65,12 @@ def cli_entry_point():
     ap.add_argument(
         '--s3-snapshot-summary-bucket', required=True, type=str,
         help='Name of the rpkiclient snapshot-summary bucket'
+    )
+    ap.add_argument('--debug', action='store_true', help='Break to debugger on start-up')
+    args = ap.parse_args()
+    if args.debug:
+        breakpoint()
+    s3_upload(
+        rpkiclient_json=args.json_file_path,
+        s3_bucket_name=args.s3_snapshot_summary_bucket,
     )
