@@ -58,6 +58,7 @@ def s3_upload(rpkiclient_json: Path, s3_bucket_name: str) -> str | None:
 
 
 def cli_entry_point():
+    logging.basicConfig(level='INFO')
     ap = argparse.ArgumentParser()
     ap.add_argument(
         '--json-file-path', required=True, type=Path,
