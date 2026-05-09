@@ -1,14 +1,58 @@
-# ⚠️ This user will be created with no API keys or password.  It's necessary to MANUALLY create an API
-# secret-key, then re-invoke this Terraform workspace with var.rpkiclient_uploader_iam_secret_key, to
-# complete provisioning of all resources.  Prior to that, the default value will allow provisioning the
-# VMs & software setup.
-#
-# 🚀 To fix this, we should use a local exec provisioner to create an ephemeral GPG key, then use that
-# key and the Terraform IAM user api key GPG feature to get an encrypted key, and pass both the GPG key
-# and encrypted API key to the rpkiclient instance.
-# The main question about this approach is how to avoid replacing the key every time Terraform runs.
-# Make sure neither key ends up in state or git.
-# This will also require templating the cloud-init user-data so the key(s) can get to it.
+# At VM creation time we pass a temporary 20-minute STS token to the VM via user-data.
+# That token uses the rpkiclient_key_manager_{dev} to rotate API keys on the *other* user managed in
+# this file, vm_rpkiclient_key_manager_{dev}.
+# The result is, although rpkiclient_key_manager's token is stored in the Terraform state, it's only
+# valid for 20 minutes.
+resource "aws_iam_policy" "rpkiclient_key_manager" {
+  name = "rpkiclient_key_manager_${terraform.workspace}"
+  policy = jsonencode({
+    Version: "2012-10-17"
+    Statement: [
+      {
+        Sid: "ManageAccessKeysForRpkiclientUploaderDev",
+        Effect: "Allow",
+        Action: [
+          "iam:CreateAccessKey",
+          "iam:DeleteAccessKey",
+          "iam:ListAccessKeys",
+          "iam:UpdateAccessKey",
+          "iam:GetAccessKeyLastUsed"
+        ],
+        Resource: "arn:aws:iam::${data.aws_caller_identity.main.account_id}:user/rpkiclient_uploader_dev"
+      },
+      {
+        Sid: "GetUserInfo",
+        Effect: "Allow",
+        Action: [
+          "iam:GetUser"
+        ],
+        Resource: "arn:aws:iam::${data.aws_caller_identity.main.account_id}:user/rpkiclient_uploader_dev"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "vm_rpkiclient_key_manager" {
+  name = "vm_rpkiclient_key_manager_${terraform.workspace}"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.main.account_id}:root"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "vm_rpkiclient_key_manager" {
+  role_name   = aws_iam_role.vm_rpkiclient_key_manager.name
+  policy_arns = [aws_iam_policy.rpkiclient_key_manager.arn]
+}
+
 resource "aws_iam_user" "rpkiclient_uploader" {
   name = "rpkiclient_uploader_${terraform.workspace}"
 }

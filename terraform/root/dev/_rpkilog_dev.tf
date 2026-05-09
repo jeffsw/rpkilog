@@ -38,6 +38,8 @@ provider "incus" {
 
 provider "random" {}
 
+data "aws_caller_identity" "main" {}
+
 data "aws_s3_bucket" "snapshot_summary" {
   bucket = var.snapshot_bucket_name
 }
@@ -74,11 +76,21 @@ resource "random_password" "rpkiclient_2" {
   upper = true
 }
 
+data "external" "rpkiclient_key_manager_aws_sts_token" {
+  program = [
+    "bash", "-c",
+    "aws sts assume-role --role-arn ${aws_iam_role.vm_rpkiclient_key_manager.arn} --role-session-name terraform-rpkiclient-key-manager --duration-seconds 1200 | jq '.Credentials'"
+  ]
+  depends_on = [aws_iam_role.vm_rpkiclient_key_manager]
+}
+
 locals {
   user_data_rpkiclient_2 = {
-    aws_access_key_id: aws_iam_access_key.rpkiclient_uploader.id
-    aws_secret_access_key: nonsensitive(aws_iam_access_key.rpkiclient_uploader.secret)
     console_random_password_plaintext = nonsensitive(random_password.rpkiclient_2.result)
+    key_manager_aws_access_key_id: data.external.rpkiclient_key_manager_aws_sts_token.result["AccessKeyId"]
+    key_manager_aws_secret_access_key: data.external.rpkiclient_key_manager_aws_sts_token.result["SecretAccessKey"]
+    key_manager_aws_session_token: data.external.rpkiclient_key_manager_aws_sts_token.result["SessionToken"]
+    uploader_iam_username = aws_iam_user.rpkiclient_uploader.name
     path: {
       module: path.module
     }

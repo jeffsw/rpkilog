@@ -59,6 +59,24 @@ users:
   - name: rpkilog
     shell: /usr/bin/bash
 write_files:
+  - path: /root/.aws/config
+    owner: root:root
+    permissions: '0600'
+    content: |4
+        [default]
+        region = us-east-1
+  - path: /root/.aws/credentials
+    owner: root:root
+    permissions: '0600'
+    content: |4
+        [default]
+        aws_access_key_id = ${key_manager_aws_access_key_id}
+        aws_secret_access_key = ${key_manager_aws_secret_access_key}
+        aws_session_token = ${key_manager_aws_session_token}
+  - path: /usr/local/bin/100_aws_key_manager.py
+    permissions: "0755"
+    content: |4
+        ${indent(8, file("${path.module}/../../../scripts/aws_key_manager.py"))}
   - path: /var/lib/cloud/scripts/per-once/100_install_rpkilog.sh
     permissions: "0755"
     content: |4
@@ -88,11 +106,13 @@ write_files:
     content: |4
         [default]
         region = us-east-1
-  - path: /home/rpkilog/.aws/credentials
+  - path: /var/lib/cloud/scripts/per-once/100_aws_key_manager_wrapper.sh
     defer: true
-    owner: rpkilog:rpkilog
-    permissions: '0600'
+    permissions: "0755"
     content: |4
-        [default]
-        aws_access_key_id = ${aws_access_key_id}
-        aws_secret_access_key = ${aws_secret_access_key}
+        #!/bin/bash -e
+        /usr/local/bin/100_aws_key_manager.py \
+          --username ${uploader_iam_username} \
+          --cred-file-path /home/rpkilog/.aws/credentials \
+          --cred-file-owner rpkilog \
+          --cred-file-group rpkilog
