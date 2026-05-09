@@ -1,0 +1,119 @@
+#cloud-config
+apt:
+  sources:
+    docker.list:
+      source: "deb [arch=amd64] https://download.docker.com/linux/ubuntu $RELEASE stable"
+      keyid: 7EA0A9C3F273FCD8
+disk_setup:
+  /dev/sdb:
+    layout: true
+    overwrite: false
+    table_type: gpt
+# At least once, Incus reversed the order of disks; the 20GB data disk became sda (wrong) and the OS
+# disk became sdb.  This caused a malfunction as sdb1, which was mounted at /data, was a vfat filesystem
+# meant for EFI/UEFI booting, and the below filesystem wasn't created.
+# If it happens again we will need to figure out how to fix it.  :/
+fs_setup:
+  - device: /dev/sdb1
+    # ext4 defaults to one inode per 16KB disk space.  Create this filesystem with inode per 4KB.
+    extra_opts:
+      - -i 4096
+    filesystem: ext4
+    label: rpkiclient-2-dat  # length limitation
+    overwrite: false
+mounts:
+  - [/dev/sdb1, /data]
+package_reboot_if_required: true
+package_update: true
+package_upgrade: true
+packages:
+  - bzip2
+  - ca-certificates
+  - curl
+  - docker-ce
+  - docker-ce-cli
+  - htop
+  - incus-agent
+  - openssh-server
+  - python3-bcdoc
+  - python3-boto3
+  - python3-botocore
+  - python3-full
+  - python3-pip
+  - python3-venv
+  - run-one
+  - ssh-import-id
+  - unzip
+runcmd:
+  # ensure /home/rpkilog/.aws and other directories we may be creating with cloud-init have correct ownership
+  - "chown -R rpkilog:rpkilog /home/rpkilog"
+ssh_pwauth: false
+users:
+  - name: jsw
+    groups: adm,docker,sudo
+    lock_passwd: false
+    plain_text_passwd: "${console_random_password_plaintext}"
+    shell: /usr/bin/bash
+    sudo: "ALL=(ALL) NOPASSWD: ALL"
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC4k8nVaS9Ns+8jZ1C97eUcOvkFw6NOXS8e4xxG6XEH1l9PDluOCxAqgCvdKxX9ZhFvwW1SCSWuN95WrM7u/9p0flOX7DZFYld053ClWxMZZ4ZtKj8XWnmDU4LLXSmUWaKddW9pHZHvxfEFu+wCcnUiJM4NgS4owfaIGC3IOIXVrxsoNuoKyTQS9pRa5+3sMC3rHK8oWPkleJGO+cs8AxuetRtHS/ZHwshsyI27ROC/nIxZ7ZeKXf3g/jxEpbxI9LNFnocuUmeoNpndBFYND1ujwiHZvoWxx4ByiTRDNJDHJWdnJpz8rOmnoHeHFqV8F/I5CRG9Dh7aq5vd9LWdrkqb jeffsw6@gmail.com boomer 2013-05-28
+  - name: rpkilog
+    shell: /usr/bin/bash
+write_files:
+  - path: /root/.aws/config
+    owner: root:root
+    permissions: '0600'
+    content: |4
+        [default]
+        region = us-east-1
+  - path: /root/.aws/credentials
+    owner: root:root
+    permissions: '0600'
+    content: |4
+        [default]
+        aws_access_key_id = ${key_manager_aws_access_key_id}
+        aws_secret_access_key = ${key_manager_aws_secret_access_key}
+        aws_session_token = ${key_manager_aws_session_token}
+  - path: /usr/local/bin/100_aws_key_manager.py
+    permissions: "0755"
+    content: |4
+        ${indent(8, file("${path.module}/../../../scripts/aws_key_manager.py"))}
+  - path: /var/lib/cloud/scripts/per-once/100_install_rpkilog.sh
+    permissions: "0755"
+    content: |4
+        ${indent(8, file("${path.module}/install_rpkilog.sh"))}
+  - path: /var/lib/cloud/scripts/per-once/100_docker_run_rpkiclient.sh
+    permissions: "0755"
+    content: |4
+        #!/bin/bash -e
+        # rpki-client container from https://hub.docker.com/r/rpki/rpki-client
+        docker run --name rpkiclient \
+          --restart unless-stopped \
+          --volume /data/rpkiclient/cache:/var/cache/rpki-client \
+          --volume /data/rpkiclient/output:/var/lib/rpki-client \
+          --publish 9099:9099/tcp \
+          --detach \
+          rpki/rpki-client:latest
+  - path: /etc/cron.d/rpkiclient_uploader
+    content: >4
+        */5 * * * * rpkilog run-one /opt/rpkilog/venv/bin/rpkilog-rpkiclient-uploader
+        --json-file-path /data/rpkiclient/output/json
+        --s3-snapshot-summary-bucket rpkilog-snapshot-summary
+        2>&1 | logger -t rpkiclient_uploader
+  - path: /home/rpkilog/.aws/config
+    defer: true
+    owner: rpkilog:rpkilog
+    permissions: '0600'
+    content: |4
+        [default]
+        region = us-east-1
+  - path: /var/lib/cloud/scripts/per-once/100_aws_key_manager_wrapper.sh
+    defer: true
+    permissions: "0755"
+    content: |4
+        #!/bin/bash -e
+        /usr/local/bin/100_aws_key_manager.py \
+          --username ${uploader_iam_username} \
+          --cred-file-path /home/rpkilog/.aws/credentials \
+          --cred-file-owner rpkilog \
+          --cred-file-group rpkilog

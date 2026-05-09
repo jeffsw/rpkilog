@@ -1,11 +1,39 @@
 terraform {
   required_version = "~> 1.14.0"
+  backend "s3" {
+    bucket = "rpkilog-terraform"
+    region = "us-east-1"
+    workspace_key_prefix = "new"
+    key = "terraform.tfstate"
+    use_lockfile = true
+  }
   required_providers {
+    aws = {
+      source = "hashicorp/aws"
+      version = "~> 6.44.0"
+    }
     incus = {
       source  = "lxc/incus"
       version = "~> 1.0.2"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.8.1"
+    }
   }
+}
+
+provider "aws" {
+  allowed_account_ids = [
+    "054500078560",  # rpkilog
+  ]
+  default_tags {
+    tags = {
+      tf_managed = "rpkilog/terraform/root/dev"
+      workspace  = terraform.workspace
+    }
+  }
+  region = "us-east-1"
 }
 
 provider "incus" {
@@ -13,6 +41,14 @@ provider "incus" {
   remote {
     name = "router26a"
   }
+}
+
+provider "random" {}
+
+data "aws_caller_identity" "main" {}
+
+data "aws_s3_bucket" "snapshot_summary" {
+  bucket = var.snapshot_bucket_name
 }
 
 data "incus_storage_pool" "default" {
@@ -39,6 +75,36 @@ resource "incus_storage_volume" "routinator_1_volume_1" {
   }
 }
 
+resource "random_password" "rpkiclient_2" {
+  length = 14
+  lower  = true
+  numeric = true
+  special = false
+  upper = true
+}
+
+data "external" "rpkiclient_key_manager_aws_sts_token" {
+  program = [
+    "bash", "-c",
+    "aws sts assume-role --role-arn ${aws_iam_role.vm_rpkiclient_key_manager.arn} --role-session-name terraform-rpkiclient-key-manager --duration-seconds 1200 | jq '.Credentials'"
+  ]
+  depends_on = [aws_iam_role.vm_rpkiclient_key_manager]
+}
+
+locals {
+  user_data_rpkiclient_2 = {
+    console_random_password_plaintext = nonsensitive(random_password.rpkiclient_2.result)
+    key_manager_aws_access_key_id: data.external.rpkiclient_key_manager_aws_sts_token.result["AccessKeyId"]
+    key_manager_aws_secret_access_key: data.external.rpkiclient_key_manager_aws_sts_token.result["SecretAccessKey"]
+    key_manager_aws_session_token: data.external.rpkiclient_key_manager_aws_sts_token.result["SessionToken"]
+    uploader_iam_username = aws_iam_user.rpkiclient_uploader.name
+    path: {
+      module: path.module
+    }
+    script_install_rpkilog: file("${path.module}/install_rpkilog.sh")
+  }
+}
+
 # https://registry.terraform.io/providers/lxc/incus/latest/docs/resources/instance
 resource "incus_instance" "rpkiclient_2" {
   name  = "rpkiclient-2"
@@ -51,7 +117,7 @@ resource "incus_instance" "rpkiclient_2" {
     "limits.cpu"           = "10,11"
     # would run fine with 2GB RAM
     "limits.memory"  = "8GB"
-    "user.user-data" = file("${path.module}/rpkiclient-2.yml")
+    "user.user-data" = templatefile("${path.module}/rpkiclient-2.yml.tftpl", local.user_data_rpkiclient_2)
   }
   device {
     name = "volume1"
@@ -75,6 +141,7 @@ resource "incus_instance" "routinator_1" {
     "limits.cpu"           = "8,9"
     # would run fine with 2GB RAM
     "limits.memory"  = "8GB"
+    # TODO: replace with templatefile() to pass in configuration and AWS API key
     "user.user-data" = file("${path.module}/routinator-1.yml")
   }
   # appears as /dev/sdb and cloud-init will partition & create /data filesystem

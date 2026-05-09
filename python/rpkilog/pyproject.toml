@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26050301'
+version = '0.26050701'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     'boto3',
@@ -56,6 +56,7 @@ rpkilog-diff-import = 'rpkilog:VrpDiff.cli_entry_point_import'
 rpkilog-hapi = 'rpkilog.hapi:cli_entry_point'
 rpkilog-ingest-tar = 'rpkilog:IngestTar.cli_entry_point'
 rpkilog-routinator-vrp-fetcher = 'rpkilog.routinator_vrp_fetcher:cli_entry_point'
+rpkilog-rpkiclient-uploader = 'rpkilog.rpkiclient_uploader:cli_entry_point'
 rpkilog-vrp-cache-differ = 'rpkilog:VrpDiff.cli_entry_point'
 
 [tool.black]
