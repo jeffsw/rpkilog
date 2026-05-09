@@ -1,5 +1,12 @@
 terraform {
   required_version = "~> 1.14.0"
+  backend "s3" {
+    bucket = "rpkilog-terraform"
+    region = "us-east-1"
+    workspace_key_prefix = "new"
+    key = "terraform.tfstate"
+    use_lockfile = true
+  }
   required_providers {
     aws = {
       source = "hashicorp/aws"

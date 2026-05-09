@@ -47,6 +47,7 @@ packages:
 runcmd:
   # ensure /home/rpkilog/.aws and other directories we may be creating with cloud-init have correct ownership
   - "chown -R rpkilog:rpkilog /home/rpkilog"
+ssh_pwauth: false
 users:
   - name: jsw
     groups: adm,docker,sudo
