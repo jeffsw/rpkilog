@@ -27,6 +27,7 @@ package_reboot_if_required: true
 package_update: true
 package_upgrade: true
 packages:
+  - bzip2
   - ca-certificates
   - curl
   - docker-ce
@@ -34,17 +35,23 @@ packages:
   - htop
   - incus-agent
   - openssh-server
-  - python3-bcdoc \
-  - python3-boto3 \
-  - python3-botocore \
-  - python3-full \
-  - python3-pip \
+  - python3-bcdoc
+  - python3-boto3
+  - python3-botocore
+  - python3-full
+  - python3-pip
+  - python3-venv
   - run-one
   - ssh-import-id
-  - bzip2
+  - unzip
+runcmd:
+  # ensure /home/rpkilog/.aws and other directories we may be creating with cloud-init have correct ownership
+  - "chown -R rpkilog:rpkilog /home/rpkilog"
 users:
   - name: jsw
     groups: adm,docker,sudo
+    lock_passwd: false
+    plain_text_passwd: "${console_random_password_plaintext}"
     shell: /usr/bin/bash
     sudo: "ALL=(ALL) NOPASSWD: ALL"
     ssh_authorized_keys:
@@ -52,14 +59,14 @@ users:
   - name: rpkilog
     shell: /usr/bin/bash
 write_files:
-  - path: /var/lib/cloud/scripts/per-once/100-rpki-client.sh
+  - path: /var/lib/cloud/scripts/per-once/100_install_rpkilog.sh
+    permissions: "0755"
+    content: |4
+        ${indent(8, file("${path.module}/install_rpkilog.sh"))}
+  - path: /var/lib/cloud/scripts/per-once/100_docker_run_rpkiclient.sh
     permissions: "0755"
     content: |4
         #!/bin/bash -e
-
-        ARCH=$(uname --machine)      
-        VENV_DIR=/opt/rpkilog/venv/
-      
         # rpki-client container from https://hub.docker.com/r/rpki/rpki-client
         docker run --name rpkiclient \
           --restart unless-stopped \
@@ -68,44 +75,24 @@ write_files:
           --publish 9099:9099/tcp \
           --detach \
           rpki/rpki-client:latest
-      
-        ##############################
-        # Python
-
-        mkdir -p ${VENV_DIR}
-        python3 -m venv ${VENV_DIR}
-        ${VENV_DIR}/bin/pip install \
-          botocore \
-          boto3 \
-          bcdoc \
-          ipython \
-
-        ##############################
-        # AWS CLI
-        pushd /usr/local/src
-        if [[ ${ARCH} = "x86_64" ]]; then
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        elif [[ ${ARCH} = "aarch64" ]]; then
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-        else
-        echo "Expecting uname --machine output to be x86_64 or aarch64 but it is ${ARCH}"
-        exit 1
-        fi
-        unzip awscliv2.zip
-        ./aws/install
-        popd
-
-        ##############################
-        # rpkilog python from github
-        ${VENV_DIR}/bin/pip3 install "git+https://github.com/jeffsw/rpkilog.git#subdirectory=python/rpkilog"
-      
-        ##############################
-        # TODO: rpki summary uploader
-        # for rpki-client it should watch the json file for a new timestamp and upload when available
-        # for routinator it should be on a schedule (I think) so a one-shot invocation from cron would be fine
   - path: /etc/cron.d/rpkiclient_uploader
-    content: |4
-        */5 * * * * rpkilog run-one rpkilog-rpkiclient-uploader \
-        --json-file-path /data/rpkiclient/output/json \
-        --s3-snapshot-summary-bucket rpkilog-snapshot-summary \
+    content: >4
+        */5 * * * * rpkilog run-one /opt/rpkilog/venv/bin/rpkilog-rpkiclient-uploader
+        --json-file-path /data/rpkiclient/output/json
+        --s3-snapshot-summary-bucket rpkilog-snapshot-summary
         2>&1 | logger -t rpkiclient_uploader
+  - path: /home/rpkilog/.aws/config
+    defer: true
+    owner: rpkilog:rpkilog
+    permissions: '0600'
+    content: |4
+        [default]
+        region = us-east-1
+  - path: /home/rpkilog/.aws/credentials
+    defer: true
+    owner: rpkilog:rpkilog
+    permissions: '0600'
+    content: |4
+        [default]
+        aws_access_key_id = ${aws_access_key_id}
+        aws_secret_access_key = ${aws_secret_access_key}

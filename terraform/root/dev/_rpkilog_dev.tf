@@ -9,6 +9,10 @@ terraform {
       source  = "lxc/incus"
       version = "~> 1.0.2"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.8.1"
+    }
   }
 }
 
@@ -31,6 +35,8 @@ provider "incus" {
     name = "router26a"
   }
 }
+
+provider "random" {}
 
 data "aws_s3_bucket" "snapshot_summary" {
   bucket = var.snapshot_bucket_name
@@ -60,6 +66,26 @@ resource "incus_storage_volume" "routinator_1_volume_1" {
   }
 }
 
+resource "random_password" "rpkiclient_2" {
+  length = 14
+  lower  = true
+  numeric = true
+  special = false
+  upper = true
+}
+
+locals {
+  user_data_rpkiclient_2 = {
+    aws_access_key_id: aws_iam_access_key.rpkiclient_uploader.id
+    aws_secret_access_key: nonsensitive(aws_iam_access_key.rpkiclient_uploader.secret)
+    console_random_password_plaintext = nonsensitive(random_password.rpkiclient_2.result)
+    path: {
+      module: path.module
+    }
+    script_install_rpkilog: file("${path.module}/install_rpkilog.sh")
+  }
+}
+
 # https://registry.terraform.io/providers/lxc/incus/latest/docs/resources/instance
 resource "incus_instance" "rpkiclient_2" {
   name  = "rpkiclient-2"
@@ -72,7 +98,7 @@ resource "incus_instance" "rpkiclient_2" {
     "limits.cpu"           = "10,11"
     # would run fine with 2GB RAM
     "limits.memory"  = "8GB"
-    "user.user-data" = file("${path.module}/rpkiclient-2.yml")
+    "user.user-data" = templatefile("${path.module}/rpkiclient-2.yml.tftpl", local.user_data_rpkiclient_2)
   }
   device {
     name = "volume1"
@@ -96,6 +122,7 @@ resource "incus_instance" "routinator_1" {
     "limits.cpu"           = "8,9"
     # would run fine with 2GB RAM
     "limits.memory"  = "8GB"
+    # TODO: replace with templatefile() to pass in configuration and AWS API key
     "user.user-data" = file("${path.module}/routinator-1.yml")
   }
   # appears as /dev/sdb and cloud-init will partition & create /data filesystem
