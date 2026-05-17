@@ -4,7 +4,7 @@
 # or otherwise run once upon a new VM's first boot
 #
 ARCH=$(uname --machine)
-INSTALL_BRANCH=GH-29-local-validators
+INSTALL_BRANCH=main
 VENV_DIR=/opt/rpkilog/venv/
 
 ##############################
