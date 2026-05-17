@@ -274,8 +274,7 @@ resource "aws_route53_record" "rpkiclient_AAAA" {
 }
 
 resource "linode_rdns" "rpkiclient_PTR_4" {
-  for_each           = toset(linode_instance.rpkiclient.ipv4)
-  address            = each.key
+  address            = one(linode_instance.rpkiclient.ipv4)
   rdns               = aws_route53_record.rpkiclient_A.fqdn
   wait_for_available = true
 }
