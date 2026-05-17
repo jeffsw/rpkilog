@@ -2,6 +2,12 @@ variable "console_password_plaintext" {
   type = string
 }
 
+variable "fqdn" {
+  description = "fully qualified domain name for the VM (e.g. rpkiclient.rpkilog.com); sets the system hostname and shell prompt"
+  type        = string
+  default     = null
+}
+
 variable "key_manager_aws_access_key_id" {
   type = string
 }
@@ -32,6 +38,7 @@ variable "uploader_iam_username" {
 locals {
   user_data_rpkiclient = {
     console_password_plaintext = nonsensitive(var.console_password_plaintext)
+    fqdn                       = var.fqdn
     key_manager_aws_access_key_id: var.key_manager_aws_access_key_id
     key_manager_aws_secret_access_key: var.key_manager_aws_secret_access_key
     key_manager_aws_session_token: var.key_manager_aws_session_token

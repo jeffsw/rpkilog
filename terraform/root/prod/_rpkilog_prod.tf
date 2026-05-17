@@ -40,6 +40,16 @@ variable "jump_servers_ipv6" {
   ]
 }
 
+variable "snapshot_bucket_name" {
+  type    = string
+  default = "rpkilog-snapshot-summary"
+}
+
+variable "uploader_cron_enable" {
+  type    = bool
+  default = false
+}
+
 provider "aws" {
   allowed_account_ids = [
     "054500078560", # rpkilog
@@ -129,8 +139,11 @@ resource "linode_instance" "rpkiclient" {
   maintenance_policy = "linode/power_off_on"
   region             = "us-southeast"
   watchdog_enabled   = true
-  # g6-standard-1    1 vCPU, 2 GB RAM, 50 GB SSD
-  type               = "g6-standard-1"
+  # rpki-client encounters occassional OOMs with 2 GB RAM.  We'll use 4 GB.
+  # see `linode-cli linodes types` for instance specifications and prices.
+  # g6-standard-1    1 vCPU, 2 GB RAM, 50 GB SSD  $12/mo
+  # g6-standard-2    2 vCPU, 4 GB RAM, 80 GB SSD  $24/mo
+  type               = "g6-standard-2"
   metadata {
     user_data = base64encode(module.userdata.userdata)
   }
@@ -240,4 +253,17 @@ resource "aws_route53_record" "rpkiclient_AAAA" {
   type = "AAAA"
   ttl = 300
   records = [cidrhost(linode_instance.rpkiclient.ipv6, 0)]
+}
+
+resource "linode_rdns" "rpkiclient_PTR_4" {
+  for_each = toset(linode_instance.rpkiclient.ipv4)
+  address = each.key
+  rdns = aws_route53_record.rpkiclient_A.fqdn
+  wait_for_available = true
+}
+
+resource "linode_rdns" "rpkiclient_PTR_6" {
+  address = cidrhost(linode_instance.rpkiclient.ipv6, 0)
+  rdns = aws_route53_record.rpkiclient_AAAA.fqdn
+  wait_for_available = true
 }

@@ -1,4 +1,8 @@
 #cloud-config
+%{~ if fqdn != null }
+fqdn: ${fqdn}
+prefer_fqdn_over_hostname: true
+%{~ endif }
 apt:
   sources:
     docker.list:
@@ -60,6 +64,10 @@ users:
   - name: rpkilog
     shell: /usr/bin/bash
 write_files:
+  - path: /etc/profile.d/rpkilog_prompt.sh
+    permissions: '0644'
+    content: |4
+        PS1='\u@\H:\w\$ '
   - path: /root/.aws/config
     owner: root:root
     permissions: '0600'

@@ -8,9 +8,11 @@ from datetime import datetime, timezone, UTC
 import json
 import logging
 from pathlib import Path
+import time
 
 import boto3
 import dateutil.parser
+import psutil
 
 
 logger = logging.getLogger(__name__)
@@ -69,9 +71,19 @@ def cli_entry_point():
         help='Name of the rpkiclient snapshot-summary bucket'
     )
     ap.add_argument('--debug', action='store_true', help='Break to debugger on start-up')
+    ap.add_argument(
+        '--minimum-uptime', type=float, default=900,
+        help='Minimum system uptime in seconds before uploading (default: 900)'
+    )
     args = ap.parse_args()
     if args.debug:
         breakpoint()
+    uptime = time.time() - psutil.boot_time()
+    if uptime < args.minimum_uptime:
+        logger.warning(
+            f'System uptime {uptime:.0f}s is less than --minimum-uptime {args.minimum_uptime:.0f}s; skipping upload'
+        )
+        return
     s3_upload(
         rpkiclient_json=args.json_file_path,
         s3_bucket_name=args.s3_snapshot_summary_bucket,
