@@ -4,9 +4,6 @@ apt:
     docker.list:
       source: "deb [arch=amd64] https://download.docker.com/linux/ubuntu $RELEASE stable"
       keyid: 7EA0A9C3F273FCD8
-bootcmd:
-  # Wait up to 120 seconds for /dev/sdb to be available.  This is a Linode workaround.
-  - [ 'sh', '-c', 'i=0; while [ ! -b /dev/sdb ] && [ $i -lt 60 ]; do echo "Waiting for /dev/sdb to attach... ($i/60)"; sleep 2; i=$((i+1)); done; [ -b /dev/sdb ] || echo "Warning: /dev/sdb not available after 120s, proceeding anyway"' ]
 disk_setup:
   /dev/sdb:
     layout: true
