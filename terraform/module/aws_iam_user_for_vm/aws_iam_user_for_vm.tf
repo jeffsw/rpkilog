@@ -18,7 +18,7 @@ terraform {
 
 variable "name" {
   description = "name of the aws_iam_user created and managed by the module"
-  type = string
+  type        = string
   validation {
     condition     = can(regex("^[A-Za-z0-9+=,.@_-]{1,52}$", var.name))
     error_message = "name must be 1-52 characters and may only contain alphanumeric characters or: + = , . @ _ -"
@@ -27,8 +27,8 @@ variable "name" {
 
 variable "sts_token_duration" {
   description = "duration (seconds) of the temporary STS token returned by the module for your user-data"
-  type = number
-  default = 900
+  type        = number
+  default     = 900
   validation {
     condition     = floor(var.sts_token_duration) == var.sts_token_duration && var.sts_token_duration >= 900 && var.sts_token_duration <= 43200
     error_message = "sts_token_duration must be an integer between 900 and 43200 (inclusive)"
@@ -60,26 +60,26 @@ resource "aws_iam_role_policy" "key_manager" {
   name = "${var.name}_key_manager"
   role = aws_iam_role.key_manager.id
   policy = jsonencode({
-    Version: "2012-10-17"
-    Statement: [
+    Version : "2012-10-17"
+    Statement : [
       {
-        Sid: "ManageAccessKeys",
-        Effect: "Allow",
-        Action: [
+        Sid : "ManageAccessKeys",
+        Effect : "Allow",
+        Action : [
           "iam:CreateAccessKey",
           "iam:DeleteAccessKey",
           "iam:ListAccessKeys",
           "iam:GetAccessKeyLastUsed"
         ],
-        Resource: "arn:aws:iam::${data.aws_caller_identity.mod_scope.account_id}:user/${var.name}"
+        Resource : "arn:aws:iam::${data.aws_caller_identity.mod_scope.account_id}:user/${var.name}"
       },
       {
-        Sid: "GetUserInfo",
-        Effect: "Allow",
-        Action: [
+        Sid : "GetUserInfo",
+        Effect : "Allow",
+        Action : [
           "iam:GetUser"
         ],
-        Resource: "arn:aws:iam::${data.aws_caller_identity.mod_scope.account_id}:user/${var.name}"
+        Resource : "arn:aws:iam::${data.aws_caller_identity.mod_scope.account_id}:user/${var.name}"
       }
     ]
   })
@@ -140,6 +140,6 @@ resource "aws_iam_user" "user" {
 }
 
 output "user" {
-  value = aws_iam_user.user
+  value       = aws_iam_user.user
   description = "aws_iam_user resource managed by this module"
 }

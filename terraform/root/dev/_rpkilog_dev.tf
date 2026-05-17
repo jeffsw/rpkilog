@@ -1,15 +1,15 @@
 terraform {
   required_version = "~> 1.15.0"
   backend "s3" {
-    bucket = "rpkilog-terraform"
-    region = "us-east-1"
+    bucket               = "rpkilog-terraform"
+    region               = "us-east-1"
     workspace_key_prefix = "new"
-    key = "terraform.tfstate"
-    use_lockfile = true
+    key                  = "terraform.tfstate"
+    use_lockfile         = true
   }
   required_providers {
     aws = {
-      source = "hashicorp/aws"
+      source  = "hashicorp/aws"
       version = "~> 6.44.0"
     }
     incus = {
@@ -23,9 +23,18 @@ terraform {
   }
 }
 
+resource "terraform_data" "workspace_check" {
+  lifecycle {
+    precondition {
+      condition     = terraform.workspace == "dev"
+      error_message = "This root module requires workspace 'dev'; current workspace is '${terraform.workspace}'."
+    }
+  }
+}
+
 provider "aws" {
   allowed_account_ids = [
-    "054500078560",  # rpkilog
+    "054500078560", # rpkilog
   ]
   default_tags {
     tags = {
@@ -76,11 +85,11 @@ resource "incus_storage_volume" "routinator_1_volume_1" {
 }
 
 resource "random_password" "rpkiclient_2" {
-  length = 14
-  lower  = true
+  length  = 14
+  lower   = true
   numeric = true
   special = false
-  upper = true
+  upper   = true
 }
 
 module "userdata_rpkiclient_2" {
@@ -129,7 +138,7 @@ resource "incus_instance" "routinator_1" {
     "boot.autostart.delay" = 90
     "limits.cpu"           = "8,9"
     # would run fine with 2GB RAM
-    "limits.memory"  = "8GB"
+    "limits.memory" = "8GB"
     # TODO: replace with templatefile() to pass in configuration and AWS API key
     "user.user-data" = file("${path.module}/routinator-1.yml")
   }

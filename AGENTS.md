@@ -1,5 +1,13 @@
 # rpkilog — Agent Instructions
 
+## Reviewing PRs or branches
+
+When identifying issues or suggesting changes, prefer markdown checkboxes instead of bullet points.  For
+non-actionable review comments, bullet points are fine.
+
+If reviewing changes locally, offer to create a temporary file in the repo root named REVIEW.md for organizing
+the review results and remediations.
+
 ## Terraform
 
 This project uses **HashiCorp Terraform** (not OpenTofu).

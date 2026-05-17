@@ -37,21 +37,20 @@ variable "uploader_iam_username" {
 
 locals {
   user_data_rpkiclient = {
-    console_password_plaintext = nonsensitive(var.console_password_plaintext)
-    fqdn                       = var.fqdn
-    key_manager_aws_access_key_id: var.key_manager_aws_access_key_id
-    key_manager_aws_secret_access_key: var.key_manager_aws_secret_access_key
-    key_manager_aws_session_token: var.key_manager_aws_session_token
-    script_key_manager: format("%s/%s", path.module, "../../../scripts/aws_key_manager.py")
-    script_install_rpkilog: format("%s/%s", path.module, "../../../scripts/install_rpkilog.sh")
-    terraform_root_path: regex("rpkilog/.*?$", abspath(path.root))
-    uploader_bucket: var.uploader_bucket
-    uploader_cron_enable: var.uploader_cron_enable
-    uploader_iam_username = var.uploader_iam_username
+    console_password_plaintext        = nonsensitive(var.console_password_plaintext)
+    fqdn                              = var.fqdn
+    key_manager_aws_access_key_id     = var.key_manager_aws_access_key_id
+    key_manager_aws_secret_access_key = var.key_manager_aws_secret_access_key
+    key_manager_aws_session_token     = var.key_manager_aws_session_token
+    script_key_manager                = format("%s/%s", path.module, "../../../scripts/aws_key_manager.py")
+    script_install_rpkilog            = format("%s/%s", path.module, "../../../scripts/install_rpkilog.sh")
+    uploader_bucket                   = var.uploader_bucket
+    uploader_cron_enable              = var.uploader_cron_enable
+    uploader_iam_username             = var.uploader_iam_username
   }
 }
 
 output "userdata" {
   description = "plaintext user data for rpkiclient VM"
-  value = templatefile("${path.module}/rpkiclient_userdata.yml.tftpl", local.user_data_rpkiclient)
+  value       = templatefile("${path.module}/rpkiclient_userdata.yml.tftpl", local.user_data_rpkiclient)
 }

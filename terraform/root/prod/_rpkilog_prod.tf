@@ -50,6 +50,23 @@ variable "uploader_cron_enable" {
   default = false
 }
 
+locals {
+  dns_domains_by_workspace = {
+    "prod" : "rpkilog.com"
+    "dev" : "rpkilog.dev"
+  }
+  dns_domain = local.dns_domains_by_workspace[terraform.workspace]
+}
+
+resource "terraform_data" "workspace_check" {
+  lifecycle {
+    precondition {
+      condition     = terraform.workspace == "prod"
+      error_message = "This root module requires workspace 'prod'; current workspace is '${terraform.workspace}'."
+    }
+  }
+}
+
 provider "aws" {
   allowed_account_ids = [
     "054500078560", # rpkilog
@@ -81,17 +98,17 @@ resource "random_password" "rpkiclient" {
 
 output "random_password__rpkiclient" {
   description = "rpkiclient VM root password"
-  value = nonsensitive(random_password.rpkiclient.result)
+  value       = nonsensitive(random_password.rpkiclient.result)
 }
 
 data "aws_route53_zone" "rpkilog_tld" {
-  name = terraform.workspace == "prod" ? "rpkilog.com" : terraform.workspace == "dev" ? "rpkilog.dev" : "unknown"
+  name         = local.dns_domain
   private_zone = false
 }
 
 module "rpkiclient_uploader" {
-  source             = "../../module/aws_iam_user_for_vm"
-  name               = "rpkiclient_uploader_${terraform.workspace}"
+  source = "../../module/aws_iam_user_for_vm"
+  name   = "rpkiclient_uploader_${terraform.workspace}"
 }
 
 resource "aws_iam_policy" "rpkiclient_uploader" {
@@ -123,6 +140,7 @@ resource "aws_iam_user_policy_attachment" "rpkiclient_uploader" {
 }
 
 module "userdata" {
+  fqdn                              = format("rpkiclient.%s", local.dns_domain)
   source                            = "../../module/rpkiclient_userdata"
   console_password_plaintext        = nonsensitive(random_password.rpkiclient.result)
   key_manager_aws_access_key_id     = module.rpkiclient_uploader.key_manager.AccessKeyId
@@ -143,7 +161,7 @@ resource "linode_instance" "rpkiclient" {
   # see `linode-cli linodes types` for instance specifications and prices.
   # g6-standard-1    1 vCPU, 2 GB RAM, 50 GB SSD  $12/mo
   # g6-standard-2    2 vCPU, 4 GB RAM, 80 GB SSD  $24/mo
-  type               = "g6-standard-2"
+  type = "g6-standard-2"
   metadata {
     user_data = base64encode(module.userdata.userdata)
   }
@@ -181,9 +199,9 @@ resource "linode_instance_disk" "rpkiclient_root" {
 }
 
 resource "linode_instance_disk" "rpkiclient_data" {
-  linode_id = linode_instance.rpkiclient.id
-  label     = "data"
-  size      = linode_instance.rpkiclient.specs.0.disk - linode_instance_disk.rpkiclient_root.size
+  linode_id  = linode_instance.rpkiclient.id
+  label      = "data"
+  size       = linode_instance.rpkiclient.specs.0.disk - linode_instance_disk.rpkiclient_root.size
   filesystem = "raw"
 }
 
@@ -241,29 +259,29 @@ resource "linode_firewall" "rpkilog" {
 
 resource "aws_route53_record" "rpkiclient_A" {
   zone_id = data.aws_route53_zone.rpkilog_tld.id
-  name = "rpkiclient"
-  type = "A"
-  ttl = 300
+  name    = "rpkiclient"
+  type    = "A"
+  ttl     = 300
   records = linode_instance.rpkiclient.ipv4
 }
 
 resource "aws_route53_record" "rpkiclient_AAAA" {
   zone_id = data.aws_route53_zone.rpkilog_tld.id
-  name = "rpkiclient"
-  type = "AAAA"
-  ttl = 300
+  name    = "rpkiclient"
+  type    = "AAAA"
+  ttl     = 300
   records = [cidrhost(linode_instance.rpkiclient.ipv6, 0)]
 }
 
 resource "linode_rdns" "rpkiclient_PTR_4" {
-  for_each = toset(linode_instance.rpkiclient.ipv4)
-  address = each.key
-  rdns = aws_route53_record.rpkiclient_A.fqdn
+  for_each           = toset(linode_instance.rpkiclient.ipv4)
+  address            = each.key
+  rdns               = aws_route53_record.rpkiclient_A.fqdn
   wait_for_available = true
 }
 
 resource "linode_rdns" "rpkiclient_PTR_6" {
-  address = cidrhost(linode_instance.rpkiclient.ipv6, 0)
-  rdns = aws_route53_record.rpkiclient_AAAA.fqdn
+  address            = cidrhost(linode_instance.rpkiclient.ipv6, 0)
+  rdns               = aws_route53_record.rpkiclient_AAAA.fqdn
   wait_for_available = true
 }
