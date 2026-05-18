@@ -1,3 +1,4 @@
+.envrc
 *.terraform
 *.zip
 *.egg-info*
@@ -7,6 +8,7 @@ backup/
 bucket_clones/
 build/
 dist/
+/REVIEW.md
 test_data/*
 __pycache__/
 
