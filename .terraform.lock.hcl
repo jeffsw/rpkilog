@@ -4,6 +4,7 @@
 provider "registry.terraform.io/hashicorp/aws" {
   version = "5.88.0"
   hashes = [
+    "h1:8So0IR8jwKx8WhVuD1LDsbeMTe78/SF5g4d7z5C6+C4=",
     "h1:nks+LOLQf0gfh7EZCqpWErw9/03yqYDEaGxYqUfEc78=",
     "zh:24f852b1cca276d91f950cb7fb575cacc385f55edccf4beec1f611cdd7626cf5",
     "zh:2a3b3f5ac513f8d6448a31d9619f8a96e0597dd354459de3a4698e684c909f96",
@@ -25,8 +26,9 @@ provider "registry.terraform.io/hashicorp/aws" {
 
 provider "registry.terraform.io/linode/linode" {
   version     = "2.34.1"
-  constraints = ">= 2.5.2"
+  constraints = ">= 2.34.1"
   hashes = [
+    "h1:T9xx8mqH8sOo95URQUmU0jsaTEoliZ1wWVHY7mVCp5o=",
     "h1:chqLZKy1XZz/W1C+ix94mvTP1mD9/+sabXAN0U9RTcg=",
     "zh:02b8a309ec939e50d1593dbece0c329406ee012cb44632cd4f28fcb437022033",
     "zh:16d263061df40d30daf679544c3a267219bfa95c2a4c0bc898939c2e26d9249d",
@@ -48,6 +50,7 @@ provider "registry.terraform.io/linode/linode" {
 provider "registry.terraform.io/opensearch-project/opensearch" {
   version = "2.3.1"
   hashes = [
+    "h1:0PjRNo1WQFBNXAeABbV4IIRs5XZB3vT6JucEm+xpxV8=",
     "h1:xmyqvgPzBDEJ4+oOiyjuvYjywcYByOYFvGXWzJgcHJ0=",
     "zh:358c2bc54c798fdbf2108ecac670bc158cf0f9cde314ef0c859e9739fba8c3e6",
     "zh:3be1db7317d0cf16cb240b5af401e240e074213c2a81dd70440c5929c18a9627",
