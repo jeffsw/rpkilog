@@ -30,19 +30,6 @@ variable "rpkilog_idp_google_client_secret" {
   sensitive   = true
 }
 
-variable "aws_subnet_ids" {
-  description = "List of AWS subnet IDs"
-  type        = set(string)
-  default = [
-    "subnet-052d585f76f551e79",
-    "subnet-0ba4127fc7ffa146e",
-    "subnet-0774b9b19bf6f3fc4",
-    "subnet-056f4cd1a33e2e5ac",
-    "subnet-0fa104bced02ea8dc",
-    "subnet-046b1d24b6e34d4d8"
-  ]
-}
-
 variable "jump_servers_ipv4" {
   description = "jump servers ipv4"
   type        = list(string)
@@ -1084,105 +1071,6 @@ resource "aws_iam_instance_profile" "cron1" {
 }
 
 ##############################
-# EC2 AMIs
-data "aws_ami" "rpkilog_ubuntu2004" {
-  owners      = [data.aws_caller_identity.current.account_id]
-  most_recent = true
-  filter {
-    name = "name"
-    values = [
-      "rpkilog"
-    ]
-  }
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-data "aws_ami" "rpkilog_ubuntu2404" {
-  owners      = [data.aws_caller_identity.current.account_id]
-  most_recent = true
-  filter {
-    name = "name"
-    values = [
-      "rpkilog-24-amd64"
-    ]
-  }
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-##############################
-# EC2 Security Groups
-resource "aws_security_group" "util_vm" {
-  vpc_id      = aws_default_vpc.default.id
-  name_prefix = "util_vm"
-  ingress {
-    description      = "jump servers"
-    from_port        = 0
-    to_port          = 0
-    protocol         = "-1"
-    cidr_blocks      = var.jump_servers_ipv4
-    ipv6_cidr_blocks = ["::/0"]
-  }
-  egress {
-    description      = "allow all egress"
-    from_port        = 0
-    to_port          = 0
-    protocol         = "-1"
-    cidr_blocks      = ["0.0.0.0/0"]
-    ipv6_cidr_blocks = ["::/0"]
-  }
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-##############################
-# EC2 Instances
-
-# This EC2 instance is setup to be capable of running cron jobs similar to our lambda jobs.
-# See #2 for details: https://github.com/jeffsw/rpkilog/issues/2
-resource "aws_instance" "cron1" {
-  tags = {
-    Name = "cron1"
-  }
-  instance_type        = "t3.small"
-  iam_instance_profile = aws_iam_instance_profile.cron1.name
-  ami                  = data.aws_ami.rpkilog_ubuntu2404.id
-  key_name             = "jeffsw-boomer"
-  root_block_device {
-    volume_size = 12
-  }
-  volume_tags = merge(data.aws_default_tags.main.tags, {
-    hostname    = "cron2"
-    mount_point = "/"
-  })
-  user_data = <<EOF
-#!/bin/bash
-echo cron1 > /etc/hostname
-hostname cron1
-EOF
-  vpc_security_group_ids = [
-    aws_security_group.util_vm.id
-  ]
-  lifecycle {
-    ignore_changes = [user_data]
-  }
-}
-
-##############################
 # ElasticSearch / OpenSearch
 # Managing ES with Terraform is quite buggy.  Went through several permutations of config before working
 # around this issue: https://github.com/hashicorp/terraform-provider-aws/issues/13552
@@ -1381,16 +1269,6 @@ resource "opensearch_roles_mapping" "security_manager" {
 # Route53
 resource "aws_route53_zone" "rpkilog_com" {
   name = "rpkilog.com"
-}
-
-resource "aws_route53_record" "cron1" {
-  zone_id = aws_route53_zone.rpkilog_com.zone_id
-  name    = "cron1.rpkilog.com"
-  type    = "A"
-  ttl     = 300
-  records = [
-    aws_instance.cron1.public_ip
-  ]
 }
 
 resource "aws_route53_record" "es_prod" {
@@ -1599,66 +1477,4 @@ resource "aws_api_gateway_stage" "unstable" {
 }
 
 # APIGW end
-##############################
-
-##############################
-# Routinator on linode
-data "linode_images" "routinator" {
-  latest = true
-  filter {
-    name   = "created_by"
-    values = ["jeffsw6"]
-  }
-  filter {
-    name   = "label"
-    values = ["rpkilog_routinator"]
-  }
-}
-
-resource "linode_firewall" "routinator" {
-  label           = "rpkilog_routinator"
-  inbound_policy  = "DROP"
-  outbound_policy = "ACCEPT"
-
-  inbound {
-    label    = "ssh"
-    action   = "ACCEPT"
-    protocol = "TCP"
-    ports    = "22"
-    ipv4     = var.jump_servers_ipv4
-    ipv6     = var.jump_servers_ipv6
-  }
-}
-
-resource "linode_instance" "routinator" {
-  backups_enabled  = false
-  booted           = true
-  firewall_id      = linode_firewall.routinator.id
-  image            = data.linode_images.routinator.images.0.id
-  label            = "rpkilog_routinator"
-  region           = "us-southeast"
-  type             = "g6-standard-2"
-  watchdog_enabled = true
-  tags = [
-    "routinator",
-    "rpkilog",
-  ]
-}
-
-resource "aws_route53_record" "routinator_rpkilog_com__A" {
-  zone_id = aws_route53_zone.rpkilog_com.zone_id
-  name    = "routinator.rpkilog.com"
-  type    = "A"
-  ttl     = 300
-  records = linode_instance.routinator.ipv4
-}
-
-resource "aws_route53_record" "routinator_rpkilog_com__AAAA" {
-  zone_id = aws_route53_zone.rpkilog_com.zone_id
-  name    = "routinator.rpkilog.com"
-  type    = "AAAA"
-  ttl     = 300
-  records = [cidrhost(linode_instance.routinator.ipv6, 0)]
-}
-# Routinator end
 ##############################
