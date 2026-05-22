@@ -8,6 +8,7 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
+      version = "~> 6.20"
     }
     linode = {
       source  = "linode/linode"
@@ -688,7 +689,7 @@ resource "aws_cognito_identity_provider" "google" {
 resource "aws_cognito_managed_user_pool_client" "es_prod" {
   # This has the string "prod" instead of a reference to aws_elasticsearch_domain.prod.domain_name
   # because the reference would create a circular reference
-  name_prefix  = "AmazonOpenSearchService-prod-${data.aws_region.current.name}-"
+  name_prefix  = "AmazonOpenSearchService-prod-${data.aws_region.current.region}-"
   user_pool_id = aws_cognito_user_pool.es.id
 
   allowed_oauth_flows           = ["code"]
@@ -925,7 +926,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
   s3_bucket   = "rpkilog-artifact"
   s3_key      = "lambda_vrp_cache_diff.zip"
   role        = aws_iam_role.lambda_vrp_cache_diff.arn
-  runtime     = "python3.11"
+  runtime     = "python3.14"
   handler     = "rpkilog.vrp_diff.aws_lambda_entry_point"
   memory_size = 1769
   timeout     = 900
@@ -1454,18 +1455,23 @@ resource "aws_api_gateway_integration" "hapi" {
 }
 
 # APIGW deployment
+# WARNING: provider upgrades trigger redeployment if triggers is not in ignore_changes.  That should
+# be okay but we don't want to trigger it *now* so this is a workaround.
 resource "aws_api_gateway_deployment" "public_api" {
   rest_api_id = aws_api_gateway_rest_api.public_api.id
   lifecycle {
     create_before_destroy = true
+    ignore_changes = [
+      triggers
+    ]
   }
-  triggers = {
-    redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.unstable_history,
-      aws_api_gateway_method.unstable_history_GET,
-      aws_api_gateway_integration.hapi,
-    ]))
-  }
+  # triggers = {
+  #   redeployment = sha1(jsonencode([
+  #     aws_api_gateway_resource.unstable_history,
+  #     aws_api_gateway_method.unstable_history_GET,
+  #     aws_api_gateway_integration.hapi,
+  #   ]))
+  # }
 }
 
 # APIGW stage
