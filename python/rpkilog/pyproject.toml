@@ -7,7 +7,8 @@ name = 'rpkilog'
 version = '0.26051701'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
-    'boto3',
+    "boto3",
+    "boto3-stubs~=1.43.14",
     'netaddr',
     'opensearch-py',
     'psutil',
@@ -17,6 +18,7 @@ dependencies = [
     'requests_aws4auth',
     'tenacity',
     'tqdm',
+    "types-boto3[s3]>=1.43.14",
 ]
 description = 'A web tool for searching RPKI history'
 keywords = [
@@ -32,7 +34,7 @@ urls.homepage = 'https://rpkilog.com'
 urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
 [project.optional-dependencies]
 dev = [
-    'boto3-stubs',
+    'types-boto3[s3]',
     'build',
     'flake8',
     'pytest',
@@ -44,7 +46,7 @@ tests = [
 
 [dependency-groups]
 dev = [
-    'boto3-stubs',
+    'types-boto3[s3]',
     'build',
     'flake8',
     'pytest',

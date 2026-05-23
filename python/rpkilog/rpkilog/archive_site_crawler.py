@@ -26,6 +26,9 @@ from urllib.parse import urlparse
 
 import tenacity
 
+from rpkilog.util import list_s3_snapshot_files_within_range, list_s3_summary_files_within_range
+
+
 logger = logging.getLogger()
 
 
@@ -257,49 +260,6 @@ class ArchiveSiteCrawler():
         return parser.href_urls
 
     @classmethod
-    def list_s3_snapshot_files_within_range(
-        cls,
-        bucket,
-        start_datetime: datetime,
-        end_datetime: datetime,
-    ) -> set:
-        """
-        Returns the S3 object summaries for snapshot files within the given start_datetime ... end_datetime range.
-
-        The given range is approximate; we query the S3 API by day, e.g. prefix: `rpki-20260430T`.
-        """
-        retval = set()
-        time_range = end_datetime - start_datetime
-        for day_offset in range(time_range.days + 1):
-            day = start_datetime + timedelta(days=day_offset)
-            snapshot_prefix = 'rpki-' + day.strftime('%Y%m%dT')
-            objects = bucket.objects.filter(Prefix=snapshot_prefix)
-            for obj in objects:
-                retval.add(obj)
-        return retval
-
-    @classmethod
-    def list_s3_summary_files_within_range(
-            cls,
-            start_datetime: datetime,
-            end_datetime: datetime,
-    ) -> set:
-        """
-        Returns the S3 object summaries for summary files within the given start_datetime ... end_datetime range.
-
-        The given range is approximate; we query the S3 API by day, e.g. prefix: `20260501T`.
-        """
-        retval = set()
-        time_range = end_datetime - start_datetime
-        for day_offset in range(time_range.days + 1):
-            day = start_datetime + timedelta(days=day_offset)
-            prefix = day.strftime('%Y%m%dT')
-            objects = cls.s3_summary_bucket.objects.filter(Prefix=prefix)
-            for obj in objects:
-                retval.add(obj)
-        return retval
-
-    @classmethod
     def aws_lambda_entry_point(cls, event, context):
         '''
         TODO: Move this to AWS Lambda wrapper for use everywhere.
@@ -426,7 +386,7 @@ class ArchiveSiteCrawler():
         uploaded = list()
 
         snapshot_bucket = boto3.resource('s3').Bucket(s3_snapshot_bucket_name)
-        snapshots = cls.list_s3_snapshot_files_within_range(
+        snapshots = list_s3_snapshot_files_within_range(
             bucket=snapshot_bucket,
             start_datetime=start_date - timedelta(days=1),
             end_datetime=datetime.now(UTC).replace(tzinfo=None),
@@ -439,7 +399,8 @@ class ArchiveSiteCrawler():
                 logger.warning(f'UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
 
         cls.s3_summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
-        summaries = cls.list_s3_summary_files_within_range(
+        summaries = list_s3_summary_files_within_range(
+            bucket=cls.s3_summary_bucket,
             start_datetime=start_date - timedelta(days=1),
             end_datetime=datetime.now(UTC).replace(tzinfo=None),
         )
