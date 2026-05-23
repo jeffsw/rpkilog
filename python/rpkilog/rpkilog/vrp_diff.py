@@ -300,6 +300,9 @@ class VrpDiff():
         count_unchanged = 0
         initial_count_old = len(old_roas)
         initial_count_new = len(new_roas)
+        initial_count_both = initial_count_old + initial_count_new
+        progress_log_interval = initial_count_both / 10
+        progress_log_next = initial_count_both - progress_log_interval
         # Add one to this for the benefit of the first loop iteration
         input_roa_count = len(old_roas) + len(new_roas) + 1
         # Convert the input lists, which are dicts, to Roa objects.
@@ -317,6 +320,10 @@ class VrpDiff():
             if not len(old_roas) + len(new_roas) < input_roa_count:
                 raise Exception('STUCK not making progress consuming input ROAs')
             input_roa_count = len(old_roas) + len(new_roas)
+            if input_roa_count < progress_log_next:
+                complete_pct = (initial_count_both - input_roa_count) / initial_count_both * 100
+                logger.info(f"Progress {complete_pct:.0f}%  ROAs remaining {input_roa_count} / {initial_count_both}")
+                progress_log_next -= progress_log_interval
             # If either old_roas or new_roas is empty, old_next or new_next will be None.
             old_next = old_roas[0] if len(old_roas) else None
             new_next = new_roas[0] if len(new_roas) else None
