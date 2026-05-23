@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 import dateutil.parser
 import netaddr
 import opensearchpy.helpers
@@ -22,6 +23,7 @@ from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 from tqdm import tqdm
 
+from rpkilog.collision_behavior import CollisionBehavior
 from rpkilog.roa import Roa
 
 logger = logging.getLogger(__name__)
@@ -314,6 +316,7 @@ class VrpDiff():
         old_roas = sorted(old_roas, key=Roa.sortable)
         new_roas = sorted(new_roas, key=Roa.sortable)
 
+        process_time_progress = time.process_time()
         while len(old_roas) + len(new_roas) > 0:
             # Every time through the loop, we must pop one entry from one or both input lists.
             # If we don't, we're stuck, and that's a bug.  That's why we check.
@@ -322,7 +325,11 @@ class VrpDiff():
             input_roa_count = len(old_roas) + len(new_roas)
             if input_roa_count < progress_log_next:
                 complete_pct = (initial_count_both - input_roa_count) / initial_count_both * 100
-                logger.info(f"Progress {complete_pct:.0f}%  ROAs remaining {input_roa_count} / {initial_count_both}")
+                process_time_new = time.process_time()
+                process_time_delta = process_time_new - process_time_progress
+                process_time_progress = process_time_new
+                logger.info(f"Progress {complete_pct:.0f}%  ROAs remaining {input_roa_count} / {initial_count_both}"
+                            f" CPU (usr+sys) {process_time_delta:.1f}s")
                 progress_log_next -= progress_log_interval
             # If either old_roas or new_roas is empty, old_next or new_next will be None.
             old_next = old_roas[0] if len(old_roas) else None
@@ -551,7 +558,10 @@ class VrpDiff():
         ag1.add_argument('--reprocess-all-s3-summary-files', action='store_true', help='Invoke diff process on all summary files')
         ag1.add_argument('--invoke-lambda-on-all-s3-summary-files', type=str, help='Invoke given lambda (asynchronously) on all summary files')
         ag1.add_argument('--reprocess-max-files', type=int, help='Stop reprocessing after first N files')
-        ag1.add_argument('--reprocess-skip-existing-diffs', action='store_true', help='Do not reprocess files that would overwrite existing diffs')
+        ag1.add_argument('--diff-collision-behavior', default='overwrite', choices=['error', 'overwrite', 'retain'],
+                         help='If "error", exit with an error upon collision.  If "overwrite", overwrite'
+                              ' if a pre-existing diff is found.  If "retain", calculate new diff but'
+                              ' do not upload it; retain the old file.')
         ag2 = ap.add_argument_group('Use local files')
         ag2.add_argument('--old-file', type=Path, help='Path to the "old" file used for diffing')
         ag2.add_argument('--new-file', type=Path, help='Path to the "new" file')
@@ -565,11 +575,24 @@ class VrpDiff():
             import pdb
             pdb.set_trace()
 
+        diff_collision_behavior = CollisionBehavior.OVERWRITE
+        match args.get('diff_collision_behavior', 'overwrite'):
+            case 'overwrite':
+                diff_collision_behavior = CollisionBehavior.OVERWRITE
+            case 'retain':
+                diff_collision_behavior = CollisionBehavior.RETAIN
+            case 'error':
+                diff_collision_behavior = KeyError('Collision: diff output file already exists in diff'
+                                                   ' bucket, and desired --diff-collision-behavior is error')
+            case _:
+                raise ValueError(f'Unexpected diff_collision_behavior value: {args["diff_collision_behavior"]!r}')
+
         if 'new_file_key' in args:
             metadata = cls.generic_entry_point(
                 src_bucket_name=args['summary_bucket'],
                 new_file_key=args['new_file_key'],
                 diff_bucket_name=args['diff_bucket'],
+                diff_collision_behavior=diff_collision_behavior,
                 summary_cache=args['summary_cache'],
             )
             print(json.dumps(metadata, indent=4, sort_keys=True))
@@ -592,16 +615,6 @@ class VrpDiff():
                 if not rem:
                     logger.info(F'Skipping S3 key {buckobj.key} which does not match our regex')
                     continue
-                if args.get('reprocess_skip_existing_diffs', False):
-                    diff_filename = cls.get_diff_filename_from_summary_filename(summary_filename=buckobj.key)
-                    # If a diff file already exists for this summary, skip this invocation
-                    try:
-                        diff_bucket.Object(key=diff_filename).load()
-                        logger.info(F'SKIPPING_LAMBDA on {buckobj.key} because {diff_filename} already exists')
-                        continue
-                    except:
-                        # Exception indicates the file was not found in S3.
-                        pass
                 if args.get('invoke_lambda_on_all_s3_summary_files', False):
                     logger.info(F'INVOKING_LAMBDA on {buckobj.key}')
                     invoke_payload = {
@@ -630,6 +643,7 @@ class VrpDiff():
                         src_bucket_name=args['summary_bucket'],
                         new_file_key=buckobj.key,
                         diff_bucket_name=args['diff_bucket'],
+                        diff_collision_behavior=diff_collision_behavior,
                         summary_cache=args['summary_cache'],
                     )
                     print(json.dumps(metadata, indent=4, sort_keys=True))
@@ -714,6 +728,7 @@ class VrpDiff():
         src_bucket_name:str,
         new_file_key:str,
         diff_bucket_name:str,
+        diff_collision_behavior: Exception | CollisionBehavior = CollisionBehavior.OVERWRITE,
         summary_cache:Path=None,
         tmp_dir:Path=None,
     ):
@@ -737,6 +752,21 @@ class VrpDiff():
         new_file_datetime = dateutil.parser.parse(rem.group('datetime'))
         output_file_key=F'{new_file_datestr}.vrpdiff.json.bz2'
         output_file_path=Path(tmp_dir, output_file_key)
+        collision = False
+        if diff_collision_behavior is not CollisionBehavior.OVERWRITE:
+            try:
+                s3.head_object(Bucket=diff_bucket_name, Key=output_file_key)
+                collision = True
+            except ClientError as exc:
+                if exc.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                    raise
+            if collision:
+                if isinstance(diff_collision_behavior, Exception):
+                    raise diff_collision_behavior
+                logger.info(
+                    F'Collision: {output_file_key} already exists in {diff_bucket_name}; '
+                    F'diff will be generated but not uploaded (diff_collision_behavior={diff_collision_behavior})'
+                )
         old_file_key = cls.get_old_file_key_from_s3(
             src_bucket_name=src_bucket_name,
             new_file_datetime=new_file_datetime,
@@ -768,12 +798,15 @@ class VrpDiff():
             output_file_path=output_file_path,
             realtime_initial=realtime_initial,
         )
-        logger.info(F'Uploading vrp diff {output_file_key} to S3')
-        s3.upload_file(
-            Filename=str(output_file_path),
-            Bucket=diff_bucket_name,
-            Key=output_file_key,
-        )
+        if collision:
+            logger.info(F'Skipping upload of {output_file_key}: collision with pre-existing object in {diff_bucket_name}')
+        else:
+            logger.info(F'Uploading vrp diff {output_file_key} to S3, replacing existing object of same key')
+            s3.upload_file(
+                Filename=str(output_file_path),
+                Bucket=diff_bucket_name,
+                Key=output_file_key,
+            )
         if summary_cache==None:
             os.remove(old_file_path)
             os.remove(new_file_path)

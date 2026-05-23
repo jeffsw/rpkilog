@@ -1,5 +1,11 @@
 # rpkilog — Agent Instructions
 
+## git
+
+### commit messages
+
+Prefer bullet points over prose.
+
 ## Python
 
 ### Style Guide
@@ -20,6 +26,10 @@ When returning from a function, always store the return value in a variable with
 before returning.  This makes it easier to set a debugger breakpoint condition.  If in doubt about the
 name for a variable used to hold the return value, `retval`, `retstr`, `retlist`, or `retdict` are 
 alright default choices.
+
+#### Enums
+
+Use Docstrings on Enum members to describe the values.
 
 ## Reviewing PRs or branches
 
@@ -51,3 +61,4 @@ The `type` argument accepts any valid [type constraint expression](https://devel
 (primitive types `string`, `number`, `bool`; collection types `list(…)`, `map(…)`, `set(…)`;
 and structural types `object({…})`, `tuple([…])`).  It is optional — omitting it allows any
 type — but adding it to module outputs improves validation and documentation for callers.
+
