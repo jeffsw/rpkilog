@@ -307,6 +307,8 @@ class VrpDiff():
         progress_log_next = initial_count_both - progress_log_interval
         # Add one to this for the benefit of the first loop iteration
         input_roa_count = len(old_roas) + len(new_roas) + 1
+        # TODO: change to using collections.deque because Python is slow at pop(0) while it is optimized
+        #   for this use-case.
         # Convert the input lists, which are dicts, to Roa objects.
         for idx, roa_dict in enumerate(old_roas):
             old_roas[idx] = Roa(**roa_dict)
@@ -497,6 +499,8 @@ class VrpDiff():
         # list all files in src_bucket to determine old_file_key
         src_bucket = boto3.resource('s3').Bucket(src_bucket_name)
         summaries = set()
+        # TODO: use our new util.py list_s3_object_previous() function to find the previous file key
+        #   this should save a lot of S3 LIST operations and Lambda execution time
         for buckobj in src_bucket.objects.all():
             summaries.add(buckobj.key)
         if len(summaries) == 1:
