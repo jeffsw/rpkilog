@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26051701'
+version = '0.26052401'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -18,7 +18,7 @@ dependencies = [
     'requests_aws4auth',
     'tenacity',
     'tqdm',
-    "types-boto3[s3]>=1.43.14",
+    "types-boto3[s3]~=1.43.14",
 ]
 description = 'A web tool for searching RPKI history'
 keywords = [
@@ -29,7 +29,7 @@ keywords = [
 # is set AND the `LICENSE` **file** exists.  I'll comment out project.license for now.
 #license = 'MIT'
 readme = 'README.md'
-requires-python = '>=3.10'
+requires-python = '>=3.11'
 urls.homepage = 'https://rpkilog.com'
 urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
 [project.optional-dependencies]
