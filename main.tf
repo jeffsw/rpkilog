@@ -574,6 +574,52 @@ resource "aws_iam_role_policy_attachments_exclusive" "lambda_diff_import" {
   policy_arns = [aws_iam_policy.lambda_diff_import.arn]
 }
 
+resource "aws_iam_user" "github_ci" {
+  name = "github_ci"
+}
+
+resource "aws_iam_policy" "github_ci" {
+  name = "github_ci"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid = "GetCallerIdentity",
+        Effect = "Allow",
+        Action = ["sts:GetCallerIdentity"],
+        Resource = "*",
+      },
+      {
+        # this S3 bucket rpkilog-test-<account id>-us-east-1-an is used by our tests
+        Sid = "TestS3Bucket"
+        Effect = "Allow",
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:CreateBucket",
+          "s3:DeleteBucket",
+          "s3:DeleteObject*",
+          "s3:List*",
+          "s3:GetBucket*",
+          "s3:GetObject*",
+          "s3:PutBucketTagging",
+          "s3:PutObject*",
+          "s3:TagResource",
+          "s3:UntagResource",
+        ],
+        Resource = [
+          "arn:aws:s3:::rpkilog-test-${data.aws_caller_identity.current.account_id}-us-east-1-an",
+          "arn:aws:s3:::rpkilog-test-${data.aws_caller_identity.current.account_id}-us-east-1-an/*",
+        ]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "github_ci" {
+  user = aws_iam_user.github_ci.name
+  policy_arn = aws_iam_policy.github_ci.arn
+}
+
 ##############################
 # IAM users
 resource "aws_iam_user" "jeffsw" {

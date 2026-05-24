@@ -12,6 +12,7 @@ permissions:
 jobs:
   ci-python:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version:
@@ -49,7 +50,14 @@ jobs:
               python/rpkilog/tests
           )
           flake8 --count --show-source --statistics "${LINT_FILES[@]}"
+      - name: Obtain AWS credentials from repo variables / secrets
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ variables.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ variables.AWS_REGION }}
       - name: Test with pytest
+        timeout-minutes: 15
         run: |
           pushd python/
           pytest --verbose
