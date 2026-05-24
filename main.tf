@@ -974,7 +974,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
   role        = aws_iam_role.lambda_vrp_cache_diff.arn
   runtime     = "python3.14"
   handler     = "rpkilog.vrp_diff.aws_lambda_entry_point"
-  memory_size = 1769
+  memory_size = 1769 * 2
   timeout     = 900
   environment {
     variables = {
