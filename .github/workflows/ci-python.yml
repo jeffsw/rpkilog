@@ -5,6 +5,11 @@ name: ci-python
   push:
   pull_request:
     branches: [$default-branch]
+    types:
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
 
 permissions:
   contents: read
