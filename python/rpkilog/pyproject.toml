@@ -70,4 +70,7 @@ upload_s3_url = 's3://rpkilog-artifact/lambda_rpkilog.zip'
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
+markers = [
+    "slow: some end-to-end tests are slow and may be skipped in draft PR commits and pre-commit hooks"
+]
 testpaths = ["tests"]

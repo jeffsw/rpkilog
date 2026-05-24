@@ -56,12 +56,22 @@ jobs:
           aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
-      - name: Test with pytest
+      ##### different steps, below, for draft or non-draft PR
+      - name: Test with pytest, skipping slow tests for draft PR
+        if: github.event.pull_request.draft == true
+        timeout-minutes: 15
+        run: |
+          pushd python/
+          pytest --verbose -m "not slow"
+          popd
+      - name: Test with pytest, including slow tests
+        if: github.event.pull_request.draft == false
         timeout-minutes: 15
         run: |
           pushd python/
           pytest --verbose
           popd
+      #####
       - name: build
         run: |
           pushd python/rpkilog/
