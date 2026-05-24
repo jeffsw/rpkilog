@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import bz2
+from collections import deque
 import getpass
 import json
 import logging
@@ -284,17 +285,10 @@ class VrpDiff():
         return result_metadata
 
     @classmethod
-    def vrp_diff_list(cls, old_roas:list, new_roas:list) -> list:
-        '''
+    def vrp_diff_list(cls, old_roas:list[dict], new_roas:list[dict]) -> list:
+        """
         Given two lists of VRPs, return a list of VrpDiff objects.
-        EMPTIES THE INPUT LISTS as a side-effect.  Pass copies if you don't want that!
-
-        SCALE: This could return a generator which reads the input files (or lists) sequentially and
-        generates results as-needed.  It would be possible to scale up to a much larger VRP Cache
-        without using much RAM.  However, we need to sort the input, because in the real world, input
-        VRP cache files had a different (or inconsistent?) sort order in cases when a prefix had multiple
-        ROAs with different prefix-lengths.  That would complicate the generator a little.
-        '''
+        """
         retlist = []
         count_delete = 0
         count_new = 0
@@ -307,24 +301,24 @@ class VrpDiff():
         progress_log_next = initial_count_both - progress_log_interval
         # Add one to this for the benefit of the first loop iteration
         input_roa_count = len(old_roas) + len(new_roas) + 1
-        # TODO: change to using collections.deque because Python is slow at pop(0) while it is optimized
-        #   for this use-case.
-        # Convert the input lists, which are dicts, to Roa objects.
-        for idx, roa_dict in enumerate(old_roas):
-            old_roas[idx] = Roa(**roa_dict)
-        for idx, roa_dict in enumerate(new_roas):
-            new_roas[idx] = Roa(**roa_dict)
-        # Sort the input lists
-        old_roas = sorted(old_roas, key=Roa.sortable)
-        new_roas = sorted(new_roas, key=Roa.sortable)
+
+        # Convert input dicts to Roa objects and sort into deques (popleft() is O(1) vs O(n) for pop(0)).
+        old_roa_objs = []
+        for roa_dict in old_roas:
+            old_roa_objs.append(Roa(**roa_dict))
+        old_deque = deque(sorted(old_roa_objs, key=Roa.sortable))
+        new_roa_objs = []
+        for roa_dict in new_roas:
+            new_roa_objs.append(Roa(**roa_dict))
+        new_deque = deque(sorted(new_roa_objs, key=Roa.sortable))
 
         process_time_progress = time.process_time()
-        while len(old_roas) + len(new_roas) > 0:
-            # Every time through the loop, we must pop one entry from one or both input lists.
+        while len(old_deque) + len(new_deque) > 0:
+            # Every time through the loop, we must pop one entry from one or both deques.
             # If we don't, we're stuck, and that's a bug.  That's why we check.
-            if not len(old_roas) + len(new_roas) < input_roa_count:
+            if not len(old_deque) + len(new_deque) < input_roa_count:
                 raise Exception('STUCK not making progress consuming input ROAs')
-            input_roa_count = len(old_roas) + len(new_roas)
+            input_roa_count = len(old_deque) + len(new_deque)
             if input_roa_count < progress_log_next:
                 complete_pct = (initial_count_both - input_roa_count) / initial_count_both * 100
                 process_time_new = time.process_time()
@@ -333,11 +327,11 @@ class VrpDiff():
                 logger.info(f"Progress {complete_pct:.0f}%  ROAs remaining {input_roa_count} / {initial_count_both}"
                             f" CPU (usr+sys) {process_time_delta:.1f}s")
                 progress_log_next -= progress_log_interval
-            # If either old_roas or new_roas is empty, old_next or new_next will be None.
-            old_next = old_roas[0] if len(old_roas) else None
-            new_next = new_roas[0] if len(new_roas) else None
-            # If first entry in both lists have identical (ta, prefix, maxLength, asn) we'll pop both
-            # lists and dispose of both items (will become an UNCHANGED or REPLACE diff).
+            # If either deque is empty, old_next or new_next will be None.
+            old_next = old_deque[0] if len(old_deque) else None
+            new_next = new_deque[0] if len(new_deque) else None
+            # If first entry in both deques have identical (ta, prefix, maxLength, asn) we'll pop both
+            # deques and dispose of both items (will become an UNCHANGED or REPLACE diff).
             #
             # If those entries are different, we'll process whichever one has a lower sort-order.
             # If that's an OLD entry, we'll be emitting a DELETE diff.
@@ -352,8 +346,8 @@ class VrpDiff():
                     logger.debug('REPLACE found: {old_list_next} -> {new_list_next}')
                     diff = VrpDiff(old_roa=old_next, new_roa=new_next)
                     retlist.append(diff)
-                old_roas.pop(0)
-                new_roas.pop(0)
+                old_deque.popleft()
+                new_deque.popleft()
                 continue
             # Entries have different primary keys.  Process whichever one has a lower sort-order.
             if new_next==None or (old_next!=None and old_next.sortable() < new_next.sortable()):
@@ -361,14 +355,14 @@ class VrpDiff():
                 logger.debug('DELETE found: {old_list_next}')
                 diff = VrpDiff(old_roa=old_next, new_roa=None)
                 retlist.append(diff)
-                old_roas.pop(0)
+                old_deque.popleft()
                 continue
             else:
                 count_new += 1
                 logger.debug('NEW found: {new_list_next}')
                 diff = VrpDiff(old_roa=None, new_roa=new_next)
                 retlist.append(diff)
-                new_roas.pop(0)
+                new_deque.popleft()
                 continue
         if initial_count_old + initial_count_new == count_unchanged * 2 + count_replace * 2 + count_delete + count_new:
             logger.info('Results add up!')
