@@ -26,6 +26,7 @@ from tqdm import tqdm
 
 from rpkilog.collision_behavior import CollisionBehavior
 from rpkilog.roa import Roa
+from rpkilog.util import list_s3_object_previous
 
 logger = logging.getLogger(__name__)
 
@@ -483,44 +484,6 @@ class VrpDiff():
         return es_client
 
     @classmethod
-    def get_old_file_key_from_s3(cls, src_bucket_name:str, new_file_datetime:datetime) -> str:
-        '''
-        Given a new_file_datetime, list objects in the src_bucket and return key name of the previous
-        file by datetime.
-
-        This is used to find which file should be the old_file in our diff process.  It's just a helper
-        function for readability.
-        '''
-        # list all files in src_bucket to determine old_file_key
-        src_bucket = boto3.resource('s3').Bucket(src_bucket_name)
-        summaries = set()
-        # TODO: use our new util.py list_s3_object_previous() function to find the previous file key
-        #   this should save a lot of S3 LIST operations and Lambda execution time
-        for buckobj in src_bucket.objects.all():
-            summaries.add(buckobj.key)
-        if len(summaries) == 1:
-            logger.warning(F'ONLY ONE FILE IN src_bucket {src_bucket_name}.  Is this first ever invocation?')
-            return
-        # find the filename immediately before the one which invoked us
-        for candidate_filename in sorted(summaries, reverse=True):
-            rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', candidate_filename)
-            if not rem:
-                logger.warning(F'{src_bucket_name} contained a file not matching our regex: {candidate_filename}')
-                continue
-            candidate_datetime = dateutil.parser.parse(rem.group('datetime'))
-            if candidate_datetime < new_file_datetime:
-                # We reverse-sorted the list of files, so the first one with an earlier datetime should be right
-                old_file_key = candidate_filename
-                return(old_file_key)
-        else:
-            # no files found which are older than new_file_datetime
-            logger.warning(
-                F'{src_bucket_name} doesnt contain any files older than {new_file_datetime}'
-                F' Is this first ever invocation?'
-            )
-            return
-
-    @classmethod
     def aws_lambda_entry_point(cls, event, context):
         dst_bucket_name = os.getenv('diff_bucket')
         src_bucket_name = event['Records'][0]['s3']['bucket']['name']
@@ -766,12 +729,11 @@ class VrpDiff():
                     F'Collision: {output_file_key} already exists in {diff_bucket_name}; '
                     F'diff will be generated but not uploaded (diff_collision_behavior={diff_collision_behavior})'
                 )
-        old_file_key = cls.get_old_file_key_from_s3(
-            src_bucket_name=src_bucket_name,
-            new_file_datetime=new_file_datetime,
-        )
-        if old_file_key==None:
-            # If no old_file_key was found, we cannot produce a diff.
+        src_bucket = boto3.resource('s3').Bucket(src_bucket_name)
+        try:
+            old_file_key = list_s3_object_previous(bucket=src_bucket, subject_datetime=new_file_datetime)
+        except KeyError:
+            logger.warning(f'No file found in {src_bucket_name} older than {new_file_datetime}. Cannot produce diff.')
             return
 
         if summary_cache:
