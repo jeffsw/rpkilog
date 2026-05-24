@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26052402'
+version = '0.26052403'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -29,7 +29,7 @@ keywords = [
 # is set AND the `LICENSE` **file** exists.  I'll comment out project.license for now.
 #license = 'MIT'
 readme = 'README.md'
-requires-python = '>=3.11'
+requires-python = '>=3.12'
 urls.homepage = 'https://rpkilog.com'
 urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
 [project.optional-dependencies]
