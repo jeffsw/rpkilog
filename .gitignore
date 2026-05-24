@@ -9,6 +9,7 @@ bucket_clones/
 build/
 dist/
 /REVIEW.md
+.claude/settings.local.json
 test_data/*
 __pycache__/
 
