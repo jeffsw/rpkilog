@@ -373,15 +373,16 @@ class VrpDiff():
         if initial_count_old + initial_count_new == count_unchanged * 2 + count_replace * 2 + count_delete + count_new:
             logger.info('Results add up!')
         else:
-            logger.warn(F'initial_count_old: {initial_count_old}')
-            logger.warn(F'initial_count_new: {initial_count_new}')
-            logger.warn(F'initial_counts:    {initial_count_old + initial_count_new}')
-            logger.warn(F'count_delete:      {count_delete}')
-            logger.warn(F'count_new:         {count_new}')
-            logger.warn(F'count_replace:     {count_replace}')
-            logger.warn(F'count_unchanged:   {count_unchanged}')
-            logger.warn(F'diff_counts:       {count_unchanged * 2 + count_replace * 2 + count_delete + count_new}')
-            logger.warn(F'initial_counts and diff_counts SHOULD BE EQUAL')
+            logger.critical(F'initial_count_old: {initial_count_old}')
+            logger.critical(F'initial_count_new: {initial_count_new}')
+            logger.critical(F'initial_counts:    {initial_count_old + initial_count_new}')
+            logger.critical(F'count_delete:      {count_delete}')
+            logger.critical(F'count_new:         {count_new}')
+            logger.critical(F'count_replace:     {count_replace}')
+            logger.critical(F'count_unchanged:   {count_unchanged}')
+            logger.critical(F'diff_counts:       {count_unchanged * 2 + count_replace * 2 + count_delete + count_new}')
+            logger.critical(F'initial_counts and diff_counts SHOULD BE EQUAL')
+            raise SystemExit(1)
         return retlist
 
     @classmethod
