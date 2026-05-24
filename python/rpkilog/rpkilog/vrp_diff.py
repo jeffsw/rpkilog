@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import bz2
+from collections import deque
 import getpass
 import json
 import logging
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 import dateutil.parser
 import netaddr
 import opensearchpy.helpers
@@ -22,7 +24,9 @@ from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 from tqdm import tqdm
 
+from rpkilog.collision_behavior import CollisionBehavior
 from rpkilog.roa import Roa
+from rpkilog.util import list_s3_object_previous
 
 logger = logging.getLogger(__name__)
 
@@ -282,17 +286,10 @@ class VrpDiff():
         return result_metadata
 
     @classmethod
-    def vrp_diff_list(cls, old_roas:list, new_roas:list) -> list:
-        '''
+    def vrp_diff_list(cls, old_roas:list[dict], new_roas:list[dict]) -> list:
+        """
         Given two lists of VRPs, return a list of VrpDiff objects.
-        EMPTIES THE INPUT LISTS as a side-effect.  Pass copies if you don't want that!
-
-        SCALE: This could return a generator which reads the input files (or lists) sequentially and
-        generates results as-needed.  It would be possible to scale up to a much larger VRP Cache
-        without using much RAM.  However, we need to sort the input, because in the real world, input
-        VRP cache files had a different (or inconsistent?) sort order in cases when a prefix had multiple
-        ROAs with different prefix-lengths.  That would complicate the generator a little.
-        '''
+        """
         retlist = []
         count_delete = 0
         count_new = 0
@@ -300,28 +297,42 @@ class VrpDiff():
         count_unchanged = 0
         initial_count_old = len(old_roas)
         initial_count_new = len(new_roas)
+        initial_count_both = initial_count_old + initial_count_new
+        progress_log_interval = initial_count_both / 10
+        progress_log_next = initial_count_both - progress_log_interval
         # Add one to this for the benefit of the first loop iteration
         input_roa_count = len(old_roas) + len(new_roas) + 1
-        # Convert the input lists, which are dicts, to Roa objects.
-        for idx, roa_dict in enumerate(old_roas):
-            old_roas[idx] = Roa(**roa_dict)
-        for idx, roa_dict in enumerate(new_roas):
-            new_roas[idx] = Roa(**roa_dict)
-        # Sort the input lists
-        old_roas = sorted(old_roas, key=Roa.sortable)
-        new_roas = sorted(new_roas, key=Roa.sortable)
 
-        while len(old_roas) + len(new_roas) > 0:
-            # Every time through the loop, we must pop one entry from one or both input lists.
+        # Convert input dicts to Roa objects and sort into deques (popleft() is O(1) vs O(n) for pop(0)).
+        old_roa_objs = []
+        for roa_dict in old_roas:
+            old_roa_objs.append(Roa(**roa_dict))
+        old_deque = deque(sorted(old_roa_objs, key=Roa.sortable))
+        new_roa_objs = []
+        for roa_dict in new_roas:
+            new_roa_objs.append(Roa(**roa_dict))
+        new_deque = deque(sorted(new_roa_objs, key=Roa.sortable))
+
+        process_time_progress = time.process_time()
+        while len(old_deque) + len(new_deque) > 0:
+            # Every time through the loop, we must pop one entry from one or both deques.
             # If we don't, we're stuck, and that's a bug.  That's why we check.
-            if not len(old_roas) + len(new_roas) < input_roa_count:
+            if not len(old_deque) + len(new_deque) < input_roa_count:
                 raise Exception('STUCK not making progress consuming input ROAs')
-            input_roa_count = len(old_roas) + len(new_roas)
-            # If either old_roas or new_roas is empty, old_next or new_next will be None.
-            old_next = old_roas[0] if len(old_roas) else None
-            new_next = new_roas[0] if len(new_roas) else None
-            # If first entry in both lists have identical (ta, prefix, maxLength, asn) we'll pop both
-            # lists and dispose of both items (will become an UNCHANGED or REPLACE diff).
+            input_roa_count = len(old_deque) + len(new_deque)
+            if input_roa_count < progress_log_next:
+                complete_pct = (initial_count_both - input_roa_count) / initial_count_both * 100
+                process_time_new = time.process_time()
+                process_time_delta = process_time_new - process_time_progress
+                process_time_progress = process_time_new
+                logger.info(f"Progress {complete_pct:.0f}%  ROAs remaining {input_roa_count} / {initial_count_both}"
+                            f" CPU (usr+sys) {process_time_delta:.1f}s")
+                progress_log_next -= progress_log_interval
+            # If either deque is empty, old_next or new_next will be None.
+            old_next = old_deque[0] if len(old_deque) else None
+            new_next = new_deque[0] if len(new_deque) else None
+            # If first entry in both deques have identical (ta, prefix, maxLength, asn) we'll pop both
+            # deques and dispose of both items (will become an UNCHANGED or REPLACE diff).
             #
             # If those entries are different, we'll process whichever one has a lower sort-order.
             # If that's an OLD entry, we'll be emitting a DELETE diff.
@@ -336,8 +347,8 @@ class VrpDiff():
                     logger.debug('REPLACE found: {old_list_next} -> {new_list_next}')
                     diff = VrpDiff(old_roa=old_next, new_roa=new_next)
                     retlist.append(diff)
-                old_roas.pop(0)
-                new_roas.pop(0)
+                old_deque.popleft()
+                new_deque.popleft()
                 continue
             # Entries have different primary keys.  Process whichever one has a lower sort-order.
             if new_next==None or (old_next!=None and old_next.sortable() < new_next.sortable()):
@@ -345,27 +356,28 @@ class VrpDiff():
                 logger.debug('DELETE found: {old_list_next}')
                 diff = VrpDiff(old_roa=old_next, new_roa=None)
                 retlist.append(diff)
-                old_roas.pop(0)
+                old_deque.popleft()
                 continue
             else:
                 count_new += 1
                 logger.debug('NEW found: {new_list_next}')
                 diff = VrpDiff(old_roa=None, new_roa=new_next)
                 retlist.append(diff)
-                new_roas.pop(0)
+                new_deque.popleft()
                 continue
         if initial_count_old + initial_count_new == count_unchanged * 2 + count_replace * 2 + count_delete + count_new:
             logger.info('Results add up!')
         else:
-            logger.warn(F'initial_count_old: {initial_count_old}')
-            logger.warn(F'initial_count_new: {initial_count_new}')
-            logger.warn(F'initial_counts:    {initial_count_old + initial_count_new}')
-            logger.warn(F'count_delete:      {count_delete}')
-            logger.warn(F'count_new:         {count_new}')
-            logger.warn(F'count_replace:     {count_replace}')
-            logger.warn(F'count_unchanged:   {count_unchanged}')
-            logger.warn(F'diff_counts:       {count_unchanged * 2 + count_replace * 2 + count_delete + count_new}')
-            logger.warn(F'initial_counts and diff_counts SHOULD BE EQUAL')
+            logger.critical(F'initial_count_old: {initial_count_old}')
+            logger.critical(F'initial_count_new: {initial_count_new}')
+            logger.critical(F'initial_counts:    {initial_count_old + initial_count_new}')
+            logger.critical(F'count_delete:      {count_delete}')
+            logger.critical(F'count_new:         {count_new}')
+            logger.critical(F'count_replace:     {count_replace}')
+            logger.critical(F'count_unchanged:   {count_unchanged}')
+            logger.critical(F'diff_counts:       {count_unchanged * 2 + count_replace * 2 + count_delete + count_new}')
+            logger.critical(F'initial_counts and diff_counts SHOULD BE EQUAL')
+            raise SystemExit(1)
         return retlist
 
     @classmethod
@@ -472,42 +484,6 @@ class VrpDiff():
         return es_client
 
     @classmethod
-    def get_old_file_key_from_s3(cls, src_bucket_name:str, new_file_datetime:datetime) -> str:
-        '''
-        Given a new_file_datetime, list objects in the src_bucket and return key name of the previous
-        file by datetime.
-
-        This is used to find which file should be the old_file in our diff process.  It's just a helper
-        function for readability.
-        '''
-        # list all files in src_bucket to determine old_file_key
-        src_bucket = boto3.resource('s3').Bucket(src_bucket_name)
-        summaries = set()
-        for buckobj in src_bucket.objects.all():
-            summaries.add(buckobj.key)
-        if len(summaries) == 1:
-            logger.warning(F'ONLY ONE FILE IN src_bucket {src_bucket_name}.  Is this first ever invocation?')
-            return
-        # find the filename immediately before the one which invoked us
-        for candidate_filename in sorted(summaries, reverse=True):
-            rem = re.search(r'(?P<datetime>(?P<date>\d{8})T(?P<time>\d{4,6})Z)\.json(\.bz2)?$', candidate_filename)
-            if not rem:
-                logger.warning(F'{src_bucket_name} contained a file not matching our regex: {candidate_filename}')
-                continue
-            candidate_datetime = dateutil.parser.parse(rem.group('datetime'))
-            if candidate_datetime < new_file_datetime:
-                # We reverse-sorted the list of files, so the first one with an earlier datetime should be right
-                old_file_key = candidate_filename
-                return(old_file_key)
-        else:
-            # no files found which are older than new_file_datetime
-            logger.warning(
-                F'{src_bucket_name} doesnt contain any files older than {new_file_datetime}'
-                F' Is this first ever invocation?'
-            )
-            return
-
-    @classmethod
     def aws_lambda_entry_point(cls, event, context):
         dst_bucket_name = os.getenv('diff_bucket')
         src_bucket_name = event['Records'][0]['s3']['bucket']['name']
@@ -544,7 +520,10 @@ class VrpDiff():
         ag1.add_argument('--reprocess-all-s3-summary-files', action='store_true', help='Invoke diff process on all summary files')
         ag1.add_argument('--invoke-lambda-on-all-s3-summary-files', type=str, help='Invoke given lambda (asynchronously) on all summary files')
         ag1.add_argument('--reprocess-max-files', type=int, help='Stop reprocessing after first N files')
-        ag1.add_argument('--reprocess-skip-existing-diffs', action='store_true', help='Do not reprocess files that would overwrite existing diffs')
+        ag1.add_argument('--diff-collision-behavior', default='overwrite', choices=['error', 'overwrite', 'retain'],
+                         help='If "error", exit with an error upon collision.  If "overwrite", overwrite'
+                              ' if a pre-existing diff is found.  If "retain", calculate new diff but'
+                              ' do not upload it; retain the old file.')
         ag2 = ap.add_argument_group('Use local files')
         ag2.add_argument('--old-file', type=Path, help='Path to the "old" file used for diffing')
         ag2.add_argument('--new-file', type=Path, help='Path to the "new" file')
@@ -558,11 +537,24 @@ class VrpDiff():
             import pdb
             pdb.set_trace()
 
+        diff_collision_behavior = CollisionBehavior.OVERWRITE
+        match args.get('diff_collision_behavior', 'overwrite'):
+            case 'overwrite':
+                diff_collision_behavior = CollisionBehavior.OVERWRITE
+            case 'retain':
+                diff_collision_behavior = CollisionBehavior.RETAIN
+            case 'error':
+                diff_collision_behavior = KeyError('Collision: diff output file already exists in diff'
+                                                   ' bucket, and desired --diff-collision-behavior is error')
+            case _:
+                raise ValueError(f'Unexpected diff_collision_behavior value: {args["diff_collision_behavior"]!r}')
+
         if 'new_file_key' in args:
             metadata = cls.generic_entry_point(
                 src_bucket_name=args['summary_bucket'],
                 new_file_key=args['new_file_key'],
                 diff_bucket_name=args['diff_bucket'],
+                diff_collision_behavior=diff_collision_behavior,
                 summary_cache=args['summary_cache'],
             )
             print(json.dumps(metadata, indent=4, sort_keys=True))
@@ -585,16 +577,6 @@ class VrpDiff():
                 if not rem:
                     logger.info(F'Skipping S3 key {buckobj.key} which does not match our regex')
                     continue
-                if args.get('reprocess_skip_existing_diffs', False):
-                    diff_filename = cls.get_diff_filename_from_summary_filename(summary_filename=buckobj.key)
-                    # If a diff file already exists for this summary, skip this invocation
-                    try:
-                        diff_bucket.Object(key=diff_filename).load()
-                        logger.info(F'SKIPPING_LAMBDA on {buckobj.key} because {diff_filename} already exists')
-                        continue
-                    except:
-                        # Exception indicates the file was not found in S3.
-                        pass
                 if args.get('invoke_lambda_on_all_s3_summary_files', False):
                     logger.info(F'INVOKING_LAMBDA on {buckobj.key}')
                     invoke_payload = {
@@ -623,6 +605,7 @@ class VrpDiff():
                         src_bucket_name=args['summary_bucket'],
                         new_file_key=buckobj.key,
                         diff_bucket_name=args['diff_bucket'],
+                        diff_collision_behavior=diff_collision_behavior,
                         summary_cache=args['summary_cache'],
                     )
                     print(json.dumps(metadata, indent=4, sort_keys=True))
@@ -707,6 +690,7 @@ class VrpDiff():
         src_bucket_name:str,
         new_file_key:str,
         diff_bucket_name:str,
+        diff_collision_behavior: Exception | CollisionBehavior = CollisionBehavior.OVERWRITE,
         summary_cache:Path=None,
         tmp_dir:Path=None,
     ):
@@ -730,12 +714,26 @@ class VrpDiff():
         new_file_datetime = dateutil.parser.parse(rem.group('datetime'))
         output_file_key=F'{new_file_datestr}.vrpdiff.json.bz2'
         output_file_path=Path(tmp_dir, output_file_key)
-        old_file_key = cls.get_old_file_key_from_s3(
-            src_bucket_name=src_bucket_name,
-            new_file_datetime=new_file_datetime,
-        )
-        if old_file_key==None:
-            # If no old_file_key was found, we cannot produce a diff.
+        collision = False
+        if diff_collision_behavior is not CollisionBehavior.OVERWRITE:
+            try:
+                s3.head_object(Bucket=diff_bucket_name, Key=output_file_key)
+                collision = True
+            except ClientError as exc:
+                if exc.response['Error']['Code'] not in ('404', 'NoSuchKey'):
+                    raise
+            if collision:
+                if isinstance(diff_collision_behavior, Exception):
+                    raise diff_collision_behavior
+                logger.info(
+                    F'Collision: {output_file_key} already exists in {diff_bucket_name}; '
+                    F'diff will be generated but not uploaded (diff_collision_behavior={diff_collision_behavior})'
+                )
+        src_bucket = boto3.resource('s3').Bucket(src_bucket_name)
+        try:
+            old_file_key = list_s3_object_previous(bucket=src_bucket, subject_datetime=new_file_datetime)
+        except KeyError:
+            logger.warning(f'No file found in {src_bucket_name} older than {new_file_datetime}. Cannot produce diff.')
             return
 
         if summary_cache:
@@ -761,12 +759,15 @@ class VrpDiff():
             output_file_path=output_file_path,
             realtime_initial=realtime_initial,
         )
-        logger.info(F'Uploading vrp diff {output_file_key} to S3')
-        s3.upload_file(
-            Filename=str(output_file_path),
-            Bucket=diff_bucket_name,
-            Key=output_file_key,
-        )
+        if collision:
+            logger.info(F'Skipping upload of {output_file_key}: collision with pre-existing object in {diff_bucket_name}')
+        else:
+            logger.info(F'Uploading vrp diff {output_file_key} to S3, replacing existing object of same key')
+            s3.upload_file(
+                Filename=str(output_file_path),
+                Bucket=diff_bucket_name,
+                Key=output_file_key,
+            )
         if summary_cache==None:
             os.remove(old_file_path)
             os.remove(new_file_path)

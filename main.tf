@@ -8,6 +8,7 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
+      version = "~> 6.20"
     }
     linode = {
       source  = "linode/linode"
@@ -573,6 +574,52 @@ resource "aws_iam_role_policy_attachments_exclusive" "lambda_diff_import" {
   policy_arns = [aws_iam_policy.lambda_diff_import.arn]
 }
 
+resource "aws_iam_user" "github_ci" {
+  name = "github_ci"
+}
+
+resource "aws_iam_policy" "github_ci" {
+  name = "github_ci"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid = "GetCallerIdentity",
+        Effect = "Allow",
+        Action = ["sts:GetCallerIdentity"],
+        Resource = "*",
+      },
+      {
+        # this S3 bucket rpkilog-test-<account id>-us-east-1-an is used by our tests
+        Sid = "TestS3Bucket"
+        Effect = "Allow",
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:CreateBucket",
+          "s3:DeleteBucket",
+          "s3:DeleteObject*",
+          "s3:List*",
+          "s3:GetBucket*",
+          "s3:GetObject*",
+          "s3:PutBucketTagging",
+          "s3:PutObject*",
+          "s3:TagResource",
+          "s3:UntagResource",
+        ],
+        Resource = [
+          "arn:aws:s3:::rpkilog-test-${data.aws_caller_identity.current.account_id}-us-east-1-an",
+          "arn:aws:s3:::rpkilog-test-${data.aws_caller_identity.current.account_id}-us-east-1-an/*",
+        ]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "github_ci" {
+  user = aws_iam_user.github_ci.name
+  policy_arn = aws_iam_policy.github_ci.arn
+}
+
 ##############################
 # IAM users
 resource "aws_iam_user" "jeffsw" {
@@ -688,7 +735,7 @@ resource "aws_cognito_identity_provider" "google" {
 resource "aws_cognito_managed_user_pool_client" "es_prod" {
   # This has the string "prod" instead of a reference to aws_elasticsearch_domain.prod.domain_name
   # because the reference would create a circular reference
-  name_prefix  = "AmazonOpenSearchService-prod-${data.aws_region.current.name}-"
+  name_prefix  = "AmazonOpenSearchService-prod-${data.aws_region.current.region}-"
   user_pool_id = aws_cognito_user_pool.es.id
 
   allowed_oauth_flows           = ["code"]
@@ -925,9 +972,9 @@ resource "aws_lambda_function" "vrp_cache_diff" {
   s3_bucket   = "rpkilog-artifact"
   s3_key      = "lambda_vrp_cache_diff.zip"
   role        = aws_iam_role.lambda_vrp_cache_diff.arn
-  runtime     = "python3.11"
+  runtime     = "python3.14"
   handler     = "rpkilog.vrp_diff.aws_lambda_entry_point"
-  memory_size = 1769
+  memory_size = 1769 * 2
   timeout     = 900
   environment {
     variables = {
@@ -1454,18 +1501,23 @@ resource "aws_api_gateway_integration" "hapi" {
 }
 
 # APIGW deployment
+# WARNING: provider upgrades trigger redeployment if triggers is not in ignore_changes.  That should
+# be okay but we don't want to trigger it *now* so this is a workaround.
 resource "aws_api_gateway_deployment" "public_api" {
   rest_api_id = aws_api_gateway_rest_api.public_api.id
   lifecycle {
     create_before_destroy = true
+    ignore_changes = [
+      triggers
+    ]
   }
-  triggers = {
-    redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.unstable_history,
-      aws_api_gateway_method.unstable_history_GET,
-      aws_api_gateway_integration.hapi,
-    ]))
-  }
+  # triggers = {
+  #   redeployment = sha1(jsonencode([
+  #     aws_api_gateway_resource.unstable_history,
+  #     aws_api_gateway_method.unstable_history_GET,
+  #     aws_api_gateway_integration.hapi,
+  #   ]))
+  # }
 }
 
 # APIGW stage

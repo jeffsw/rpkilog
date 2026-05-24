@@ -5,6 +5,11 @@ name: ci-python
   push:
   pull_request:
     branches: [$default-branch]
+    types:
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
 
 permissions:
   contents: read
@@ -12,16 +17,18 @@ permissions:
 jobs:
   ci-python:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version:
-          - "3.10"
+          - "3.12"
           - "3.13"
+          - "3.14"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           architecture: x64
           python-version: ${{ matrix.python-version }}
@@ -45,14 +52,32 @@ jobs:
               # python/rpkilog/rpkilog/routinator_snapshot_file.py
               # python/rpkilog/rpkilog/routinator_vrp_fetcher.py
               # python/rpkilog/rpkilog/summary_file.py
+              python/rpkilog/rpkilog/util.py
               python/rpkilog/tests
           )
           flake8 --count --show-source --statistics "${LINT_FILES[@]}"
-      - name: Test with pytest
+      - name: Obtain AWS credentials from repo variables / secrets
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      ##### different steps, below, for draft or non-draft PR
+      - name: Test with pytest, skipping slow tests for draft PR
+        if: github.event.pull_request.draft == true
+        timeout-minutes: 15
+        run: |
+          pushd python/
+          pytest --verbose -m "not slow"
+          popd
+      - name: Test with pytest, including slow tests
+        if: github.event.pull_request.draft == false
+        timeout-minutes: 15
         run: |
           pushd python/
           pytest --verbose
           popd
+      #####
       - name: build
         run: |
           pushd python/rpkilog/

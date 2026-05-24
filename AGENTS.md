@@ -1,5 +1,36 @@
 # rpkilog — Agent Instructions
 
+## git
+
+### commit messages
+
+Prefer bullet points over prose.
+
+## Python
+
+### Style Guide
+
+#### Line Length
+
+Assume co-authors have their IDEs configured with line-length rulers at 100 and 120 characters.
+100 characters is considered our soft limit, breaking the line after 100 characters.  120 is
+our hard limit.
+
+#### Comprehensions
+
+Strongly prefer traditional C-style loops over list comprehensions or dict comprehensions.
+
+#### Returning from Functions
+
+When returning from a function, always store the return value in a variable within the function scope
+before returning.  This makes it easier to set a debugger breakpoint condition.  If in doubt about the
+name for a variable used to hold the return value, `retval`, `retstr`, `retlist`, or `retdict` are 
+alright default choices.
+
+#### Enums
+
+Use Docstrings on Enum members to describe the values.
+
 ## Reviewing PRs or branches
 
 When identifying issues or suggesting changes, prefer markdown checkboxes instead of bullet points.  For
@@ -30,3 +61,4 @@ The `type` argument accepts any valid [type constraint expression](https://devel
 (primitive types `string`, `number`, `bool`; collection types `list(…)`, `map(…)`, `set(…)`;
 and structural types `object({…})`, `tuple([…])`).  It is optional — omitting it allows any
 type — but adding it to module outputs improves validation and documentation for callers.
+

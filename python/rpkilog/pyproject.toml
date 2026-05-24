@@ -4,10 +4,11 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26051701'
+version = '0.26052403'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
-    'boto3',
+    "boto3",
+    "boto3-stubs~=1.43.14",
     'netaddr',
     'opensearch-py',
     'psutil',
@@ -17,6 +18,7 @@ dependencies = [
     'requests_aws4auth',
     'tenacity',
     'tqdm',
+    "types-boto3[s3]~=1.43.14",
 ]
 description = 'A web tool for searching RPKI history'
 keywords = [
@@ -27,12 +29,12 @@ keywords = [
 # is set AND the `LICENSE` **file** exists.  I'll comment out project.license for now.
 #license = 'MIT'
 readme = 'README.md'
-requires-python = '>=3.10'
+requires-python = '>=3.12'
 urls.homepage = 'https://rpkilog.com'
 urls.source = 'https://github.com/jeffsw/rpkilog/python/rpkilog/'
 [project.optional-dependencies]
 dev = [
-    'boto3-stubs',
+    'types-boto3[s3]',
     'build',
     'flake8',
     'pytest',
@@ -44,7 +46,7 @@ tests = [
 
 [dependency-groups]
 dev = [
-    'boto3-stubs',
+    'types-boto3[s3]',
     'build',
     'flake8',
     'pytest',
@@ -68,4 +70,7 @@ upload_s3_url = 's3://rpkilog-artifact/lambda_rpkilog.zip'
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
+markers = [
+    "slow: some end-to-end tests are slow and may be skipped in draft PR commits and pre-commit hooks"
+]
 testpaths = ["tests"]
