@@ -21,4 +21,3 @@ TODO: Implement the following tests using the golden test_data files below and v
     - [ ] count the number of verb: DELETE, NEW, and REPLACE records in the test diff and ensure they
       add up to the diff_count.
 """
-
