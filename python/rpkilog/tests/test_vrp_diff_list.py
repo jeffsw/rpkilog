@@ -87,7 +87,7 @@ def test_different_primary_keys_emits_delete_and_new():
 
 def test_mixed_batch_all_verbs():
     delete_roa = {'asn': 64497, 'prefix': '198.51.100.0/24', 'maxLength': 24, 'ta': 'test', 'expires': 1000000000}
-    new_roa    = {'asn': 64498, 'prefix': '203.0.113.0/24',  'maxLength': 24, 'ta': 'test', 'expires': 1000000000}
+    new_roa = {'asn': 64498, 'prefix': '203.0.113.0/24', 'maxLength': 24, 'ta': 'test', 'expires': 1000000000}
     replace_old = {'asn': 64499, 'prefix': '192.0.2.0/24', 'maxLength': 24, 'ta': 'test', 'expires': 1000000000}
     replace_new = {'asn': 64499, 'prefix': '192.0.2.0/24', 'maxLength': 24, 'ta': 'test', 'expires': 2000000000}
     result = VrpDiff.vrp_diff_list(

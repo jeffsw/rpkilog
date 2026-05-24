@@ -47,6 +47,7 @@ jobs:
               # python/rpkilog/rpkilog/routinator_snapshot_file.py
               # python/rpkilog/rpkilog/routinator_vrp_fetcher.py
               # python/rpkilog/rpkilog/summary_file.py
+              python/rpkilog/rpkilog/util.py
               python/rpkilog/tests
           )
           flake8 --count --show-source --statistics "${LINT_FILES[@]}"

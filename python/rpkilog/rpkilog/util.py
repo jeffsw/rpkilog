@@ -45,7 +45,9 @@ def list_s3_object_previous(
             before the given subject_datetime
     """
     if -1 == prefix_fstr.find('{datetime_prefix}'):
-        raise ValueError(f'prefix_fstr argument missing MANDATORY {{datetime_prefix}}; given argument is: {prefix_fstr}')
+        raise ValueError(
+            f'prefix_fstr argument missing MANDATORY {{datetime_prefix}}; given argument is: {prefix_fstr}'
+        )
 
     # Lexicographic upper bound: any key < probe sorts before subject_datetime
     probe = prefix_fstr.format(datetime_prefix=subject_datetime.strftime('%Y%m%dT%H%M%SZ'))
