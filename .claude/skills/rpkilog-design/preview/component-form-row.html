@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Form Row</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  fieldset{border:1px solid var(--rk-border);padding:6px 12px 8px;border-radius:0;}
+  legend{padding:0 6px;color:var(--rk-fg);font-size:13px;}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;}
+  .lbl{color:var(--rk-fg);}
+  .ipt{font-family:var(--rk-font-mono);font-size:12px;color:var(--rk-fg);background:#000;border:1px solid var(--rk-border);padding:1px 4px;border-radius:0;}
+  .btn{font-family:var(--rk-font-mono);font-size:12px;color:var(--rk-fg);background:#000;border:1px solid var(--rk-border);padding:1px 10px;cursor:pointer;border-radius:0;}
+</style></head><body><div class="card">
+<div class="title">search row · prefix · asn · date range · entries</div>
+<fieldset><legend>RPKI History Search</legend>
+<div class="row">
+  <span class="lbl">Prefix</span><input class="ipt" value="8.8.8.0/24" style="width:110px">
+  <span class="lbl">ASN</span><input class="ipt" style="width:54px">
+  <span class="lbl">Observed Date/Time Range From</span><input class="ipt" value="01 / 01 / 2020 , 12 : 00 AM" style="width:170px">
+  <span class="lbl">To</span><input class="ipt" value="01 / 01 / 2038 , 12 : 00 AM" style="width:170px">
+  <button class="btn">Search</button>
+  <span class="lbl">Display Entries/Page</span><input class="ipt" value="20" style="width:32px">
+</div>
+</fieldset>
+</div></body></html>

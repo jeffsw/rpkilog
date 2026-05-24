@@ -1,0 +1,316 @@
+/* ============================================================
+   rpkilog Design System — Colors & Type
+   ----------------------------------------------------------------
+   Green-screen / BBS-era tokens. Import this file into anything
+   you build for rpkilog. Then either use the raw `--rk-*` tokens
+   or the semantic classes near the bottom (.rk-h1, .rk-link, etc).
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  /* -------- COLOR — base palette -------- */
+  --rk-black:           #000000;        /* page bg, void */
+  --rk-black-elev:      #0a0e0a;        /* barely-lit panel bg */
+  --rk-stripe:          #3a2a1a;        /* alternating table row tint */
+  --rk-stripe-hot:      #4a3522;        /* row hover */
+  --rk-border-dim:      #1a3320;        /* hairline separator */
+  --rk-border:          #2a6a3a;        /* default border */
+
+  /* -------- COLOR — phosphor greens -------- */
+  --rk-green-300:       #66ff99;        /* hover / hot text */
+  --rk-green-400:       #33ff66;        /* CRT glow accent */
+  --rk-green-500:       #33cc66;        /* primary fg — body, table cells */
+  --rk-green-600:       #2aa855;        /* dim fg — captions, meta */
+  --rk-green-700:       #1f7a3d;        /* very dim — placeholder text */
+  --rk-green-bg:        #0e2a14;        /* green-tinted fill (buttons, hovers) */
+
+  /* -------- COLOR — amber (links, focus, CTAs) -------- */
+  --rk-amber-300:       #fff066;        /* hover / focus ring hot */
+  --rk-amber-500:       #e6d24a;        /* primary link */
+  --rk-amber-600:       #b8a23a;        /* visited link */
+
+  /* -------- COLOR — status channels (six redundant signal hues) -------- */
+  /* green-500 (above) doubles as the primary status channel.              */
+  --rk-blue:            #3399ff;        /* alt signal / info */
+  --rk-yellow:          #ffcc33;        /* warning / pending */
+  --rk-gray:            #8a948a;        /* inactive / disabled / muted (green-tinted) */
+  --rk-red:             #ff3a3a;        /* error / expired strikethrough */
+  --rk-red-dim:         #8a2a2a;
+  --rk-fuchsia:         #ff44bb;        /* attention / unusual */
+
+  /* -------- COLOR — BBS accents (legacy DOS palette, used sparingly) -------- */
+  --rk-cyan:            #33cccc;        /* info / system notice */
+  --rk-magenta:         #cc33cc;        /* debug / dev only */
+
+  /* -------- SEMANTIC COLOR -------- */
+  --rk-bg:              var(--rk-black);
+  --rk-bg-elev:         var(--rk-black-elev);
+  --rk-fg:              var(--rk-green-500);
+  --rk-fg-dim:          var(--rk-green-600);
+  --rk-fg-fainter:      var(--rk-green-700);
+  --rk-fg-hot:          var(--rk-green-300);
+
+  --rk-link:            var(--rk-amber-500);
+  --rk-link-hover:      var(--rk-green-300);
+  --rk-link-visited:    var(--rk-amber-600);
+
+  --rk-focus:           var(--rk-amber-500);
+
+  --rk-danger:          var(--rk-red);
+  --rk-warning:         var(--rk-yellow);
+  --rk-muted:           var(--rk-gray);
+  --rk-attention:       var(--rk-fuchsia);
+  --rk-info:            var(--rk-blue);
+  --rk-info-alt:        var(--rk-cyan);
+
+  /* -------- TYPE — families -------- */
+  --rk-font-display:    "VT323", "IBM Plex Mono", ui-monospace, "Courier New", monospace;
+  --rk-font-mono:       "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  /* No sans, no serif. Intentional. */
+
+  /* -------- TYPE — size scale (mono body, terminal-tight) -------- */
+  --rk-fs-3xs:          10px;
+  --rk-fs-2xs:          11px;
+  --rk-fs-xs:           12px;          /* table cells, captions, page nav */
+  --rk-fs-sm:           13px;          /* secondary UI */
+  --rk-fs-md:           14px;          /* body default */
+  --rk-fs-lg:           16px;          /* form labels, lede paragraphs */
+  --rk-fs-xl:           20px;          /* small headings */
+  --rk-fs-2xl:          28px;          /* h2 */
+  --rk-fs-3xl:          40px;          /* h1 (VT323) */
+  --rk-fs-4xl:          64px;          /* hero display (VT323) */
+  --rk-fs-5xl:          96px;          /* mega display (VT323) */
+
+  /* -------- TYPE — weights -------- */
+  --rk-fw-regular:      400;
+  --rk-fw-medium:       500;
+  --rk-fw-semibold:     600;
+  --rk-fw-bold:         700;
+
+  /* -------- TYPE — line heights -------- */
+  --rk-lh-tight:        1.1;            /* display */
+  --rk-lh-snug:         1.25;           /* headers */
+  --rk-lh-normal:       1.4;            /* body */
+  --rk-lh-loose:        1.6;            /* paragraphs of prose */
+  --rk-lh-table:        1.2;            /* table rows, dense */
+
+  /* -------- TYPE — tracking -------- */
+  --rk-ls-tight:        -0.01em;
+  --rk-ls-normal:       0;
+  --rk-ls-wide:         0.05em;         /* small caps section labels */
+  --rk-ls-wider:        0.12em;         /* uppercase verbs like REPLACE */
+
+  /* -------- SPACING (4px base) -------- */
+  --rk-sp-0:            0;
+  --rk-sp-1:            4px;
+  --rk-sp-2:            8px;
+  --rk-sp-3:            12px;
+  --rk-sp-4:            16px;
+  --rk-sp-5:            20px;
+  --rk-sp-6:            24px;
+  --rk-sp-7:            32px;
+  --rk-sp-8:            40px;
+  --rk-sp-9:            48px;
+  --rk-sp-10:           64px;
+  --rk-sp-11:           96px;
+
+  /* -------- LAYOUT -------- */
+  --rk-page-max:        1280px;
+  --rk-page-pad:        32px;
+  --rk-radius:          0;              /* sharp corners, period. */
+  --rk-border-w:        1px;
+
+  /* -------- ELEVATION (none, but a glow primitive) -------- */
+  --rk-glow-sm:         0 0 2px currentColor;
+  --rk-glow-md:         0 0 4px currentColor;
+  --rk-glow-lg:         0 0 8px currentColor, 0 0 16px currentColor;
+
+  /* -------- MOTION (terminals are instant) -------- */
+  --rk-dur-instant:     0ms;
+  --rk-dur-fast:        80ms;
+  --rk-dur-base:        120ms;
+  --rk-ease:            linear;         /* never cubic. never. */
+}
+
+/* ============================================================
+   BASE — applied to body when you opt in by adding `.rk-root`
+   to <html> or <body>, or scope the design system to a subtree.
+   ============================================================ */
+
+.rk-root,
+.rk-root body {
+  background: var(--rk-bg);
+  color: var(--rk-fg);
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-md);
+  line-height: var(--rk-lh-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ============================================================
+   SEMANTIC TYPE CLASSES
+   Use these instead of styling raw <h1> etc. so the system stays
+   composable across React, slides, raw HTML.
+   ============================================================ */
+
+.rk-display,
+.rk-h1 {
+  font-family: var(--rk-font-display);
+  font-size: var(--rk-fs-4xl);
+  line-height: var(--rk-lh-tight);
+  font-weight: var(--rk-fw-regular);
+  color: var(--rk-fg);
+  letter-spacing: var(--rk-ls-normal);
+  margin: 0;
+}
+
+.rk-h2 {
+  font-family: var(--rk-font-display);
+  font-size: var(--rk-fs-3xl);
+  line-height: var(--rk-lh-snug);
+  font-weight: var(--rk-fw-regular);
+  color: var(--rk-fg);
+  margin: 0;
+}
+
+.rk-h3 {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-xl);
+  line-height: var(--rk-lh-snug);
+  font-weight: var(--rk-fw-semibold);
+  color: var(--rk-fg);
+  letter-spacing: var(--rk-ls-wide);
+  margin: 0;
+}
+
+.rk-h4 {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-lg);
+  line-height: var(--rk-lh-snug);
+  font-weight: var(--rk-fw-semibold);
+  color: var(--rk-fg);
+  text-transform: uppercase;
+  letter-spacing: var(--rk-ls-wider);
+  margin: 0;
+}
+
+.rk-p {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-md);
+  line-height: var(--rk-lh-loose);
+  color: var(--rk-fg);
+  margin: 0;
+}
+
+.rk-lede {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-lg);
+  line-height: var(--rk-lh-loose);
+  color: var(--rk-fg);
+  margin: 0;
+}
+
+.rk-meta,
+.rk-caption {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-xs);
+  line-height: var(--rk-lh-normal);
+  color: var(--rk-fg-dim);
+  letter-spacing: var(--rk-ls-wide);
+}
+
+.rk-code,
+.rk-kbd,
+code.rk-inline {
+  font-family: var(--rk-font-mono);
+  font-size: 0.95em;
+  color: var(--rk-fg-hot);
+}
+
+.rk-verb {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-xs);
+  font-weight: var(--rk-fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--rk-ls-wider);
+  color: var(--rk-fg-hot);
+}
+
+/* ============================================================
+   LINKS — amber, underlined, flip to bright green on hover
+   ============================================================ */
+.rk-link,
+a.rk-link {
+  color: var(--rk-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: color var(--rk-dur-fast) var(--rk-ease);
+}
+.rk-link:hover,
+a.rk-link:hover {
+  color: var(--rk-link-hover);
+}
+.rk-link:visited,
+a.rk-link:visited {
+  color: var(--rk-link-visited);
+}
+.rk-link:focus-visible,
+a.rk-link:focus-visible {
+  outline: 2px solid var(--rk-focus);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   STATE — expired / strikethrough
+   ============================================================ */
+.rk-expired {
+  color: var(--rk-fg-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--rk-red);
+  text-decoration-thickness: 1px;
+}
+
+/* ============================================================
+   OPTIONAL CRT FLOURISHES (off by default; opt in per surface)
+   ============================================================ */
+.rk-glow {
+  text-shadow: var(--rk-glow-md);
+}
+.rk-glow-strong {
+  text-shadow: var(--rk-glow-lg);
+}
+
+@keyframes rk-cursor-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.rk-cursor::after {
+  content: "█";
+  display: inline-block;
+  margin-left: 2px;
+  color: currentColor;
+  animation: rk-cursor-blink 1s steps(2) infinite;
+}
+
+/* Optional scanline overlay — attach to a wrapper, not body */
+.rk-scanlines {
+  position: relative;
+}
+.rk-scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,0)    0px,
+    rgba(0,0,0,0)    2px,
+    rgba(0,0,0,0.18) 3px,
+    rgba(0,0,0,0.18) 3px
+  );
+  mix-blend-mode: multiply;
+  z-index: 50;
+}

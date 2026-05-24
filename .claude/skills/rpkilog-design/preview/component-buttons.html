@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Buttons</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .btn{font-family:var(--rk-font-mono);font-size:13px;font-weight:500;color:var(--rk-fg);background:var(--rk-bg);border:1px solid var(--rk-border);padding:4px 14px;cursor:pointer;border-radius:0;}
+  .btn:hover{background:#33cc66;color:#000;}
+  .btn-amber{color:var(--rk-amber-500);border-color:var(--rk-amber-500);}
+  .btn-amber:hover{background:var(--rk-amber-500);color:#000;}
+  .btn-ghost{border-color:var(--rk-border-dim);color:var(--rk-fg-dim);}
+  .btn-press{background:#0e2a14;box-shadow:inset 0 0 0 1px #2a6a3a;}
+  .btn-disabled{color:var(--rk-fg-fainter);border-color:var(--rk-border-dim);cursor:not-allowed;}
+  .lbl{font-size:10px;color:var(--rk-fg-dim);text-transform:uppercase;letter-spacing:.08em;margin-top:6px;}
+  .col{display:flex;flex-direction:column;align-items:center;}
+</style></head><body><div class="card">
+<div class="title">buttons · mechanical · 0ms · no radius</div>
+<div class="row">
+  <div class="col"><button class="btn">Search</button><div class="lbl">default</div></div>
+  <div class="col"><button class="btn" style="background:#33cc66;color:#000;">Search</button><div class="lbl">hover</div></div>
+  <div class="col"><button class="btn btn-press">Search</button><div class="lbl">pressed</div></div>
+  <div class="col"><button class="btn" style="outline:2px solid #e6d24a;outline-offset:2px;">Search</button><div class="lbl">focus</div></div>
+  <div class="col"><button class="btn btn-disabled">Search</button><div class="lbl">disabled</div></div>
+  <div class="col"><button class="btn btn-amber">[ download CSV ]</button><div class="lbl">amber / link-style</div></div>
+  <div class="col"><button class="btn btn-ghost">cancel</button><div class="lbl">ghost</div></div>
+</div>
+</div></body></html>

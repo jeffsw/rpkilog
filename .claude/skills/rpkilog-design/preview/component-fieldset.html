@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Fieldset + Legend</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  fieldset{border:1px solid var(--rk-border);padding:8px 14px 10px 14px;border-radius:0;display:flex;align-items:center;gap:14px;}
+  legend{padding:0 6px;color:var(--rk-fg);font-size:13px;font-weight:500;}
+  .lbl{font-size:13px;color:var(--rk-fg);}
+  .ipt{font-family:var(--rk-font-mono);font-size:13px;color:var(--rk-fg);background:#000;border:1px solid var(--rk-border);padding:2px 5px;border-radius:0;}
+  .btn{font-family:var(--rk-font-mono);font-size:13px;color:var(--rk-fg);background:#000;border:1px solid var(--rk-border);padding:3px 12px;cursor:pointer;border-radius:0;}
+  .note{font-size:11px;color:var(--rk-fg-dim);margin-top:10px;}
+</style></head><body><div class="card">
+<div class="title">fieldset · the signature container · legend overlaps the line</div>
+<fieldset>
+  <legend>RPKI History Search</legend>
+  <span class="lbl">Prefix</span><input class="ipt" value="8.8.8.0/24" style="width:120px">
+  <span class="lbl">ASN</span><input class="ipt" style="width:64px">
+  <span class="lbl">From</span><input class="ipt" value="2020-01-01" style="width:100px">
+  <button class="btn">Search</button>
+</fieldset>
+<div class="note">Use the native &lt;fieldset&gt;&lt;legend&gt; element. Do not fake it with divs.</div>
+</div></body></html>

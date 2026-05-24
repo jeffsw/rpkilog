@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en" class="rk-root">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rpkilog — Vanilla Components Reference</title>
+  <link rel="stylesheet" href="../../colors_and_type.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body {
+      background: var(--rk-black);
+      color: var(--rk-fg);
+      font-family: var(--rk-font-mono);
+      margin: 0;
+      padding: 32px;
+    }
+    .doc {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+    .doc-title {
+      font-family: var(--rk-font-display);
+      font-size: 36px;
+      margin: 0 0 6px 0;
+      color: var(--rk-fg);
+    }
+    .doc-sub {
+      color: var(--rk-fg-dim);
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+    .toc {
+      border: 1px solid var(--rk-border-dim);
+      padding: 12px 16px;
+      margin-bottom: 32px;
+      column-count: 3;
+      font-size: 12px;
+    }
+    .toc a { color: var(--rk-link); text-decoration: underline; }
+    .toc a:hover { color: var(--rk-link-hover); }
+    section.cmp {
+      margin-bottom: 36px;
+      border-top: 1px dashed var(--rk-border-dim);
+      padding-top: 18px;
+    }
+    section.cmp:first-of-type { border-top: none; padding-top: 0; }
+    .cmp-name {
+      color: var(--rk-fg-hot);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin: 0 0 4px 0;
+    }
+    .cmp-anchor {
+      color: var(--rk-fg-dim);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      margin: 0 0 12px 0;
+    }
+    .cmp-anchor::before { content: "#"; opacity: 0.6; }
+    .cmp-desc {
+      color: var(--rk-fg);
+      font-size: 13px;
+      margin: 0 0 14px 0;
+      line-height: 1.5;
+      max-width: 720px;
+    }
+    .demo {
+      border: 1px solid var(--rk-border-dim);
+      padding: 18px 20px;
+      background: var(--rk-black);
+      margin-bottom: 10px;
+    }
+    .demo-label {
+      color: var(--rk-fg-dim);
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    pre.src {
+      background: #0a0e0a;
+      border: 1px solid var(--rk-border-dim);
+      padding: 12px 14px;
+      font-family: var(--rk-font-mono);
+      font-size: 12px;
+      color: var(--rk-fg);
+      overflow-x: auto;
+      white-space: pre;
+      margin: 0;
+      line-height: 1.5;
+    }
+    pre.src .tag    { color: var(--rk-amber-500); }
+    pre.src .attr   { color: var(--rk-cyan); }
+    pre.src .val    { color: var(--rk-fg-hot); }
+    pre.src .text   { color: var(--rk-fg); }
+    pre.src .com    { color: var(--rk-fg-fainter); }
+  </style>
+</head>
+<body>
+  <div class="doc">
+    <h1 class="doc-title">vanilla components reference</h1>
+    <div class="doc-sub">
+      copy-paste-ready HTML for every component in the rpkilog design system.
+      depends only on <code>colors_and_type.css</code> + <code>styles.css</code>.
+    </div>
+
+    <nav class="toc">
+      <a href="#wordmark">wordmark</a><br>
+      <a href="#lede">lede</a><br>
+      <a href="#fieldset">fieldset</a><br>
+      <a href="#input">input</a><br>
+      <a href="#button">button</a><br>
+      <a href="#stats">stats line</a><br>
+      <a href="#table">table</a><br>
+      <a href="#expired">expired text</a><br>
+      <a href="#verb">verb</a><br>
+      <a href="#link">link</a><br>
+      <a href="#pagination">pagination</a><br>
+      <a href="#cursor">cursor blink</a><br>
+      <a href="#status-icons">status icons</a><br>
+    </nav>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="wordmark">
+      <h2 class="cmp-name">wordmark</h2>
+      <div class="cmp-anchor">wordmark</div>
+      <p class="cmp-desc">ASCII figlet block-letter mark. Always lowercase, always includes <code>.com</code>. Optional <code>.rk-glow</code> for CRT halo.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+<pre class="rk-wordmark rk-glow" aria-label="rpkilog.com">            _    _ _                                    
+ _ __ _ __ | | _(_) | ___   __ _      ___ ___  _ __ ___  
+| '__| '_ \| |/ / | |/ _ \ / _` |    / __/ _ \| '_ ` _ \ 
+| |  | |_) |   &lt;| | | (_) | (_| | _ | (_| (_) | | | | | |
+|_|  | .__/|_|\_\_|_|\___/ \__, |(_) \___\___/|_| |_| |_|
+     |_|                   |___/                         </pre>
+      </div>
+<pre class="src">&lt;pre class="rk-wordmark rk-glow" aria-label="rpkilog.com"&gt;
+            _    _ _                                    
+ _ __ _ __ | | _(_) | ___   __ _      ___ ___  _ __ ___  
+... (see assets/wordmark-figlet.txt)
+&lt;/pre&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="lede">
+      <h2 class="cmp-name">lede</h2>
+      <div class="cmp-anchor">lede</div>
+      <p class="cmp-desc">The intro copy block at the top of rpkilog.com. Four short paragraphs. State → ask → credit → ask → thanks. Voice is sysadmin-direct.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <section class="rk-lede-panel">
+          <p><strong>rpkilog.com</strong> is available for use, but please consider it a work-in-progress!
+            The source is available on <a class="rk-link" href="#">GitHub: jeffsw/rpkilog</a>.</p>
+          <p>Thanks to Job Snijders for making his VRP cache snapshots available.</p>
+          <p>This service runs on AWS. If you work there and can help get this project sponsored,
+            please reach out <a class="rk-link" href="#">by email</a>.</p>
+          <p>Thanks!</p>
+        </section>
+      </div>
+<pre class="src">&lt;section class="rk-lede-panel"&gt;
+  &lt;p&gt;&lt;strong&gt;rpkilog.com&lt;/strong&gt; is available for use, ...&lt;/p&gt;
+  &lt;p&gt;Thanks to Job Snijders for making his VRP cache snapshots available.&lt;/p&gt;
+  &lt;p&gt;This service runs on AWS. ...&lt;/p&gt;
+  &lt;p&gt;Thanks!&lt;/p&gt;
+&lt;/section&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="fieldset">
+      <h2 class="cmp-name">fieldset</h2>
+      <div class="cmp-anchor">fieldset</div>
+      <p class="cmp-desc">The signature container — native <code>&lt;fieldset&gt;</code> + <code>&lt;legend&gt;</code>. The legend overlapping the border is iconic; do not fake it with divs.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <fieldset class="rk-fieldset">
+          <legend>RPKI History Search</legend>
+          <div class="rk-form-row">
+            <label class="rk-label">Prefix</label>
+            <input class="rk-input" value="8.8.8.0/24" style="width:130px">
+            <label class="rk-label">ASN</label>
+            <input class="rk-input" style="width:68px">
+            <button class="rk-btn" type="button">Search</button>
+          </div>
+        </fieldset>
+      </div>
+<pre class="src">&lt;fieldset class="rk-fieldset"&gt;
+  &lt;legend&gt;RPKI History Search&lt;/legend&gt;
+  &lt;div class="rk-form-row"&gt;
+    &lt;label class="rk-label"&gt;Prefix&lt;/label&gt;
+    &lt;input class="rk-input" value="8.8.8.0/24"&gt;
+    &lt;button class="rk-btn" type="submit"&gt;Search&lt;/button&gt;
+  &lt;/div&gt;
+&lt;/fieldset&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="input">
+      <h2 class="cmp-name">input</h2>
+      <div class="cmp-anchor">input</div>
+      <p class="cmp-desc">Text input. Black bg, 1px green border, amber on focus. Use <code>style="width:Npx"</code> inline for per-field widths (matches existing rpkilog layout).</p>
+      <div class="demo">
+        <div class="demo-label">rendered · default / focused / disabled</div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <input class="rk-input" value="8.8.8.0/24" style="width:130px">
+          <input class="rk-input" value="rpkilog.com" style="width:130px;border-color:var(--rk-amber-500)">
+          <input class="rk-input" value="—" style="width:60px" disabled>
+        </div>
+      </div>
+<pre class="src">&lt;input class="rk-input" type="text" value="8.8.8.0/24"&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="button">
+      <h2 class="cmp-name">button</h2>
+      <div class="cmp-anchor">button</div>
+      <p class="cmp-desc">Mechanical. 0ms transitions. Hover inverts (black text on solid green). Active gets a 1px inset border.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <button class="rk-btn" type="button">Search</button>
+          <button class="rk-btn" type="button" disabled>Disabled</button>
+        </div>
+      </div>
+<pre class="src">&lt;button class="rk-btn" type="submit"&gt;Search&lt;/button&gt;
+&lt;button class="rk-btn" type="button" disabled&gt;Disabled&lt;/button&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="stats">
+      <h2 class="cmp-name">stats line</h2>
+      <div class="cmp-anchor">stats</div>
+      <p class="cmp-desc">The dim center-aligned <code>took / shards / hits</code> line above results. Dim green, 12px.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <div class="rk-stats">took: 203ms&nbsp;&nbsp;shards: 162&nbsp;&nbsp;hits: 1,775</div>
+      </div>
+<pre class="src">&lt;div class="rk-stats"&gt;took: 203ms&amp;nbsp;&amp;nbsp;shards: 162&amp;nbsp;&amp;nbsp;hits: 1,775&lt;/div&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="table">
+      <h2 class="cmp-name">table</h2>
+      <div class="cmp-anchor">table</div>
+      <p class="cmp-desc">Result rows. Even rows get the brown stripe, hover brightens. No outer border. Cells are tight (3px / 10px).</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <table class="rk-table">
+          <thead><tr>
+            <th>prefix</th><th class="rk-right">maxLength</th><th>asn</th>
+            <th>ta</th><th>expires</th><th>verb</th><th>observation_timestamp</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td><a class="rk-link" href="#">8.8.8.0/24</a></td>
+              <td class="rk-right">24</td>
+              <td><a class="rk-link" href="#">15169</a></td>
+              <td>arin</td>
+              <td><span class="rk-expired">2026-05-25T14:00:00Z</span><br><a class="rk-link" href="#">2026-05-26T21:00:00Z</a></td>
+              <td><span class="rk-verb">REPLACE</span></td>
+              <td>2026-05-24T14:14:07Z</td>
+            </tr>
+            <tr>
+              <td><a class="rk-link" href="#">8.8.8.0/24</a></td>
+              <td class="rk-right">24</td>
+              <td><a class="rk-link" href="#">15169</a></td>
+              <td>arin</td>
+              <td><span class="rk-expired">2026-05-24T22:00:00Z</span><br><a class="rk-link" href="#">2026-05-25T14:00:00Z</a></td>
+              <td><span class="rk-verb">REPLACE</span></td>
+              <td>2026-05-23T22:10:15Z</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+<pre class="src">&lt;table class="rk-table"&gt;
+  &lt;thead&gt;&lt;tr&gt;
+    &lt;th&gt;prefix&lt;/th&gt;&lt;th class="rk-right"&gt;maxLength&lt;/th&gt;...
+  &lt;/tr&gt;&lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;&lt;a class="rk-link" href="#"&gt;8.8.8.0/24&lt;/a&gt;&lt;/td&gt;
+      &lt;td class="rk-right"&gt;24&lt;/td&gt;
+      &lt;td&gt;arin&lt;/td&gt;
+      &lt;td&gt;
+        &lt;span class="rk-expired"&gt;2026-05-25T14:00:00Z&lt;/span&gt;
+        &lt;br&gt;
+        &lt;a class="rk-link" href="#"&gt;2026-05-26T21:00:00Z&lt;/a&gt;
+      &lt;/td&gt;
+      &lt;td&gt;&lt;span class="rk-verb"&gt;REPLACE&lt;/span&gt;&lt;/td&gt;
+      &lt;td&gt;2026-05-24T14:14:07Z&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="expired">
+      <h2 class="cmp-name">expired text</h2>
+      <div class="cmp-anchor">expired</div>
+      <p class="cmp-desc">Strikethrough with red rule, dim-green text. For ROA expiry dates that have passed.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <span class="rk-expired">2026-05-25T14:00:00Z</span>
+      </div>
+<pre class="src">&lt;span class="rk-expired"&gt;2026-05-25T14:00:00Z&lt;/span&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="verb">
+      <h2 class="cmp-name">verb</h2>
+      <div class="cmp-anchor">verb</div>
+      <p class="cmp-desc">UPPERCASE protocol verbs from RPKI semantics. Bright green, 600 weight, wide tracking.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <span class="rk-verb">REPLACE</span>&nbsp;&nbsp;
+        <span class="rk-verb">INSERT</span>&nbsp;&nbsp;
+        <span class="rk-verb">DELETE</span>&nbsp;&nbsp;
+        <span class="rk-verb">EXPIRE</span>
+      </div>
+<pre class="src">&lt;span class="rk-verb"&gt;REPLACE&lt;/span&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="link">
+      <h2 class="cmp-name">link</h2>
+      <div class="cmp-anchor">link</div>
+      <p class="cmp-desc">Amber by default, flip to bright green on hover, underline always.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <a class="rk-link" href="#">github.com/jeffsw/rpkilog</a>
+      </div>
+<pre class="src">&lt;a class="rk-link" href="..."&gt;github.com/jeffsw/rpkilog&lt;/a&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="pagination">
+      <h2 class="cmp-name">pagination</h2>
+      <div class="cmp-anchor">pagination</div>
+      <p class="cmp-desc">Flat row of amber page numbers. Current page is bright green, no underline. <code>data-page</code> attrs handle click delegation.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <div class="rk-pagination">
+          <div class="rk-pagination-label">Page:</div>
+          <div class="rk-pagination-pages">
+            <a href="#" data-page="0" class="rk-current">0</a>
+            <a href="#" data-page="1">1</a>
+            <a href="#" data-page="2">2</a>
+            <a href="#" data-page="3">3</a>
+            <a href="#" data-page="4">4</a>
+            <a href="#" data-page="5">5</a>
+            <a href="#" data-page="6">6</a>
+            <a href="#" data-page="7">7</a>
+            <a href="#" data-page="8">8</a>
+            <a href="#" data-page="9">9</a>
+            <a href="#" data-page="10">10</a>
+          </div>
+        </div>
+      </div>
+<pre class="src">&lt;div class="rk-pagination"&gt;
+  &lt;div class="rk-pagination-label"&gt;Page:&lt;/div&gt;
+  &lt;div class="rk-pagination-pages"&gt;
+    &lt;a href="#" data-page="0" class="rk-current"&gt;0&lt;/a&gt;
+    &lt;a href="#" data-page="1"&gt;1&lt;/a&gt;
+    ...
+  &lt;/div&gt;
+&lt;/div&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="cursor">
+      <h2 class="cmp-name">cursor blink</h2>
+      <div class="cmp-anchor">cursor</div>
+      <p class="cmp-desc">The one permitted animation. Add <code>.rk-cursor-after</code> to any element; a 1s steps(2) block appears at the end.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <span class="rk-cursor-after">system: nominal</span>
+      </div>
+<pre class="src">&lt;span class="rk-cursor-after"&gt;system: nominal&lt;/span&gt;</pre>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="cmp" id="status-icons">
+      <h2 class="cmp-name">status icons</h2>
+      <div class="cmp-anchor">status-icons</div>
+      <p class="cmp-desc">Six color channels for redundant signaling. Use one channel per surface; never combine. Glyphs are Unicode geometric shapes — no icon font.</p>
+      <div class="demo">
+        <div class="demo-label">rendered</div>
+        <div style="display:grid;grid-template-columns:120px 1fr;gap:6px;align-items:center;font-size:18px;letter-spacing:6px;">
+          <div style="font-size:11px;color:var(--rk-fg-dim);letter-spacing:.08em;text-transform:uppercase;">phosphor</div><div style="color:#33cc66">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+          <div style="font-size:11px;color:var(--rk-fg-dim);letter-spacing:.08em;text-transform:uppercase;">blue</div><div style="color:#3399ff">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+          <div style="font-size:11px;color:var(--rk-fg-dim);letter-spacing:.08em;text-transform:uppercase;">yellow</div><div style="color:#ffcc33">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+          <div style="font-size:11px;color:var(--rk-fg-dim);letter-spacing:.08em;text-transform:uppercase;">gray</div><div style="color:#8a948a">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+          <div style="font-size:11px;color:var(--rk-fg-dim);letter-spacing:.08em;text-transform:uppercase;">red</div><div style="color:#ff3a3a">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+          <div style="font-size:11px;color:var(--rk-fg-dim);letter-spacing:.08em;text-transform:uppercase;">fuchsia</div><div style="color:#ff44bb">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+        </div>
+      </div>
+<pre class="src">&lt;span style="color: var(--rk-blue)"&gt;●&lt;/span&gt;       &lt;!-- info     --&gt;
+&lt;span style="color: var(--rk-yellow)"&gt;●&lt;/span&gt;     &lt;!-- warning  --&gt;
+&lt;span style="color: var(--rk-gray)"&gt;●&lt;/span&gt;       &lt;!-- inactive --&gt;
+&lt;span style="color: var(--rk-red)"&gt;●&lt;/span&gt;        &lt;!-- error    --&gt;
+&lt;span style="color: var(--rk-fuchsia)"&gt;●&lt;/span&gt;    &lt;!-- attention --&gt;</pre>
+    </section>
+
+  </div>
+</body>
+</html>

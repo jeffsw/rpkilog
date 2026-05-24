@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Motion — Tokens</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  table{border-collapse:collapse;font-size:12px;width:100%;}
+  td{padding:5px 8px;}
+  td:nth-child(1){color:var(--rk-fg-dim);width:140px;}
+  td:nth-child(2){color:var(--rk-fg);width:90px;}
+  td:nth-child(3){color:var(--rk-fg-dim);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .blink{animation:b 1s steps(2) infinite;color:var(--rk-fg);}
+  @keyframes b{0%,49%{opacity:1}50%,100%{opacity:0}}
+</style></head><body><div class="card">
+<div class="title">motion · terminals are instant</div>
+<table>
+<tr><td>--rk-dur-instant</td><td>0ms</td><td>buttons · table updates · the default</td></tr>
+<tr><td>--rk-dur-fast</td><td>80ms</td><td>link color flip</td></tr>
+<tr><td>--rk-dur-base</td><td>120ms</td><td>maximum permitted duration</td></tr>
+<tr><td>--rk-ease</td><td>linear</td><td>only easing. never cubic.</td></tr>
+<tr><td>cursor blink</td><td>1s steps(2)</td><td><span class="blink">█</span> in the lede + inputs</td></tr>
+</table>
+</div></body></html>

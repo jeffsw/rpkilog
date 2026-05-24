@@ -1,0 +1,56 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Iconography</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .row{display:flex;gap:24px;align-items:center;margin-bottom:8px;flex-wrap:wrap;}
+  .lbl{font-size:11px;color:var(--rk-fg-dim);text-transform:uppercase;letter-spacing:.08em;width:90px;flex:none;}
+  .glyphs{font-size:18px;letter-spacing:6px;line-height:1;}
+  .glyphs-sm{font-size:14px;letter-spacing:2px;color:var(--rk-fg);}
+  .box{font-family:ui-monospace,"Courier New",monospace;color:var(--rk-fg);line-height:1;}
+  .note{font-size:11px;color:var(--rk-fg-dim);margin-top:10px;line-height:1.5;}
+  .compare{display:grid;grid-template-columns:140px 1fr 70px;row-gap:6px;column-gap:16px;align-items:center;margin-bottom:12px;}
+  .stack-lbl{font-size:10px;color:var(--rk-fg-dim);text-transform:uppercase;letter-spacing:.08em;}
+  .hex{font-size:10px;color:var(--rk-fg-dim);text-align:right;font-variant-numeric:tabular-nums;}
+</style></head><body><div class="card">
+<div class="title">iconography · status palette · pick one channel per surface</div>
+
+<div class="compare">
+  <div class="stack-lbl">phosphor · primary</div>
+  <div class="glyphs" style="color:#33cc66">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+  <div class="hex">#33cc66</div>
+
+  <div class="stack-lbl">blue · alt signal</div>
+  <div class="glyphs" style="color:#3399ff">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+  <div class="hex">#3399ff</div>
+
+  <div class="stack-lbl">yellow · warning</div>
+  <div class="glyphs" style="color:#ffcc33">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+  <div class="hex">#ffcc33</div>
+
+  <div class="stack-lbl">gray · inactive</div>
+  <div class="glyphs" style="color:#8a948a">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+  <div class="hex">#8a948a</div>
+
+  <div class="stack-lbl">red · error</div>
+  <div class="glyphs" style="color:#ff3a3a">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+  <div class="hex">#ff3a3a</div>
+
+  <div class="stack-lbl">fuchsia · attention</div>
+  <div class="glyphs" style="color:#ff44bb">● ○ ■ □ ▶ ▼ ◀ ▲ ✓ ✗</div>
+  <div class="hex">#ff44bb</div>
+</div>
+
+<div class="row"><span class="lbl">box draw</span>
+  <pre class="box" style="margin:0">┌──────┐  ╔══════╗
+│ rpki │  ║ rpki ║
+└──────┘  ╚══════╝</pre></div>
+
+<div class="row"><span class="lbl">tags</span><span class="glyphs-sm">[search]&nbsp;&nbsp;[expand]&nbsp;&nbsp;[delete]&nbsp;&nbsp;[arin]</span></div>
+
+<div class="note">
+  Six channels, BBS-palette grounded. Yellow #ffcc33 is more saturated than the link amber #e6d24a so it reads as "alert" not "link". Red #ff3a3a leans warm-orange; fuchsia #ff44bb leans cool-pink — distinct hue families even for protanopia/deuteranopia. Never combine two channels in the same view; use status icons as a redundant signal alongside text.
+</div>
+</div></body></html>

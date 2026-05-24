@@ -1,0 +1,267 @@
+/* ============================================================
+   rpkilog Web — Vanilla UI Kit styles
+   ----------------------------------------------------------------
+   Component-scoped classes that compose the rpkilog look using
+   tokens from colors_and_type.css. Use these class names directly
+   on your production HTML — no framework, no build step.
+   ============================================================ */
+
+/* ----- Page shell ------------------------------------------------ */
+.rk-page {
+  max-width: var(--rk-page-max);
+  margin: 0 auto;
+  padding: 24px 24px 64px 24px;
+}
+
+.rk-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.rk-status-line {
+  color: var(--rk-fg-dim);
+  font-size: var(--rk-fs-xs);
+  letter-spacing: 0.06em;
+}
+
+.rk-page-footer {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--rk-border-dim);
+  color: var(--rk-fg-dim);
+  font-size: var(--rk-fs-2xs);
+  letter-spacing: 0.08em;
+}
+
+/* ----- ASCII wordmark ------------------------------------------- */
+.rk-wordmark {
+  font-family: ui-monospace, "Courier New", monospace;
+  color: var(--rk-fg);
+  font-size: 12px;
+  line-height: 1.05;
+  margin: 0;
+  padding: 0;
+  white-space: pre;
+}
+
+/* ----- Lede panel ----------------------------------------------- */
+.rk-lede-panel {
+  margin-bottom: 24px;
+  max-width: 1180px;
+}
+.rk-lede-panel p {
+  margin: 0 0 12px 0;
+  font-size: var(--rk-fs-md);
+  line-height: 1.5;
+  color: var(--rk-fg);
+}
+.rk-lede-panel p:last-child {
+  margin-bottom: 0;
+}
+.rk-lede-panel strong {
+  font-weight: 500;
+}
+
+/* ----- Search fieldset ------------------------------------------ */
+.rk-fieldset {
+  border: var(--rk-border-w) solid var(--rk-border);
+  padding: 6px 14px 10px 14px;
+  border-radius: var(--rk-radius);
+  margin: 0 0 6px 0;
+}
+.rk-fieldset > legend {
+  padding: 0 6px;
+  color: var(--rk-fg);
+  font-size: var(--rk-fs-sm);
+}
+.rk-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rk-label {
+  font-size: var(--rk-fs-sm);
+  color: var(--rk-fg);
+  font-family: var(--rk-font-mono);
+}
+
+/* ----- Text input ----------------------------------------------- */
+.rk-input {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-sm);
+  color: var(--rk-fg);
+  background: var(--rk-black);
+  border: var(--rk-border-w) solid var(--rk-border);
+  padding: 2px 6px;
+  border-radius: var(--rk-radius);
+  outline: none;
+  box-sizing: border-box;
+}
+.rk-input::placeholder {
+  color: var(--rk-fg-fainter);
+}
+.rk-input:focus,
+.rk-input:focus-visible {
+  border-color: var(--rk-amber-500);
+}
+.rk-input:disabled {
+  color: var(--rk-fg-fainter);
+  border-color: var(--rk-border-dim);
+}
+
+/* ----- Button --------------------------------------------------- */
+.rk-btn {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-sm);
+  font-weight: 500;
+  color: var(--rk-fg);
+  background: var(--rk-black);
+  border: var(--rk-border-w) solid var(--rk-border);
+  padding: 2px 14px;
+  cursor: pointer;
+  border-radius: var(--rk-radius);
+  transition: color var(--rk-dur-instant), background var(--rk-dur-instant);
+}
+.rk-btn:hover {
+  background: var(--rk-green-500);
+  color: var(--rk-black);
+}
+.rk-btn:active {
+  box-shadow: inset 0 0 0 1px var(--rk-fg);
+}
+.rk-btn:focus-visible {
+  outline: 2px solid var(--rk-focus);
+  outline-offset: 2px;
+}
+.rk-btn:disabled {
+  color: var(--rk-fg-fainter);
+  border-color: var(--rk-border-dim);
+  cursor: not-allowed;
+}
+.rk-btn:disabled:hover {
+  background: var(--rk-black);
+  color: var(--rk-fg-fainter);
+}
+
+/* ----- Stats line ----------------------------------------------- */
+.rk-stats {
+  text-align: center;
+  color: var(--rk-fg-dim);
+  font-size: var(--rk-fs-xs);
+  padding: 6px 0;
+}
+
+/* ----- Result table --------------------------------------------- */
+.rk-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--rk-fs-xs);
+  font-family: var(--rk-font-mono);
+}
+.rk-table th {
+  font-weight: 600;
+  text-align: left;
+  padding: 3px 10px;
+  color: var(--rk-fg);
+  border-bottom: var(--rk-border-w) solid var(--rk-border-dim);
+  white-space: nowrap;
+}
+.rk-table th.rk-right {
+  text-align: right;
+}
+.rk-table td {
+  padding: 3px 10px;
+  color: var(--rk-fg);
+  white-space: nowrap;
+  vertical-align: top;
+}
+.rk-table td.rk-right {
+  text-align: right;
+}
+.rk-table tbody tr:nth-child(even) {
+  background: var(--rk-stripe);
+}
+.rk-table tbody tr:hover {
+  background: var(--rk-stripe-hot);
+}
+
+/* ----- State helpers -------------------------------------------- */
+.rk-link {
+  color: var(--rk-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: color var(--rk-dur-fast) var(--rk-ease);
+}
+.rk-link:hover {
+  color: var(--rk-link-hover);
+}
+.rk-link:visited {
+  color: var(--rk-link-visited);
+}
+.rk-link:focus-visible {
+  outline: 2px solid var(--rk-focus);
+  outline-offset: 2px;
+}
+
+.rk-expired {
+  color: var(--rk-fg-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--rk-red);
+  text-decoration-thickness: 1px;
+}
+
+.rk-verb {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--rk-fg-hot);
+}
+
+/* ----- Pagination ----------------------------------------------- */
+.rk-pagination {
+  font-family: var(--rk-font-mono);
+  font-size: var(--rk-fs-xs);
+  color: var(--rk-fg);
+  margin-top: 10px;
+}
+.rk-pagination-label {
+  margin-bottom: 2px;
+}
+.rk-pagination-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+.rk-pagination-pages a {
+  color: var(--rk-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rk-pagination-pages a:hover {
+  color: var(--rk-amber-300);
+}
+.rk-pagination-pages a.rk-current {
+  color: var(--rk-fg-hot);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+/* ----- Cursor (optional flourish) ------------------------------- */
+.rk-cursor-after::after {
+  content: "█";
+  display: inline-block;
+  margin-left: 4px;
+  animation: rk-cursor-blink 1s steps(2) infinite;
+}
+@keyframes rk-cursor-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
