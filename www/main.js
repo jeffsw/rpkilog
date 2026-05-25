@@ -9,7 +9,7 @@ function check_for_deeplink_in_url (event) {
     // search form and invoke a query.  This allows sharing links right to a set of search results.
 
     let url = new URL(document.URL);
-    if (url.search.length == 0) {
+    if (url.search.length === 0) {
         return;
     }
     let params = new URLSearchParams(url.search);
@@ -223,10 +223,13 @@ function search_clicked (event) {
         }
         display_result_caption(json_body.took, json_body.hits.total.value, json_body._shards.total);
         display_history_entries(0);
-        window.history.pushState('', '', '/?' + get_params.toString());
+        window.history.pushState('', '', '?' + get_params.toString());
     });
 };
 
 addEventListener('DOMContentLoaded', get_config_from_html);
 document.querySelector("#rpki_history_search_button").addEventListener("click", search_clicked);
+document.querySelector("fieldset").addEventListener('keydown', function(event) {
+    if (event.key === 'Enter') search_clicked(event);
+});
 addEventListener('DOMContentLoaded', check_for_deeplink_in_url);
