@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" class="rk-root">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rpkilog — RPKI History Search (vanilla)</title>
+  <link rel="stylesheet" href="../../colors_and_type.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    html, body {
+      background: var(--rk-black);
+      color: var(--rk-fg);
+      font-family: var(--rk-font-mono);
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  <main class="rk-page">
+
+    <header class="rk-page-head">
+      <pre class="rk-wordmark rk-glow" aria-label="rpkilog.com">            _    _ _                                    
+ _ __ _ __ | | _(_) | ___   __ _      ___ ___  _ __ ___  
+| '__| '_ \| |/ / | |/ _ \ / _` |    / __/ _ \| '_ ` _ \ 
+| |  | |_) |   &lt;| | | (_) | (_| | _ | (_| (_) | | | | | |
+|_|  | .__/|_|\_\_|_|\___/ \__, |(_) \___\___/|_| |_| |_|
+     |_|                   |___/                         </pre>
+      <div class="rk-status-line rk-cursor-after">
+        system: nominal &nbsp;·&nbsp; trust anchors: arin ripe apnic lacnic afrinic
+      </div>
+    </header>
+
+    <section class="rk-lede-panel">
+      <p>
+        <strong>rpkilog.com</strong> is available for use, but please consider it a work-in-progress!
+        There is an HTTP API but it should not yet be considered stable/supported.
+        The source is available on
+        <a class="rk-link" href="https://github.com/jeffsw/rpkilog" target="_blank" rel="noreferrer">GitHub: jeffsw/rpkilog</a>.
+        Please give me a star if this helps you.
+      </p>
+      <p>Thanks to Job Snijders for making his VRP cache snapshots available.</p>
+      <p>
+        This service runs on AWS. If you work there and can help get this project sponsored,
+        please reach out <a class="rk-link" href="mailto:hello@rpkilog.com">by email</a>.
+      </p>
+      <p>Thanks!</p>
+    </section>
+
+    <form id="rk-search-form">
+      <fieldset class="rk-fieldset">
+        <legend>RPKI History Search</legend>
+        <div class="rk-form-row">
+          <label class="rk-label" for="rk-input-prefix">Prefix</label>
+          <input class="rk-input" id="rk-input-prefix" type="text" value="8.8.8.0/24" style="width:130px"
+                 spellcheck="false" autocomplete="off" />
+
+          <label class="rk-label" for="rk-input-asn">ASN</label>
+          <input class="rk-input" id="rk-input-asn" type="text" style="width:68px"
+                 spellcheck="false" autocomplete="off" />
+
+          <label class="rk-label" for="rk-input-from">Observed Date/Time Range From</label>
+          <input class="rk-input" id="rk-input-from" type="text"
+                 value="01 / 01 / 2020 ,  12 : 00 AM" style="width:190px" />
+
+          <label class="rk-label" for="rk-input-to">To</label>
+          <input class="rk-input" id="rk-input-to" type="text"
+                 value="01 / 01 / 2038 ,  12 : 00 AM" style="width:190px" />
+
+          <button class="rk-btn" type="submit">Search</button>
+
+          <label class="rk-label" for="rk-input-perpage">Display Entries/Page</label>
+          <input class="rk-input" id="rk-input-perpage" type="text" value="20" style="width:44px" />
+        </div>
+      </fieldset>
+    </form>
+
+    <div id="rk-results"></div>
+    <div id="rk-pagination"></div>
+
+    <footer class="rk-page-footer">
+      rpkilog &mdash; jeffsw/rpkilog &mdash; work-in-progress &mdash; thanks!
+    </footer>
+
+  </main>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

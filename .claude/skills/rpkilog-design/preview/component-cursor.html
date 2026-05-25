@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Blinking Cursor</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .demo{font-family:var(--rk-font-display);font-size:48px;line-height:1.05;color:var(--rk-fg);}
+  .cur::after{content:"█";display:inline-block;margin-left:4px;animation:b 1s steps(2) infinite;}
+  @keyframes b{0%,49%{opacity:1}50%,100%{opacity:0}}
+  .small{font-family:var(--rk-font-mono);font-size:14px;}
+  .note{font-size:11px;color:var(--rk-fg-dim);margin-top:10px;}
+</style></head><body><div class="card">
+<div class="title">cursor · the one permitted animation</div>
+<div class="demo cur">rpkilog</div>
+<div class="small cur" style="margin-top:8px">> _</div>
+<div class="note">.rk-cursor on any element. 1s steps(2). Use on the lede or active input.</div>
+</div></body></html>

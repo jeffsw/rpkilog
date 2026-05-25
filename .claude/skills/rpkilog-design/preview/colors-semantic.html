@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Colors — Semantic</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  table{border-collapse:collapse;width:100%;font-size:12px;}
+  td{padding:3px 8px;}
+  td:nth-child(1){color:var(--rk-fg-dim);width:130px;}
+  td:nth-child(2){color:var(--rk-fg);width:150px;}
+  td:nth-child(3){width:50px;}
+  td:nth-child(4){color:var(--rk-fg-dim);}
+  .chip{display:inline-block;width:36px;height:12px;border:1px solid var(--rk-border-dim);}
+</style></head><body><div class="card">
+<div class="title">semantic mapping</div>
+<table>
+<tr><td>--rk-bg</td><td>--rk-black</td><td><span class="chip" style="background:#000"></span></td><td>page bg</td></tr>
+<tr><td>--rk-fg</td><td>--rk-green-500</td><td><span class="chip" style="background:#33cc66"></span></td><td>body / cells</td></tr>
+<tr><td>--rk-fg-dim</td><td>--rk-green-600</td><td><span class="chip" style="background:#2aa855"></span></td><td>captions / meta</td></tr>
+<tr><td>--rk-link</td><td>--rk-amber-500</td><td><span class="chip" style="background:#e6d24a"></span></td><td>all anchors</td></tr>
+<tr><td>--rk-focus</td><td>--rk-amber-500</td><td><span class="chip" style="background:#e6d24a"></span></td><td>keyboard focus</td></tr>
+<tr><td>--rk-info</td><td>--rk-blue</td><td><span class="chip" style="background:#3399ff"></span></td><td>info / alt signal</td></tr>
+<tr><td>--rk-warning</td><td>--rk-yellow</td><td><span class="chip" style="background:#ffcc33"></span></td><td>warning / pending</td></tr>
+<tr><td>--rk-muted</td><td>--rk-gray</td><td><span class="chip" style="background:#8a948a"></span></td><td>inactive / disabled</td></tr>
+<tr><td>--rk-danger</td><td>--rk-red</td><td><span class="chip" style="background:#ff3a3a"></span></td><td>error / expired</td></tr>
+<tr><td>--rk-attention</td><td>--rk-fuchsia</td><td><span class="chip" style="background:#ff44bb"></span></td><td>attention / unusual</td></tr>
+</table>
+</div></body></html>

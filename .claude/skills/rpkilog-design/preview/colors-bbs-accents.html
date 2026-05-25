@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Colors — Legacy DOS Accents</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .swatches{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+  .sw{height:74px;padding:8px 10px;border:1px solid var(--rk-border-dim);display:flex;flex-direction:column;justify-content:space-between;}
+  .name{font-size:11px;letter-spacing:.08em;color:#000;font-weight:600;}
+  .hex{font-size:11px;color:#000;font-weight:600;}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .usage{margin-top:12px;font-size:11px;color:var(--rk-fg-dim);line-height:1.5;}
+</style></head><body><div class="card">
+<div class="title">legacy dos accents · cyan + magenta · borrow sparingly</div>
+<div class="swatches">
+  <div class="sw" style="background:#33cccc"><div class="name">cyan · info-alt</div><div class="hex">#33cccc</div></div>
+  <div class="sw" style="background:#cc33cc"><div class="name">magenta · debug</div><div class="hex">#cc33cc</div></div>
+</div>
+<div class="usage">Reserved for system-y context: cyan for installer/REPL banners, magenta for dev-only debug overlays. For real status signaling, use the six Status Channels card instead.</div>
+</div></body></html>

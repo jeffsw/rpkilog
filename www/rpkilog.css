@@ -1,12 +1,3 @@
-body {
-    background-color: #000;
-    color: rgb(13, 157, 42);
-}
-
-body a:visited, body a:link, body a:active {
-    color: #e4d802;
-}
-
 table.vrp_history {
     font-family: monospace;
     text-align: left;

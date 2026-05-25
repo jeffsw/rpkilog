@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Borders & Radii</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .row{display:flex;gap:14px;align-items:stretch;}
+  .box{padding:10px 14px;font-size:12px;color:var(--rk-fg);}
+  .b1{border:1px solid var(--rk-border-dim);}
+  .b2{border:1px solid var(--rk-border);}
+  .b3{border:1px dashed var(--rk-border);}
+  .b4{border:1px solid var(--rk-amber-500);}
+  .label{color:var(--rk-fg-dim);font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .note{font-size:11px;color:var(--rk-fg-dim);margin-top:10px;}
+</style></head><body><div class="card">
+<div class="title">borders · 1px only · radius 0 always</div>
+<div class="row">
+  <div><div class="label">border-dim</div><div class="box b1">hairline</div></div>
+  <div><div class="label">border</div><div class="box b2">default</div></div>
+  <div><div class="label">dashed</div><div class="box b3">divider</div></div>
+  <div><div class="label">amber (focus)</div><div class="box b4">focused</div></div>
+</div>
+<div class="note">border-radius: 0 everywhere. No rounding, no exceptions.</div>
+</div></body></html>

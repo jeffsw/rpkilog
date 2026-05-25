@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Colors — Status Channels</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;}
+  .sw{height:74px;padding:6px 8px;border:1px solid var(--rk-border-dim);display:flex;flex-direction:column;justify-content:space-between;}
+  .glyph{font-size:22px;color:#000;line-height:1;}
+  .name{font-size:10px;letter-spacing:.06em;color:#000;font-weight:600;}
+  .hex{font-size:10px;color:#000;font-weight:600;font-variant-numeric:tabular-nums;}
+  .note{font-size:11px;color:var(--rk-fg-dim);margin-top:10px;line-height:1.5;}
+</style></head><body><div class="card">
+<div class="title">status channels · six hues · use one channel per surface</div>
+<div class="grid">
+  <div class="sw" style="background:#33cc66"><div class="glyph">●</div><div><div class="name">phosphor</div><div class="hex">#33cc66</div></div></div>
+  <div class="sw" style="background:#3399ff"><div class="glyph">●</div><div><div class="name">blue</div><div class="hex">#3399ff</div></div></div>
+  <div class="sw" style="background:#ffcc33"><div class="glyph">●</div><div><div class="name">yellow</div><div class="hex">#ffcc33</div></div></div>
+  <div class="sw" style="background:#8a948a"><div class="glyph">●</div><div><div class="name">gray</div><div class="hex">#8a948a</div></div></div>
+  <div class="sw" style="background:#ff3a3a"><div class="glyph">●</div><div><div class="name">red</div><div class="hex">#ff3a3a</div></div></div>
+  <div class="sw" style="background:#ff44bb"><div class="glyph">●</div><div><div class="name">fuchsia</div><div class="hex">#ff44bb</div></div></div>
+</div>
+<div class="note">--rk-green-500 · --rk-blue · --rk-yellow · --rk-gray · --rk-red · --rk-fuchsia. Red & fuchsia are deliberately separated in hue so they remain distinct for protan/deutan vision.</div>
+</div></body></html>

@@ -62,3 +62,11 @@ The `type` argument accepts any valid [type constraint expression](https://devel
 and structural types `object({…})`, `tuple([…])`).  It is optional — omitting it allows any
 type — but adding it to module outputs improves validation and documentation for callers.
 
+## WWW UI
+
+The site UI (`www/`) uses a BBS / green-screen terminal design system.
+
+- Before making any UI changes, invoke the `rpkilog-design` skill. It loads design guidelines, color tokens, component patterns, and copy rules.
+- Design system component changes (colors, borders, spacing on `rk-*` classes) belong in `www/styles.css`. Do **not** add overrides in `www/rpkilog.css` — that file is for site-specific concerns only (JS-generated table markup, pagination spans, loading animation).
+- See the **WWW UI** section of `DEVNOTES.md` for an explanation of the three CSS files and how they layer.
+

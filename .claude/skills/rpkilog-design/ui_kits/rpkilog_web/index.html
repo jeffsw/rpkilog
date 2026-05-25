@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en" class="rk-root">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rpkilog — RPKI History Search</title>
+  <link rel="stylesheet" href="../../colors_and_type.css" />
+  <style>
+    html, body {
+      background: var(--rk-black);
+      color: var(--rk-fg);
+      font-family: var(--rk-font-mono);
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      padding: 24px 24px 64px 24px;
+      min-height: 100vh;
+    }
+    .rk-page {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+    .rk-wordmark-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .rk-wordmark-host { color: var(--rk-fg); }
+    .rk-status-line {
+      color: var(--rk-fg-dim);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+    }
+    .rk-cursor-after::after {
+      content: "█";
+      margin-left: 4px;
+      animation: rkc 1s steps(2) infinite;
+    }
+    @keyframes rkc { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+    a.rk-link { color: var(--rk-amber-500); text-decoration: underline; }
+    a.rk-link:hover { color: var(--rk-green-300); }
+    .rk-divider { color: var(--rk-fg-dim); margin: 18px 0 12px 0; font-size: 12px; }
+    .rk-page-footer {
+      margin-top: 28px;
+      padding-top: 14px;
+      border-top: 1px dashed var(--rk-border-dim);
+      color: var(--rk-fg-dim);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }
+  </style>
+
+  <!-- React -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <!-- Data + Components -->
+  <script src="data.js"></script>
+  <script type="text/babel" src="AsciiWordmark.jsx"></script>
+  <script type="text/babel" src="LedePanel.jsx"></script>
+  <script type="text/babel" src="Inputs.jsx"></script>
+  <script type="text/babel" src="SearchFieldset.jsx"></script>
+  <script type="text/babel" src="ResultsTable.jsx"></script>
+  <script type="text/babel" src="Pagination.jsx"></script>
+</head>
+<body>
+  <main class="rk-page" id="rk-app"></main>
+
+  <script type="text/babel">
+    function App() {
+      const [result, setResult] = React.useState(() =>
+        window.RpkilogData.search({ prefix: "8.8.8.0/24", asn: "" })
+      );
+      const [page, setPage] = React.useState(0);
+      const [perPage, setPerPage] = React.useState(20);
+
+      const onSearch = (q) => {
+        setResult(window.RpkilogData.search(q));
+        setPerPage(q.perPage || 20);
+        setPage(0);
+      };
+
+      const visibleRows = result.rows.slice(page * perPage, page * perPage + perPage);
+      // simulate pageCount the way an opensearch result would show
+      const pageCount = Math.min(50, Math.max(1, Math.ceil(result.hits / perPage)));
+
+      return (
+        <React.Fragment>
+          <div className="rk-wordmark-row">
+            <AsciiWordmark />
+            <div className="rk-status-line rk-cursor-after">
+              system: nominal &nbsp;·&nbsp; trust anchors: arin ripe apnic lacnic afrinic
+            </div>
+          </div>
+
+          <LedePanel />
+
+          <SearchFieldset onSearch={onSearch} />
+
+          <ResultsTable
+            rows={visibleRows}
+            took={result.took}
+            shards={result.shards}
+            hits={result.hits}
+          />
+
+          <Pagination
+            page={page}
+            pageCount={pageCount}
+            onChange={(p) => setPage(p)}
+          />
+
+          <div className="rk-page-footer">
+            rpkilog &mdash; jeffsw/rpkilog &mdash; work-in-progress &mdash; thanks!
+          </div>
+        </React.Fragment>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("rk-app"));
+    root.render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Glow / "Elevation"</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .row{display:flex;gap:20px;align-items:baseline;}
+  .lbl{font-size:11px;color:var(--rk-fg-dim);text-transform:uppercase;letter-spacing:.1em;width:80px;}
+  .specimen{font-family:var(--rk-font-display);font-size:36px;color:var(--rk-fg);}
+  .g-sm{text-shadow:0 0 2px currentColor;}
+  .g-md{text-shadow:0 0 4px currentColor;}
+  .g-lg{text-shadow:0 0 8px currentColor,0 0 16px currentColor;}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .note{font-size:11px;color:var(--rk-fg-dim);margin-top:10px;}
+</style></head><body><div class="card">
+<div class="title">glow · only "elevation" we use · no drop shadows</div>
+<div class="row"><span class="lbl">none</span><span class="specimen">rpkilog</span></div>
+<div class="row"><span class="lbl">glow-sm</span><span class="specimen g-sm">rpkilog</span></div>
+<div class="row"><span class="lbl">glow-md</span><span class="specimen g-md">rpkilog</span></div>
+<div class="row"><span class="lbl">glow-lg</span><span class="specimen g-lg">rpkilog</span></div>
+<div class="note">Apply via .rk-glow / .rk-glow-strong. Use sparingly on hero text only.</div>
+</div></body></html>

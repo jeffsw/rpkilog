@@ -1,3 +1,21 @@
+Do we# WWW UI
+
+## CSS files in `www/`
+
+Three CSS files are loaded in this order, each layer building on the previous:
+
+- **`colors_and_type.css`** — Design system tokens. All `--rk-*` CSS custom properties (colors, type scale, spacing, motion), font imports (VT323 + IBM Plex Mono via Google Fonts), and base semantic classes (`.rk-root`, `.rk-link`, `.rk-verb`, `.rk-expired`, etc.). Copied from the Claude Design output at `.claude/skills/rpkilog-design/colors_and_type.css`. Edit here to change global color or type tokens.
+
+- **`styles.css`** — Design system components. Class-scoped rules that compose the rpkilog look using tokens from `colors_and_type.css`: `rk-fieldset`, `rk-form-row`, `rk-label`, `rk-input`, `rk-btn`, `rk-table`, `rk-pagination`, etc. Copied from `.claude/skills/rpkilog-design/ui_kits/rpkilog_web_vanilla/styles.css`. Edit here to change component behavior or appearance.
+
+- **`rpkilog.css`** — Site-specific overrides. Table and row classes used by JS-generated markup (`vrp_history`), pagination span classes (`paginate_clickable`, `paginate_currently_displayed`), and the `workingDot` loading animation. Does **not** redefine anything already in the design system files above.
+
+## Design system source
+
+The Claude Design system lives at `.claude/skills/rpkilog-design/`. The files in `www/` are working copies — changes to component behavior belong in `www/styles.css`, not as overrides in `www/rpkilog.css`.
+
+---
+
 # Data source(s)
 
 job suggests fetching https://console.rpki-client.org/vrps.json every 5m

@@ -1,0 +1,27 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Text Inputs</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  .field{display:flex;flex-direction:column;}
+  .lbl{font-size:11px;color:var(--rk-fg);}
+  .ipt{font-family:var(--rk-font-mono);font-size:13px;color:var(--rk-fg);background:#000;border:1px solid var(--rk-border);padding:3px 6px;border-radius:0;width:140px;}
+  .ipt:focus{outline:none;border-color:var(--rk-amber-500);}
+  .lbl-row{display:flex;align-items:center;gap:8px;}
+  .placeholder{color:var(--rk-fg-fainter);}
+</style></head><body><div class="card">
+<div class="title">text inputs · 1px border · amber focus</div>
+<div class="row">
+  <div class="field"><div class="lbl-row"><span class="lbl">Prefix</span><input class="ipt" value="8.8.8.0/24"></div></div>
+  <div class="field"><div class="lbl-row"><span class="lbl">ASN</span><input class="ipt" placeholder="15169" style="width:80px"></div></div>
+  <div class="field"><div class="lbl-row"><span class="lbl">From</span><input class="ipt" type="text" value="2020-01-01" style="width:180px"></div></div>
+  <div class="field"><div class="lbl-row"><span class="lbl">Entries/Page</span><input class="ipt" value="20" style="width:48px"></div></div>
+</div>
+<div class="row" style="margin-top:0">
+  <div class="field"><div class="lbl-row"><span class="lbl">focused</span><input class="ipt" value="rpkilog.com" style="border-color:#e6d24a"></div></div>
+  <div class="field"><div class="lbl-row"><span class="lbl">disabled</span><input class="ipt" value="—" disabled style="color:#1f7a3d;border-color:#1a3320"></div></div>
+</div>
+</div></body></html>

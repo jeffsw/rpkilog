@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><title>Result Table</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--rk-black);}
+  .card{padding:18px 24px;font-family:var(--rk-font-mono);color:var(--rk-fg);}
+  .title{font-size:11px;color:var(--rk-fg-dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;}
+  table{border-collapse:collapse;font-size:12px;width:100%;}
+  th{font-weight:600;text-align:left;padding:3px 8px;color:var(--rk-fg);border-bottom:1px solid var(--rk-border-dim);}
+  td{padding:3px 8px;color:var(--rk-fg);}
+  tr.stripe{background:#3a2a1a;}
+  tr:hover{background:#4a3522;}
+  .expired{color:#2aa855;text-decoration:line-through;text-decoration-color:#e64a4a;}
+  .verb{color:#66ff99;font-weight:600;letter-spacing:.1em;}
+  .took{color:#2aa855;font-size:11px;text-align:center;padding:4px 0;}
+</style></head><body><div class="card">
+<div class="title">result table · alternating brown stripe · expired strikethrough</div>
+<div class="took">took: 203ms shards: 162 hits: 1775</div>
+<table>
+<tr><th>prefix</th><th>maxLength</th><th>asn</th><th>ta</th><th>expires</th><th>verb</th><th>observation_timestamp</th></tr>
+<tr class="stripe"><td>8.8.8.0/24</td><td>24</td><td>15169</td><td>arin</td><td><span class="expired">2026-05-25T14:00:00Z</span><br>2026-05-26T21:00:00Z</td><td class="verb">REPLACE</td><td>2026-05-24T14:14:07Z</td></tr>
+<tr><td>8.8.8.0/24</td><td>24</td><td>15169</td><td>arin</td><td>2026-05-24T22:00:00Z<br>2026-05-25T14:00:00Z</td><td class="verb">REPLACE</td><td>2026-05-23T22:10:15Z</td></tr>
+<tr class="stripe"><td>8.8.8.0/24</td><td>24</td><td>15169</td><td>arin</td><td><span class="expired">2026-05-24T14:00:00Z</span><br>2026-05-24T22:00:00Z</td><td class="verb">REPLACE</td><td>2026-05-23T21:12:33Z</td></tr>
+</table>
+</div></body></html>
