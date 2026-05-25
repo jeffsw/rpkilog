@@ -611,6 +611,43 @@ resource "aws_iam_policy" "github_ci" {
           "arn:aws:s3:::rpkilog-test-${data.aws_caller_identity.current.account_id}-us-east-1-an/*",
         ]
       },
+      {
+        Sid = "WwwS3Bucket"
+        Effect = "Allow",
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:DeleteObject*",
+          "s3:List*",
+          "s3:GetBucket*",
+          "s3:GetObject*",
+          "s3:PutBucketTagging",
+          "s3:PutObject*",
+          "s3:TagResource",
+          "s3:UntagResource",
+        ],
+        Resource = [
+          "arn:aws:s3:::rpkilog-www",
+          "arn:aws:s3:::rpkilog-www/*",
+        ]
+      },
+      {
+        Sid    = "WwwCloudFrontList"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:ListDistributions",
+        ]
+        Resource = ["*"]
+      },
+      {
+        Sid    = "WwwCloudFrontInvalidation"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:CreateInvalidation",
+        ]
+        Resource = [
+          "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${aws_cloudfront_distribution.rpkilog_com.id}",
+        ]
+      },
     ]
   })
 }
@@ -851,7 +888,17 @@ resource "aws_s3_bucket_versioning" "rpkilog_artifact" {
 resource "aws_s3_bucket_lifecycle_configuration" "rpkilog_artifact" {
   bucket = aws_s3_bucket.rpkilog_artifact.id
   rule {
-    id     = "1"
+    id = "1"
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 2
+    }
+    expiration {
+      days = 40
+    }
+    status = "Enabled"
+  }
+  rule {
+    id     = "2"
     status = "Enabled"
     noncurrent_version_expiration {
       newer_noncurrent_versions = "10"
@@ -893,6 +940,36 @@ resource "aws_s3_bucket_acl" "public_read" {
 
 resource "aws_s3_bucket" "rpkilog_www" {
   bucket = "rpkilog-www"
+}
+
+resource "aws_s3_bucket_versioning" "rpkilog_www" {
+  bucket = aws_s3_bucket.rpkilog_www.id
+  versioning_configuration {
+    status     = "Enabled"
+    mfa_delete = "Disabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "rpkilog_www" {
+  bucket = aws_s3_bucket.rpkilog_www.id
+  rule {
+    id = "1"
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 2
+    }
+    expiration {
+      days = 40
+    }
+    status = "Enabled"
+  }
+  rule {
+    id     = "2"
+    status = "Enabled"
+    noncurrent_version_expiration {
+      newer_noncurrent_versions = "10"
+      noncurrent_days           = 100
+    }
+  }
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "snapshot" {
