@@ -1,0 +1,77 @@
+#cloud-config
+%{~ if fqdn != null }
+fqdn: ${fqdn}
+prefer_fqdn_over_hostname: true
+%{~ endif }
+apt:
+  sources:
+    docker.list:
+      source: "deb [arch=amd64] https://download.docker.com/linux/ubuntu $RELEASE stable"
+      keyid: 7EA0A9C3F273FCD8
+bootcmd:
+  - |
+    sz=$(lsblk -b -d -n -o SIZE /dev/vda 2>/dev/null | awk '{print $1+0}')
+    if [ "$${sz:-0}" -lt 700000000000 ]; then
+      echo "cloud-init ABORT: /dev/vda is $${sz} bytes, expected >= 700GB (800GiB data disk). Disk assignment is wrong." | tee /dev/kmsg
+      systemctl poweroff --no-block
+      sleep 10
+    fi
+disk_setup:
+  # The Incus storage volume uses io.bus = "virtio-blk" so it appears as /dev/vda,
+  # separate from the OS disk (/dev/sda via virtio-scsi).  No ordering ambiguity.
+  /dev/vda:
+    layout: true
+    overwrite: false
+    table_type: gpt
+fs_setup:
+  - device: /dev/vda1
+    filesystem: ext4
+    label: opensearch-1-dat
+    overwrite: false
+mounts:
+  - [/dev/vda1, /data]
+package_reboot_if_required: true
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - docker-ce
+  - docker-ce-cli
+  - htop
+  - incus-agent
+  - openssh-server
+  - ssh-import-id
+ssh_pwauth: false
+users:
+  - name: opensearch
+    # uid 1000 matches the opensearch user inside the opensearchproject/opensearch container image,
+    # so host-side chown/chmod on /data/opensearch reflects correctly inside the container.
+    uid: 1000
+    gid: 1000
+    shell: /usr/sbin/nologin
+    lock_passwd: true
+    system: true
+  - name: jsw
+    groups: adm,docker,sudo
+    lock_passwd: false
+    plain_text_passwd: "${console_password_plaintext}"
+    shell: /usr/bin/bash
+    sudo: "ALL=(ALL) NOPASSWD: ALL"
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC4k8nVaS9Ns+8jZ1C97eUcOvkFw6NOXS8e4xxG6XEH1l9PDluOCxAqgCvdKxX9ZhFvwW1SCSWuN95WrM7u/9p0flOX7DZFYld053ClWxMZZ4ZtKj8XWnmDU4LLXSmUWaKddW9pHZHvxfEFu+wCcnUiJM4NgS4owfaIGC3IOIXVrxsoNuoKyTQS9pRa5+3sMC3rHK8oWPkleJGO+cs8AxuetRtHS/ZHwshsyI27ROC/nIxZ7ZeKXf3g/jxEpbxI9LNFnocuUmeoNpndBFYND1ujwiHZvoWxx4ByiTRDNJDHJWdnJpz8rOmnoHeHFqV8F/I5CRG9Dh7aq5vd9LWdrkqb jeffsw6@gmail.com boomer 2013-05-28
+write_files:
+  - path: /etc/profile.d/rpkilog_prompt.sh
+    permissions: '0644'
+    content: |4
+        PS1='\u@\H:\w\$ '
+  - path: /usr/local/bin/install_opensearch.sh
+    permissions: "0755"
+    content: |4
+        ${indent(8, file(script_install_opensearch))}
+  - path: /var/lib/cloud/scripts/per-once/100_install_opensearch.sh
+    permissions: "0755"
+    content: |4
+        #!/bin/bash -e
+        export OPENSEARCH_INITIAL_ADMIN_PASSWORD='${opensearch_admin_password}'
+        /usr/local/bin/install_opensearch.sh
