@@ -723,6 +723,92 @@ resource "aws_sqs_queue" "lambda_dlq_for_vrp_cache_diff" {
   message_retention_seconds = 1209600 # 14 days
 }
 
+resource "aws_sqs_queue" "snapshot_summary_dev" {
+  name                       = "snapshot_summary_dev"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue_policy" "snapshot_summary_dev" {
+  queue_url = aws_sqs_queue.snapshot_summary_dev.id
+  policy    = data.aws_iam_policy_document.sqs_snapshot_summary_sns_send.json
+}
+
+resource "aws_sqs_queue" "snapshot_summary_prod" {
+  name                       = "snapshot_summary_prod"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue_policy" "snapshot_summary_prod" {
+  queue_url = aws_sqs_queue.snapshot_summary_prod.id
+  policy    = data.aws_iam_policy_document.sqs_snapshot_summary_sns_send.json
+}
+
+data "aws_iam_policy_document" "sqs_snapshot_summary_sns_send" {
+  statement {
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [
+      aws_sqs_queue.snapshot_summary_dev.arn,
+      aws_sqs_queue.snapshot_summary_prod.arn,
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_sns_topic.snapshot_summary.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic" "snapshot_summary" {
+  name = "snapshot_summary"
+}
+
+data "aws_iam_policy_document" "sns_snapshot_summary_s3_publish" {
+  statement {
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.snapshot_summary.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_s3_bucket.rpkilog_snapshot_summary.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "snapshot_summary" {
+  arn    = aws_sns_topic.snapshot_summary.arn
+  policy = data.aws_iam_policy_document.sns_snapshot_summary_s3_publish.json
+}
+
+resource "aws_sns_topic_subscription" "snapshot_summary_dev" {
+  topic_arn = aws_sns_topic.snapshot_summary.arn
+  protocol  = "sqs"
+  endpoint  = aws_sqs_queue.snapshot_summary_dev.arn
+}
+
+resource "aws_sns_topic_subscription" "snapshot_summary_prod" {
+  topic_arn = aws_sns_topic.snapshot_summary.arn
+  protocol  = "sqs"
+  endpoint  = aws_sqs_queue.snapshot_summary_prod.arn
+}
+
+resource "aws_sns_topic_subscription" "vrp_cache_diff" {
+  topic_arn = aws_sns_topic.snapshot_summary.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.vrp_cache_diff.arn
+}
+
 ##############################
 # Cognito
 resource "aws_cognito_user_pool" "es" {
@@ -1074,6 +1160,14 @@ resource "aws_lambda_permission" "vrp_cache_diff" {
   principal     = "s3.amazonaws.com"
   source_arn    = aws_s3_bucket.rpkilog_snapshot_summary.arn
 }
+
+resource "aws_lambda_permission" "vrp_cache_diff_from_sns" {
+  statement_id  = "AllowExecutionFromSNS"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.vrp_cache_diff.id
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.snapshot_summary.arn
+}
 resource "aws_lambda_function_event_invoke_config" "vrp_cache_diff" {
   function_name          = aws_lambda_function.vrp_cache_diff.function_name
   maximum_retry_attempts = 0
@@ -1167,12 +1261,13 @@ resource "aws_lambda_function_url" "hapi" {
 # s3 bucket notifications
 resource "aws_s3_bucket_notification" "vrp_cache_diff" {
   bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.vrp_cache_diff.arn
-    events              = ["s3:ObjectCreated:*"]
+  topic {
+    topic_arn = aws_sns_topic.snapshot_summary.arn
+    events    = ["s3:ObjectCreated:*"]
   }
   depends_on = [
-    aws_lambda_permission.vrp_cache_diff
+    aws_lambda_permission.vrp_cache_diff,
+    aws_sns_topic_policy.snapshot_summary,
   ]
 }
 
