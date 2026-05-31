@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26052403'
+version = '0.26053002'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -37,6 +37,7 @@ dev = [
     'types-boto3[s3]',
     'build',
     'flake8',
+    'lambda-zip',
     'pytest',
 ]
 tests = [
@@ -49,6 +50,7 @@ dev = [
     'types-boto3[s3]',
     'build',
     'flake8',
+    'lambda-zip',
     'pytest',
 ]
 

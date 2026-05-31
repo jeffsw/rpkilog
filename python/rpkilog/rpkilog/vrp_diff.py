@@ -3,6 +3,7 @@ import argparse
 import bz2
 from collections import deque
 import getpass
+import importlib.metadata
 import json
 import logging
 import operator
@@ -485,18 +486,81 @@ class VrpDiff():
 
     @classmethod
     def aws_lambda_entry_point(cls, event, context):
+        """
+        Accept invocations from S3 or SNS when new RPKI snapshot-summary files are stored in S3.
+        
+        See below for AWS documentation on the envelope & message structures.  Note, S3 really does use
+        "eventSource" while SNS uses "EventSource."  When receiving messages via SNS the S3 events really
+        are serialized, so you have to do a json.loads().
+
+        S3 notification: https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html
+        SNS envelope: https://docs.aws.amazon.com/lambda/latest/dg/with-sns.html#sns-sample-event
+        
+        S3:
+            {
+                "Records": [
+                    {
+                        "eventSource": "aws:s3",
+                        "s3": {
+                            "bucket": {
+                                "name": "bucket-name-here"
+                            }
+                            "object": {
+                                "key": "object/key.here"
+                            }
+                        }
+                    }
+                ]
+            }
+ 
+        SNS:
+            {
+                "Records": [
+                    {
+                        "EventSource": "aws:sns",
+                        "Sns": {
+                            "Message": "json serialized message is here; json.loads() it"
+                        }
+                    }
+                ]
+            }
+        """
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         dst_bucket_name = os.getenv('diff_bucket')
-        src_bucket_name = event['Records'][0]['s3']['bucket']['name']
-        new_file_key = event['Records'][0]['s3']['object']['key']
-        metadata = cls.generic_entry_point(
-            src_bucket_name=src_bucket_name,
-            new_file_key=new_file_key,
-            diff_bucket_name=dst_bucket_name,
-        )
-        return metadata
+
+        s3_records = []
+
+        for outer_record in event['Records']:
+            if outer_record.get('EventSource') == 'aws:sns':
+                s3_notification = json.loads(outer_record['Sns']['Message'])
+                s3_records.extend(s3_notification['Records'])
+            else:
+                s3_records.append(outer_record)
+                
+        record_summary = []
+        for r in s3_records:
+            if r.get('eventSource', '') != 'aws:s3':
+                raise ValueError(f'unrecognized invocation event/argument data: {event}')
+            record_summary.append({'bucket': r['s3']['bucket']['name'], 'key': r['s3']['object']['key']})
+        logger.info(json.dumps({'s3_record_count': len(s3_records), 's3_records': record_summary}))
+        if len(s3_records) > 1:
+            logger.warning(f'Received {len(s3_records)} S3 notification records in one invocation; processing all.')
+
+        retval = []
+        for s3_record in s3_records:
+            src_bucket_name = s3_record['s3']['bucket']['name']
+            new_file_key = s3_record['s3']['object']['key']
+            result = cls.generic_entry_point(
+                src_bucket_name=src_bucket_name,
+                new_file_key=new_file_key,
+                diff_bucket_name=dst_bucket_name,
+            )
+            retval.append(result)
+        return retval
 
     @classmethod
     def aws_lambda_entry_point_import(cls, event, context):
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         es_bulk_batch_size = int(os.getenv('es_bulk_batch_size', 200))
         es_endpoint = os.getenv('es_endpoint')
         src_s3_bucket_name = event['Records'][0]['s3']['bucket']['name']
@@ -532,7 +596,12 @@ class VrpDiff():
         ag3.add_argument('--debugger', default=False, action='store_true', help='If specified, invoke pdb.set_break()')
         ag3.add_argument('--log-level', type=str, help='Log level.  Try CRITICAL, ERROR, INFO (default) or DEBUG.')
         args = vars(ap.parse_args())
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         logger.setLevel(args.get('log_level', 'INFO'))
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         if args['debugger']:
             import pdb
             pdb.set_trace()
@@ -697,10 +766,6 @@ class VrpDiff():
         '''
         Invoke by cli_entry_point or aws_lambda_entry_point.
         '''
-        logging.basicConfig(
-            datefmt='%Y-%m-%dT%H:%M:%S',
-            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
-        )
         realtime_initial = time.time()
         logger.info(F'Invoked for new_file_key={new_file_key}')
         s3 = boto3.client('s3')

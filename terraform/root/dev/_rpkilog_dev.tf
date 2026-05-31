@@ -14,11 +14,15 @@ terraform {
     }
     incus = {
       source  = "lxc/incus"
-      version = "~> 1.0.2"
+      version = "~> 1.1.0"
     }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.8.1"
+    }
+    opensearch = {
+      source  = "opensearch-project/opensearch"
+      version = "~> 2.3.2"
     }
   }
 }
@@ -60,6 +64,11 @@ data "aws_s3_bucket" "snapshot_summary" {
   bucket = var.snapshot_bucket_name
 }
 
+data "aws_route53_zone" "rpkilog_dev" {
+  name         = "rpkilog.dev"
+  private_zone = false
+}
+
 data "incus_storage_pool" "default" {
   name = "default"
 }
@@ -90,6 +99,39 @@ resource "random_password" "rpkiclient_2" {
   numeric = true
   special = false
   upper   = true
+}
+
+module "rpkiclient_uploader" {
+  source = "../../module/aws_iam_user_for_vm"
+  name   = "rpkiclient_uploader_${terraform.workspace}"
+}
+
+resource "aws_iam_policy" "rpkiclient_uploader" {
+  name = "rpkiclient_uploader_${terraform.workspace}"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:ListBucket",
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+          "s3:PutObjectRetention",
+          "s3:PutObjectTagging",
+        ],
+        Resource = [
+          data.aws_s3_bucket.snapshot_summary.arn,
+          "${data.aws_s3_bucket.snapshot_summary.arn}/*",
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "rpkiclient_uploader" {
+  user       = module.rpkiclient_uploader.user.name
+  policy_arn = aws_iam_policy.rpkiclient_uploader.arn
 }
 
 module "userdata_rpkiclient_2" {
