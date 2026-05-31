@@ -1,3 +1,9 @@
+"""
+Reads S3-event messages from an SQS queue and invokes a subprocess for each S3 object event.
+
+Originally written for Lambda DLQ redriving (lambda_dlq_for_vrp_cache_diff), where SQS messages
+carry a direct S3 event payload with 'Records' at the top level.
+"""
 import argparse
 import dataclasses
 import json
@@ -39,9 +45,22 @@ def receive_all_messages(sqs_client, queue_url):
 
 
 def s3_events_from_message(message):
-    """Yield (bucket_name, object_key, record) tuples extracted from an SQS message body."""
+    """Yield (bucket_name, object_key, record) tuples extracted from an SQS message body.
+
+    Handles two formats:
+    - Direct S3 event payload (Lambda DLQ): body has 'Records' at top level.
+    - SNS notification envelope (SNS-to-SQS fan-out): body has 'Type'=='Notification' and the
+      actual S3 event is in body['Message'] as a JSON string.
+    """
     body = json.loads(message['Body'])
-    for record in body.get('Records', []):
+    if body.get('Type') == 'Notification':
+        inner = json.loads(body['Message'])
+    else:
+        inner = body
+    if inner.get('Event') == 's3:TestEvent':
+        logger.info('Skipping S3 test event from bucket %s', inner.get('Bucket', '(unknown)'))
+        return
+    for record in inner.get('Records', []):
         bucket = record['s3']['bucket']['name']
         key = record['s3']['object']['key']
         yield bucket, key, record
