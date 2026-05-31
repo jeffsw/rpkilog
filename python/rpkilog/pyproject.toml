@@ -37,6 +37,7 @@ dev = [
     'types-boto3[s3]',
     'build',
     'flake8',
+    'lambda-zip',
     'pytest',
 ]
 tests = [
@@ -49,6 +50,7 @@ dev = [
     'types-boto3[s3]',
     'build',
     'flake8',
+    'lambda-zip',
     'pytest',
 ]
 
