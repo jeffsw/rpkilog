@@ -529,13 +529,12 @@ class VrpDiff():
 
         s3_records = []
 
-        if event['Records'].get('EventSource', '') == 'aws:sns':
-            logger.info('invocation came from SNS; de-serializing S3 inner-message')
-            for sns_event in event['Records']:
-                s3_notification = json.loads(sns_event['Sns']['Message'])
+        for outer_record in event['Records']:
+            if outer_record.get('EventSource') == 'aws:sns':
+                s3_notification = json.loads(outer_record['Sns']['Message'])
                 s3_records.extend(s3_notification['Records'])
-        else:
-            s3_records = event['Records']
+            else:
+                s3_records.append(outer_record)
                 
         record_summary = []
         for r in s3_records:

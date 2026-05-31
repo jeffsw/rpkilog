@@ -1,5 +1,5 @@
 provider "opensearch" {
-  url = "https://${aws_route53_record.opensearch_1_A.fqdn}:9200"
+  url      = "https://${aws_route53_record.opensearch_1_A.fqdn}:9200"
   insecure = true
   username = "admin"
   password = random_password.opensearch_1_admin.result
@@ -73,7 +73,7 @@ resource "incus_instance" "opensearch_1" {
       "io.bus" = "virtio-blk"
     }
   }
- wait_for {
+  wait_for {
     type = "ipv4"
   }
 }
@@ -93,22 +93,22 @@ resource "opensearch_cluster_settings" "opensearch_1" {
 resource "opensearch_index_template" "diff" {
   name = "diff"
   body = jsonencode({
-    index_patterns: [ "diff-*" ],
-    template: {
-      settings: {
-        index: {
-          number_of_shards: 1,
-          number_of_replicas: 1,
+    index_patterns : ["diff-*"],
+    template : {
+      settings : {
+        index : {
+          number_of_shards : 1,
+          number_of_replicas : 1,
         }
       }
-      mappings: {
-        properties: {
-          timestamp: {
-            type: "date",
-            "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis",
+      mappings : {
+        properties : {
+          timestamp : {
+            type : "date",
+            "format" : "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis",
           },
-          value: {
-            type: "double",
+          value : {
+            type : "double",
           }
         }
       }
