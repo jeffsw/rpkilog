@@ -560,18 +560,96 @@ class VrpDiff():
 
     @classmethod
     def aws_lambda_entry_point_import(cls, event, context):
+        """
+        Accept invocations from S3 (S3->Lambda), SNS (S3->SNS->Lambda), or SQS
+        (S3->SNS->SQS->Lambda) when new VRP diff files are stored in S3.
+
+        The direct S3->Lambda path delivers S3 event records directly.  The S3->SNS->Lambda path
+        wraps each S3 event in an SNS notification ('EventSource' == 'aws:sns'), whose Message is the
+        serialized S3 event.  The S3->SNS->SQS->Lambda path wraps that SNS notification in an SQS
+        record ('eventSource' == 'aws:sqs'), so the S3 event must be unwrapped twice
+        (SQS body -> SNS Message -> S3 Records).
+
+        S3 notification: https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html
+        SNS envelope: https://docs.aws.amazon.com/lambda/latest/dg/with-sns.html#sns-sample-event
+        SQS event: https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html
+
+        S3:
+            {
+                "Records": [
+                    {
+                        "eventSource": "aws:s3",
+                        "s3": {"bucket": {"name": "..."}, "object": {"key": "..."}}
+                    }
+                ]
+            }
+
+        SNS (Sns.Message is a serialized S3 event):
+            {
+                "Records": [
+                    {
+                        "EventSource": "aws:sns",
+                        "Sns": {"Message": "<serialized S3 event>"}
+                    }
+                ]
+            }
+
+        SQS (body is an SNS notification whose Message is a serialized S3 event):
+            {
+                "Records": [
+                    {
+                        "eventSource": "aws:sqs",
+                        "body": "{\\"Type\\": \\"Notification\\", \\"Message\\": \\"<serialized S3 event>\\"}"
+                    }
+                ]
+            }
+        """
         logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         es_bulk_batch_size = int(os.getenv('es_bulk_batch_size', 200))
         es_endpoint = os.getenv('es_endpoint')
-        src_s3_bucket_name = event['Records'][0]['s3']['bucket']['name']
-        src_s3_key = event['Records'][0]['s3']['object']['key']
-        result = cls.generic_entry_point_import(
-            es_bulk_batch_size=es_bulk_batch_size,
-            es_endpoint=es_endpoint,
-            src_s3_bucket_name=src_s3_bucket_name,
-            src_s3_key=src_s3_key,
-        )
-        return result
+
+        s3_records = []
+        for outer_record in event['Records']:
+            if outer_record.get('eventSource') == 'aws:sqs':
+                sqs_body = json.loads(outer_record['body'])
+                # When fed by S3->SNS->SQS, the SQS body is an SNS notification envelope whose
+                # Message is the serialized S3 event.  Otherwise treat the body as the S3 event.
+                if sqs_body.get('Type') == 'Notification':
+                    s3_notification = json.loads(sqs_body['Message'])
+                else:
+                    s3_notification = sqs_body
+            elif outer_record.get('EventSource') == 'aws:sns':
+                # S3 really does use lowercase "eventSource" while SNS uses "EventSource".
+                s3_notification = json.loads(outer_record['Sns']['Message'])
+            else:
+                s3_records.append(outer_record)
+                continue
+            if s3_notification.get('Event') == 's3:TestEvent':
+                logger.info('Skipping S3 test event from bucket %s', s3_notification.get('Bucket', '(unknown)'))
+                continue
+            s3_records.extend(s3_notification['Records'])
+
+        record_summary = []
+        for r in s3_records:
+            if r.get('eventSource', '') != 'aws:s3':
+                raise ValueError(f'unrecognized invocation event/argument data: {event}')
+            record_summary.append({'bucket': r['s3']['bucket']['name'], 'key': r['s3']['object']['key']})
+        logger.info(json.dumps({'s3_record_count': len(s3_records), 's3_records': record_summary}))
+        if len(s3_records) > 1:
+            logger.warning(f'Received {len(s3_records)} S3 notification records in one invocation; processing all.')
+
+        retval = []
+        for s3_record in s3_records:
+            src_s3_bucket_name = s3_record['s3']['bucket']['name']
+            src_s3_key = s3_record['s3']['object']['key']
+            result = cls.generic_entry_point_import(
+                es_bulk_batch_size=es_bulk_batch_size,
+                es_endpoint=es_endpoint,
+                src_s3_bucket_name=src_s3_bucket_name,
+                src_s3_key=src_s3_key,
+            )
+            retval.append(result)
+        return retval
 
     @classmethod
     def cli_entry_point(cls):
@@ -704,10 +782,15 @@ class VrpDiff():
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
         args = vars(ap.parse_args())
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         if 'debugger' in args:
             import pdb
             pdb.set_trace()
         logger.setLevel(args.get('log_level', 'INFO'))
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         for argname in ['all_date_min', 'all_date_max']:
             if argname in args:
                 # Add time zone information to the argument
@@ -752,6 +835,12 @@ class VrpDiff():
                 src_s3_key=args['key']
             )
             print(json.dumps(result))
+
+    @classmethod
+    def cli_entry_point_import_diff_from_sqs(cls):
+        """
+        """
+        pass
 
     @classmethod
     def generic_entry_point(
