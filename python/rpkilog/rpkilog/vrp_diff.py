@@ -525,6 +525,7 @@ class VrpDiff():
                 ]
             }
         """
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         dst_bucket_name = os.getenv('diff_bucket')
 
         s3_records = []
@@ -595,6 +596,10 @@ class VrpDiff():
         ag3.add_argument('--debugger', default=False, action='store_true', help='If specified, invoke pdb.set_break()')
         ag3.add_argument('--log-level', type=str, help='Log level.  Try CRITICAL, ERROR, INFO (default) or DEBUG.')
         args = vars(ap.parse_args())
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         logger.setLevel(args.get('log_level', 'INFO'))
         logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         if args['debugger']:
@@ -761,10 +766,6 @@ class VrpDiff():
         '''
         Invoke by cli_entry_point or aws_lambda_entry_point.
         '''
-        logging.basicConfig(
-            datefmt='%Y-%m-%dT%H:%M:%S',
-            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
-        )
         realtime_initial = time.time()
         logger.info(F'Invoked for new_file_key={new_file_key}')
         s3 = boto3.client('s3')
