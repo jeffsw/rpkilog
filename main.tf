@@ -1168,6 +1168,7 @@ resource "aws_lambda_permission" "vrp_cache_diff_from_sns" {
   principal     = "sns.amazonaws.com"
   source_arn    = aws_sns_topic.snapshot_summary.arn
 }
+
 resource "aws_lambda_function_event_invoke_config" "vrp_cache_diff" {
   function_name          = aws_lambda_function.vrp_cache_diff.function_name
   maximum_retry_attempts = 0

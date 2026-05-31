@@ -98,18 +98,21 @@ resource "opensearch_index_template" "diff" {
       settings : {
         index : {
           number_of_shards : 1,
-          number_of_replicas : 1,
+          number_of_replicas : 0,
         }
       }
       mappings : {
         properties : {
-          timestamp : {
-            type : "date",
-            "format" : "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis",
-          },
-          value : {
-            type : "double",
-          }
+          observation_timestamp : { type : "date", format : "strict_date_time_no_millis" },
+          verb                  : { type : "keyword" },
+          prefix                : { type : "ip_range" },
+          maxLength             : { type : "integer" },
+          asn                   : { type : "long" },
+          ta                    : { type : "keyword" },
+          old_expires           : { type : "date", format : "strict_date_time_no_millis" },
+          new_expires           : { type : "date", format : "strict_date_time_no_millis" },
+          old_roa               : { type : "object" },
+          new_roa               : { type : "object" },
         }
       }
     }
