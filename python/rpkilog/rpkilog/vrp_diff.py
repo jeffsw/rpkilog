@@ -534,6 +534,9 @@ class VrpDiff():
         for outer_record in event['Records']:
             if outer_record.get('EventSource') == 'aws:sns':
                 s3_notification = json.loads(outer_record['Sns']['Message'])
+                if s3_notification.get('Event') == 's3:TestEvent':
+                    logger.info('Skipping S3 test event from bucket %s', s3_notification.get('Bucket', '(unknown)'))
+                    continue
                 s3_records.extend(s3_notification['Records'])
             else:
                 s3_records.append(outer_record)
@@ -859,8 +862,8 @@ class VrpDiff():
                         help='S3 bucket containing diff files (e.g. rpkilog-diff)')
         ap.add_argument('--bulk-batch-size', type=int, default=200,
                         help='Number of records per OpenSearch _bulk operation (default: 200)')
-        ap.add_argument('--es-endpoint', required=True,
-                        help='OpenSearch endpoint hostname')
+        ap.add_argument('--es-endpoint',
+                        help='OpenSearch endpoint hostname (required unless --dry-run)')
         ap.add_argument('--max-message-count', type=int,
                         help='Stop after processing this many SQS messages')
         ap.add_argument('--dry-run', action='store_true', default=False,
@@ -877,6 +880,8 @@ class VrpDiff():
             pdb.set_trace()
         logger.setLevel(args.get('log_level', 'INFO'))
         logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
+        if not args['dry_run'] and 'es_endpoint' not in args:
+            ap.error('--es-endpoint is required unless --dry-run is set')
         if args['dry_run']:
             logger.info('Dry-run mode: SQS messages will not be deleted; OpenSearch will not be written')
 
