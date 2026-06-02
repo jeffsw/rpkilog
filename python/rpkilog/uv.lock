@@ -593,6 +593,7 @@ dev = [
     { name = "flake8" },
     { name = "lambda-zip" },
     { name = "pip" },
+    { name = "prek" },
     { name = "pytest" },
     { name = "types-boto3", extra = ["s3"] },
 ]
@@ -623,6 +624,7 @@ requires-dist = [
     { name = "netaddr" },
     { name = "opensearch-py" },
     { name = "pip", marker = "extra == 'dev'" },
+    { name = "prek", marker = "extra == 'dev'" },
     { name = "psutil" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'tests'" },
@@ -643,7 +645,7 @@ dev = [
     { name = "flake8" },
     { name = "lambda-zip" },
     { name = "pip" },
-    { name = "prek", specifier = ">=0.4.3" },
+    { name = "prek" },
     { name = "pytest" },
     { name = "types-boto3", extras = ["s3"] },
 ]

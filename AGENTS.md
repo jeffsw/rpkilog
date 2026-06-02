@@ -6,6 +6,10 @@
 
 Prefer bullet points over prose.
 
+### pre-commit hooks
+
+There are standard pre-commit hooks in this repository.  They can be invoked manually with: `uv run --directory python/rpkilog prek run` which is a good way to perform basic verifications after edits, too.
+
 ## Python
 
 ### Style Guide
@@ -69,4 +73,3 @@ The site UI (`www/`) uses a BBS / green-screen terminal design system.
 - Before making any UI changes, invoke the `rpkilog-design` skill. It loads design guidelines, color tokens, component patterns, and copy rules.
 - Design system component changes (colors, borders, spacing on `rk-*` classes) belong in `www/styles.css`. Do **not** add overrides in `www/rpkilog.css` — that file is for site-specific concerns only (JS-generated table markup, pagination spans, loading animation).
 - See the **WWW UI** section of `DEVNOTES.md` for an explanation of the three CSS files and how they layer.
-
