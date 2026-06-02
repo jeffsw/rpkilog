@@ -1244,6 +1244,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     ignore_changes = [filename]
   }
 }
+
 resource "aws_lambda_permission" "vrp_cache_diff" {
   statement_id  = "AllowExecutionFromS3Bucket"
   action        = "lambda:InvokeFunction"

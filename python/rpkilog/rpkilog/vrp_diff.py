@@ -655,7 +655,7 @@ class VrpDiff():
                 src_s3_key=src_s3_key,
             )
             retval.append(result)
-        logger.info(retval)
+        logger.info(json.dumps(retval))
         return retval
 
     @classmethod
