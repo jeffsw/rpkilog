@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26053101'
+version = '0.26060201'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -40,6 +40,7 @@ dev = [
     'lambda-zip',
     # pip is a dependency of lambda-zip but missing from its deps.  Need to fix in that package.
     'pip',
+    'prek',
     'pytest',
 ]
 tests = [
@@ -55,6 +56,7 @@ dev = [
     'lambda-zip',
     # pip is a dependency of lambda-zip but missing from its deps.  Need to fix in that package.
     'pip',
+    'prek',
     'pytest',
 ]
 

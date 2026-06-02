@@ -611,6 +611,8 @@ class VrpDiff():
         logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         es_bulk_batch_size = int(os.getenv('es_bulk_batch_size', 200))
         es_endpoint = os.getenv('es_endpoint')
+        if not es_endpoint:
+            raise RuntimeError('missing es_endpoint environment variable')
 
         s3_records = []
         for outer_record in event['Records']:
@@ -653,6 +655,7 @@ class VrpDiff():
                 src_s3_key=src_s3_key,
             )
             retval.append(result)
+        logger.info(retval)
         return retval
 
     @classmethod
@@ -1005,25 +1008,23 @@ class VrpDiff():
         es_endpoint:str,
         src_s3_bucket_name:str,
         src_s3_key:str,
-        es_bulk_batch_size:int=None,
+        es_bulk_batch_size:int=200,
         progress_bar_enable:bool=False,
         dry_run:bool=False,
     ):
-        '''
+        """
         Invoked by cli_entry_point_import or aws_lambda_entry_point_import
 
         Retrieve given vrp diff file from S3 and insert its records into ElasticSearch.
         When dry_run=True, S3 download and file parsing are performed but no OpenSearch calls
         are made and no index is created.  Returns 'records_would_insert' instead of
         'records_inserted' to make dry-run results distinguishable.
-        '''
+        """
         logging.basicConfig(
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
-        logging.getLogger('opensearch').setLevel(logging.WARNING)
-        if es_bulk_batch_size==None:
-            es_bulk_batch_size = 200
+        logging.getLogger('opensearch').setLevel(logging.INFO)
         realtime_initial = time.time()
         src_s3_path = Path(src_s3_key)
         if not '.json' in src_s3_path.suffixes:
@@ -1044,6 +1045,7 @@ class VrpDiff():
         else:
             raise ValueError(F'Invoked upon a file with a Path().suffix I cannot open: {diff_file_path}')
         diff_data = json.load(diff_file)
+        logger.info(f'diff contains {len(diff_data["vrp_diffs"])} records')
         records_count = 0
         if dry_run:
             records_count = len(diff_data['vrp_diffs'])
@@ -1096,6 +1098,8 @@ class VrpDiff():
         retdict = {
             count_key: records_count,
             'runtime': runtime,
+            'src_s3_bucket_name': src_s3_bucket_name,
+            'src_s3_key': src_s3_key,
         }
         return retdict
 
