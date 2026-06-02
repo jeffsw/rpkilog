@@ -26,6 +26,7 @@ from requests_aws4auth import AWS4Auth
 from tqdm import tqdm
 
 from rpkilog.collision_behavior import CollisionBehavior
+from rpkilog.process_snapshot_summary_queue import receive_all_messages, s3_events_from_message
 from rpkilog.roa import Roa
 from rpkilog.util import list_s3_object_previous
 
@@ -533,6 +534,9 @@ class VrpDiff():
         for outer_record in event['Records']:
             if outer_record.get('EventSource') == 'aws:sns':
                 s3_notification = json.loads(outer_record['Sns']['Message'])
+                if s3_notification.get('Event') == 's3:TestEvent':
+                    logger.info('Skipping S3 test event from bucket %s', s3_notification.get('Bucket', '(unknown)'))
+                    continue
                 s3_records.extend(s3_notification['Records'])
             else:
                 s3_records.append(outer_record)
@@ -560,18 +564,99 @@ class VrpDiff():
 
     @classmethod
     def aws_lambda_entry_point_import(cls, event, context):
+        """
+        Accept invocations from S3 (S3->Lambda), SNS (S3->SNS->Lambda), or SQS
+        (S3->SNS->SQS->Lambda) when new VRP diff files are stored in S3.
+
+        The direct S3->Lambda path delivers S3 event records directly.  The S3->SNS->Lambda path
+        wraps each S3 event in an SNS notification ('EventSource' == 'aws:sns'), whose Message is the
+        serialized S3 event.  The S3->SNS->SQS->Lambda path wraps that SNS notification in an SQS
+        record ('eventSource' == 'aws:sqs'), so the S3 event must be unwrapped twice
+        (SQS body -> SNS Message -> S3 Records).
+
+        S3 notification: https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html
+        SNS envelope: https://docs.aws.amazon.com/lambda/latest/dg/with-sns.html#sns-sample-event
+        SQS event: https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html
+
+        S3:
+            {
+                "Records": [
+                    {
+                        "eventSource": "aws:s3",
+                        "s3": {"bucket": {"name": "..."}, "object": {"key": "..."}}
+                    }
+                ]
+            }
+
+        SNS (Sns.Message is a serialized S3 event):
+            {
+                "Records": [
+                    {
+                        "EventSource": "aws:sns",
+                        "Sns": {"Message": "<serialized S3 event>"}
+                    }
+                ]
+            }
+
+        SQS (body is an SNS notification whose Message is a serialized S3 event):
+            {
+                "Records": [
+                    {
+                        "eventSource": "aws:sqs",
+                        "body": "{\\"Type\\": \\"Notification\\", \\"Message\\": \\"<serialized S3 event>\\"}"
+                    }
+                ]
+            }
+        """
         logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         es_bulk_batch_size = int(os.getenv('es_bulk_batch_size', 200))
         es_endpoint = os.getenv('es_endpoint')
-        src_s3_bucket_name = event['Records'][0]['s3']['bucket']['name']
-        src_s3_key = event['Records'][0]['s3']['object']['key']
-        result = cls.generic_entry_point_import(
-            es_bulk_batch_size=es_bulk_batch_size,
-            es_endpoint=es_endpoint,
-            src_s3_bucket_name=src_s3_bucket_name,
-            src_s3_key=src_s3_key,
-        )
-        return result
+        if not es_endpoint:
+            raise RuntimeError('missing es_endpoint environment variable')
+
+        s3_records = []
+        for outer_record in event['Records']:
+            if outer_record.get('eventSource') == 'aws:sqs':
+                sqs_body = json.loads(outer_record['body'])
+                # When fed by S3->SNS->SQS, the SQS body is an SNS notification envelope whose
+                # Message is the serialized S3 event.  Otherwise treat the body as the S3 event.
+                if sqs_body.get('Type') == 'Notification':
+                    s3_notification = json.loads(sqs_body['Message'])
+                else:
+                    s3_notification = sqs_body
+            elif outer_record.get('EventSource') == 'aws:sns':
+                # S3 really does use lowercase "eventSource" while SNS uses "EventSource".
+                s3_notification = json.loads(outer_record['Sns']['Message'])
+            else:
+                s3_records.append(outer_record)
+                continue
+            if s3_notification.get('Event') == 's3:TestEvent':
+                logger.info('Skipping S3 test event from bucket %s', s3_notification.get('Bucket', '(unknown)'))
+                continue
+            s3_records.extend(s3_notification['Records'])
+
+        record_summary = []
+        for r in s3_records:
+            if r.get('eventSource', '') != 'aws:s3':
+                raise ValueError(f'unrecognized invocation event/argument data: {event}')
+            record_summary.append({'bucket': r['s3']['bucket']['name'], 'key': r['s3']['object']['key']})
+        logger.info(json.dumps({'s3_record_count': len(s3_records), 's3_records': record_summary}))
+        if len(s3_records) > 1:
+            logger.warning(f'Received {len(s3_records)} S3 notification records in one invocation; processing all.')
+
+        retval = []
+        for s3_record in s3_records:
+            src_s3_bucket_name = s3_record['s3']['bucket']['name']
+            src_s3_key = s3_record['s3']['object']['key']
+            result = cls.generic_entry_point_import(
+                es_bulk_batch_size=es_bulk_batch_size,
+                es_endpoint=es_endpoint,
+                src_s3_bucket_name=src_s3_bucket_name,
+                src_s3_key=src_s3_key,
+            )
+            retval.append(result)
+        logger.info(json.dumps(retval))
+        return retval
 
     @classmethod
     def cli_entry_point(cls):
@@ -704,10 +789,15 @@ class VrpDiff():
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
         args = vars(ap.parse_args())
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
         if 'debugger' in args:
             import pdb
             pdb.set_trace()
         logger.setLevel(args.get('log_level', 'INFO'))
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
         for argname in ['all_date_min', 'all_date_max']:
             if argname in args:
                 # Add time zone information to the argument
@@ -752,6 +842,79 @@ class VrpDiff():
                 src_s3_key=args['key']
             )
             print(json.dumps(result))
+
+    @classmethod
+    def cli_entry_point_diff_import_from_sqs(cls):
+        """
+        Drain an SQS queue of rpkilog-diff object-created notifications and import each diff
+        file into OpenSearch.
+
+        The primary use case is populating a dev OpenSearch instance from the diff_dev queue.
+        Messages are deleted from the queue only after a successful import.  Use --dry-run to
+        validate SQS and S3 access without touching OpenSearch or acknowledging messages.
+
+        Handles both the direct S3 event format and the S3->SNS->SQS envelope format.
+        """
+        ap = argparse.ArgumentParser(
+            description='Import VRP diff files from an SQS queue into OpenSearch.',
+            argument_default=argparse.SUPPRESS,
+        )
+        ap.add_argument('--sqs-name', required=True,
+                        help='SQS queue name to consume (e.g. diff_dev)')
+        ap.add_argument('--bucket', required=True,
+                        help='S3 bucket containing diff files (e.g. rpkilog-diff)')
+        ap.add_argument('--bulk-batch-size', type=int, default=200,
+                        help='Number of records per OpenSearch _bulk operation (default: 200)')
+        ap.add_argument('--es-endpoint',
+                        help='OpenSearch endpoint hostname (required unless --dry-run)')
+        ap.add_argument('--max-message-count', type=int,
+                        help='Stop after processing this many SQS messages')
+        ap.add_argument('--dry-run', action='store_true', default=False,
+                        help='Read from SQS and S3 but skip OpenSearch inserts and SQS deletes')
+        ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
+        ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
+        args = vars(ap.parse_args())
+        logging.basicConfig(
+            datefmt='%Y-%m-%dT%H:%M:%S',
+            format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        )
+        if 'debugger' in args:
+            import pdb
+            pdb.set_trace()
+        logger.setLevel(args.get('log_level', 'INFO'))
+        logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
+        if not args['dry_run'] and 'es_endpoint' not in args:
+            ap.error('--es-endpoint is required unless --dry-run is set')
+        if args['dry_run']:
+            logger.info('Dry-run mode: SQS messages will not be deleted; OpenSearch will not be written')
+
+        sqs = boto3.client('sqs')
+        queue_url = sqs.get_queue_url(QueueName=args['sqs_name'])['QueueUrl']
+
+        messages_processed = 0
+        keys_imported = 0
+        max_message_count = args.get('max_message_count', None)
+
+        for message in receive_all_messages(sqs, queue_url):
+            if max_message_count is not None and messages_processed >= max_message_count:
+                break
+            message_succeeded = True
+            for _bucket, key, _record in s3_events_from_message(message):
+                logger.info('Importing key %s from bucket %s', key, args['bucket'])
+                result = cls.generic_entry_point_import(
+                    es_bulk_batch_size=args['bulk_batch_size'],
+                    es_endpoint=args['es_endpoint'],
+                    src_s3_bucket_name=args['bucket'],
+                    src_s3_key=key,
+                    dry_run=args['dry_run'],
+                )
+                logger.info('Result for key %s: %s', key, json.dumps(result))
+                keys_imported += 1
+            if not args['dry_run'] and message_succeeded:
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message['ReceiptHandle'])
+            messages_processed += 1
+
+        logger.info('Done: %d message(s) processed, %d key(s) imported', messages_processed, keys_imported)
 
     @classmethod
     def generic_entry_point(
@@ -845,21 +1008,23 @@ class VrpDiff():
         es_endpoint:str,
         src_s3_bucket_name:str,
         src_s3_key:str,
-        es_bulk_batch_size:int=None,
+        es_bulk_batch_size:int=200,
         progress_bar_enable:bool=False,
+        dry_run:bool=False,
     ):
-        '''
+        """
         Invoked by cli_entry_point_import or aws_lambda_entry_point_import
 
-        Retrieve given vrp diff file from S3 and insert its records into ElasticSearch
-        '''
+        Retrieve given vrp diff file from S3 and insert its records into ElasticSearch.
+        When dry_run=True, S3 download and file parsing are performed but no OpenSearch calls
+        are made and no index is created.  Returns 'records_would_insert' instead of
+        'records_inserted' to make dry-run results distinguishable.
+        """
         logging.basicConfig(
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
-        logging.getLogger('opensearch').setLevel(logging.WARNING)
-        if es_bulk_batch_size==None:
-            es_bulk_batch_size = 200
+        logging.getLogger('opensearch').setLevel(logging.INFO)
         realtime_initial = time.time()
         src_s3_path = Path(src_s3_key)
         if not '.json' in src_s3_path.suffixes:
@@ -869,8 +1034,9 @@ class VrpDiff():
         diff_file_path = Path(tmpdir.name, src_s3_path.name)
         rem = re.match(r'^(?P<datetime>\d{8}T\d{6}Z)', diff_file_path.name)
         diff_datetime = dateutil.parser.parse(rem.group('datetime'))
-        es_client = cls.get_es_client(es_hostname=es_endpoint)
-        es_index = cls.es_create_diff_index_for_datetime(index_datetime=diff_datetime, es_client=es_client)
+        if not dry_run:
+            es_client = cls.get_es_client(es_hostname=es_endpoint)
+            es_index = cls.es_create_diff_index_for_datetime(index_datetime=diff_datetime, es_client=es_client)
         s3.download_file(Bucket=src_s3_bucket_name, Key=str(src_s3_key), Filename=str(diff_file_path))
         if diff_file_path.suffix == '.bz2':
             diff_file = bz2.open(diff_file_path)
@@ -879,9 +1045,12 @@ class VrpDiff():
         else:
             raise ValueError(F'Invoked upon a file with a Path().suffix I cannot open: {diff_file_path}')
         diff_data = json.load(diff_file)
-        #BEGIN insert records
-        records_inserted = 0
-        if es_bulk_batch_size > 1:
+        logger.info(f'diff contains {len(diff_data["vrp_diffs"])} records')
+        records_count = 0
+        if dry_run:
+            records_count = len(diff_data['vrp_diffs'])
+        elif es_bulk_batch_size > 1:
+            #BEGIN bulk insert records
             progress_bar = tqdm(total=len(diff_data["vrp_diffs"]), unit="records", disable=not progress_bar_enable)
             for batch_base_index in range(0, len(diff_data['vrp_diffs']), es_bulk_batch_size):
                 bulk_actions = []
@@ -909,11 +1078,12 @@ class VrpDiff():
                 for ok, bulk_action_result in bulk_generator:
                     if ok:
                         records_inserted_this_batch += 1
-                        records_inserted += 1
+                        records_count += 1
                     else:
                         raise ValueError(F'bulk insert returned an unsuccessful result: {bulk_action_result}')
                 progress_bar.update(records_inserted_this_batch)
             progress_bar.close()
+            #DONE bulk insert records
         else:
             for vrp_diff_record in diff_data['vrp_diffs']:
                 vrp_diff_obj = VrpDiff.from_json_obj(vrp_diff_record)
@@ -922,12 +1092,14 @@ class VrpDiff():
                     es_client=es_client,
                     es_index=es_index,
                 )
-                records_inserted += 1
-        #DONE inserting records
+                records_count += 1
         runtime = time.time() - realtime_initial
+        count_key = 'records_would_insert' if dry_run else 'records_inserted'
         retdict = {
-            'records_inserted': records_inserted,
+            count_key: records_count,
             'runtime': runtime,
+            'src_s3_bucket_name': src_s3_bucket_name,
+            'src_s3_key': src_s3_key,
         }
         return retdict
 

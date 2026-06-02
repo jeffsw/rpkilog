@@ -7,7 +7,7 @@ terraform {
   }
   required_providers {
     aws = {
-      source = "hashicorp/aws"
+      source  = "hashicorp/aws"
       version = "~> 6.20"
     }
     linode = {
@@ -584,14 +584,14 @@ resource "aws_iam_policy" "github_ci" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid = "GetCallerIdentity",
-        Effect = "Allow",
-        Action = ["sts:GetCallerIdentity"],
+        Sid      = "GetCallerIdentity",
+        Effect   = "Allow",
+        Action   = ["sts:GetCallerIdentity"],
         Resource = "*",
       },
       {
         # this S3 bucket rpkilog-test-<account id>-us-east-1-an is used by our tests
-        Sid = "TestS3Bucket"
+        Sid    = "TestS3Bucket"
         Effect = "Allow",
         Action = [
           "s3:AbortMultipartUpload",
@@ -612,7 +612,7 @@ resource "aws_iam_policy" "github_ci" {
         ]
       },
       {
-        Sid = "WwwS3Bucket"
+        Sid    = "WwwS3Bucket"
         Effect = "Allow",
         Action = [
           "s3:AbortMultipartUpload",
@@ -653,7 +653,7 @@ resource "aws_iam_policy" "github_ci" {
 }
 
 resource "aws_iam_user_policy_attachment" "github_ci" {
-  user = aws_iam_user.github_ci.name
+  user       = aws_iam_user.github_ci.name
   policy_arn = aws_iam_policy.github_ci.arn
 }
 
@@ -747,8 +747,8 @@ resource "aws_sqs_queue_policy" "snapshot_summary_prod" {
 
 data "aws_iam_policy_document" "sqs_snapshot_summary_sns_send" {
   statement {
-    effect    = "Allow"
-    actions   = ["sqs:SendMessage"]
+    effect  = "Allow"
+    actions = ["sqs:SendMessage"]
     resources = [
       aws_sqs_queue.snapshot_summary_dev.arn,
       aws_sqs_queue.snapshot_summary_prod.arn,
@@ -807,6 +807,97 @@ resource "aws_sns_topic_subscription" "vrp_cache_diff" {
   topic_arn = aws_sns_topic.snapshot_summary.arn
   protocol  = "lambda"
   endpoint  = aws_lambda_function.vrp_cache_diff.arn
+}
+
+##############################
+# rpkilog-diff object-created fan-out: S3 -> SNS -> {Lambda diff_import, SQS diff_dev, SQS diff_prod}
+# The SNS topic exists to fan a single S3 object-created event out to multiple destinations.  The two
+# SQS queues support new message-processing patterns and consumption by the dev environment, while the
+# direct SNS->Lambda subscription preserves the existing import path.
+resource "aws_sns_topic" "diff" {
+  name = "diff"
+}
+
+data "aws_iam_policy_document" "sns_diff_s3_publish" {
+  statement {
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.diff.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_s3_bucket.rpkilog_diff.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "diff" {
+  arn    = aws_sns_topic.diff.arn
+  policy = data.aws_iam_policy_document.sns_diff_s3_publish.json
+}
+
+resource "aws_sqs_queue" "diff_dev" {
+  name                       = "diff_dev"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue" "diff_prod" {
+  name                       = "diff_prod"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+data "aws_iam_policy_document" "sqs_diff_sns_send" {
+  statement {
+    effect  = "Allow"
+    actions = ["sqs:SendMessage"]
+    resources = [
+      aws_sqs_queue.diff_dev.arn,
+      aws_sqs_queue.diff_prod.arn,
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_sns_topic.diff.arn]
+    }
+  }
+}
+
+resource "aws_sqs_queue_policy" "diff_dev" {
+  queue_url = aws_sqs_queue.diff_dev.id
+  policy    = data.aws_iam_policy_document.sqs_diff_sns_send.json
+}
+
+resource "aws_sqs_queue_policy" "diff_prod" {
+  queue_url = aws_sqs_queue.diff_prod.id
+  policy    = data.aws_iam_policy_document.sqs_diff_sns_send.json
+}
+
+resource "aws_sns_topic_subscription" "diff_dev" {
+  topic_arn = aws_sns_topic.diff.arn
+  protocol  = "sqs"
+  endpoint  = aws_sqs_queue.diff_dev.arn
+}
+
+resource "aws_sns_topic_subscription" "diff_prod" {
+  topic_arn = aws_sns_topic.diff.arn
+  protocol  = "sqs"
+  endpoint  = aws_sqs_queue.diff_prod.arn
+}
+
+resource "aws_sns_topic_subscription" "diff_import" {
+  topic_arn = aws_sns_topic.diff.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.diff_import.arn
 }
 
 ##############################
@@ -1153,6 +1244,7 @@ resource "aws_lambda_function" "vrp_cache_diff" {
     ignore_changes = [filename]
   }
 }
+
 resource "aws_lambda_permission" "vrp_cache_diff" {
   statement_id  = "AllowExecutionFromS3Bucket"
   action        = "lambda:InvokeFunction"
@@ -1199,6 +1291,13 @@ resource "aws_lambda_permission" "diff_import" {
   function_name = aws_lambda_function.diff_import.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = aws_s3_bucket.rpkilog_diff.arn
+}
+resource "aws_lambda_permission" "diff_import_from_sns" {
+  statement_id  = "AllowExecutionFromSNS"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.diff_import.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.diff.arn
 }
 resource "aws_lambda_function_event_invoke_config" "diff_import" {
   function_name          = aws_lambda_function.diff_import.function_name
@@ -1260,6 +1359,8 @@ resource "aws_lambda_function_url" "hapi" {
 
 ##############################
 # s3 bucket notifications
+
+# a better name for this resource would be snapshot_summary_object_created
 resource "aws_s3_bucket_notification" "vrp_cache_diff" {
   bucket = aws_s3_bucket.rpkilog_snapshot_summary.id
   topic {
@@ -1272,14 +1373,15 @@ resource "aws_s3_bucket_notification" "vrp_cache_diff" {
   ]
 }
 
+# a better name for this resource would be diff_object_created
 resource "aws_s3_bucket_notification" "vrp_diff_import" {
   bucket = aws_s3_bucket.rpkilog_diff.id
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.diff_import.arn
-    events              = ["s3:ObjectCreated:*"]
+  topic {
+    topic_arn = aws_sns_topic.diff.arn
+    events    = ["s3:ObjectCreated:*"]
   }
   depends_on = [
-    aws_lambda_permission.diff_import
+    aws_sns_topic_policy.diff,
   ]
 }
 

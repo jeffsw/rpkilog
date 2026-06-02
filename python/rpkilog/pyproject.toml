@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26053002'
+version = '0.26060201'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -38,6 +38,9 @@ dev = [
     'build',
     'flake8',
     'lambda-zip',
+    # pip is a dependency of lambda-zip but missing from its deps.  Need to fix in that package.
+    'pip',
+    'prek',
     'pytest',
 ]
 tests = [
@@ -51,15 +54,19 @@ dev = [
     'build',
     'flake8',
     'lambda-zip',
+    # pip is a dependency of lambda-zip but missing from its deps.  Need to fix in that package.
+    'pip',
+    'prek',
     'pytest',
 ]
 
 [project.scripts]
 rpkilog-archive-site-crawler = 'rpkilog.archive_site_crawler:ArchiveSiteCrawler.cli_entry_point'
 rpkilog-diff-import = 'rpkilog:VrpDiff.cli_entry_point_import'
+rpkilog-diff-import-from-sqs = 'rpkilog:VrpDiff.cli_entry_point_diff_import_from_sqs'
 rpkilog-hapi = 'rpkilog.hapi:cli_entry_point'
 rpkilog-ingest-tar = 'rpkilog:IngestTar.cli_entry_point'
-rpkilog-redrive-snapshot-dead-letter-queue = 'rpkilog.redrive_snapshot_dead_letter_queue:cli_entry_point'
+rpkilog-process-snapshot-summary-queue = 'rpkilog.process_snapshot_summary_queue:cli_entry_point'
 rpkilog-routinator-vrp-fetcher = 'rpkilog.routinator_vrp_fetcher:cli_entry_point'
 rpkilog-rpkiclient-uploader = 'rpkilog.rpkiclient_uploader:cli_entry_point'
 rpkilog-vrp-cache-differ = 'rpkilog:VrpDiff.cli_entry_point'
