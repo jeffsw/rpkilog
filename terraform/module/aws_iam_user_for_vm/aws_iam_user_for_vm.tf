@@ -5,13 +5,9 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
-    external = {
-      source  = "hashicorp/external"
-      version = "~> 2.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
+    shell = {
+      source  = "scottwinkler/shell"
+      version = "~> 1.7"
     }
   }
 }
@@ -33,6 +29,12 @@ variable "sts_token_duration" {
     condition     = floor(var.sts_token_duration) == var.sts_token_duration && var.sts_token_duration >= 900 && var.sts_token_duration <= 43200
     error_message = "sts_token_duration must be an integer between 900 and 43200 (inclusive)"
   }
+}
+
+variable "triggers" {
+  description = "Map of values that, when changed, cause the STS token to be regenerated. Pass the ID of the associated VM to tie the token lifecycle to the VM."
+  type        = map(string)
+  default     = {}
 }
 
 data "aws_caller_identity" "mod_scope" {}
@@ -86,25 +88,20 @@ resource "aws_iam_role_policy" "key_manager" {
 }
 
 #####
-# STS token returned by module outputs for passing into user-data
-resource "random_string" "role_session_suffix" {
-  length  = 15
-  special = false
-}
+# STS token stored in state for passing into user-data; only regenerated when triggers change
 
-data "external" "key_manager_sts_token" {
-  program = [
-    "bash", "-c",
-    <<-EOT
+resource "shell_script" "key_manager_sts_token" {
+  lifecycle_commands {
+    create = <<-EOT
       set -o pipefail
-      # It takes AWS a few seconds, typically, to have new IAM roles ready to use, even after the
-      # API responds and the role is visible in the AWS control plane.  Sleep 10s before the FIRST
-      # ATTEMPT and retry up to 10 times.
+      SESSION_SUFFIX=$(openssl rand -hex 8 | head -c 15)
+      # IAM roles take a few seconds to propagate after creation. Sleep before the first
+      # attempt and retry up to 10 times.
       for i in $(seq 1 10); do
         sleep 10
         if output=$(aws sts assume-role \
             --role-arn ${aws_iam_role.key_manager.arn} \
-            --role-session-name ${substr(var.name, 0, 48)}_${random_string.role_session_suffix.result} \
+            --role-session-name ${substr(var.name, 0, 48)}_$SESSION_SUFFIX \
             --duration-seconds ${var.sts_token_duration} \
             | jq '.Credentials + .AssumedRoleUser'); then
           printf '%s\n' "$output"
@@ -113,12 +110,22 @@ data "external" "key_manager_sts_token" {
       done
       exit 1
     EOT
-  ]
-  depends_on = [aws_iam_role.key_manager, aws_iam_role_policy.key_manager]
+    delete = ":"
+  }
+
+  triggers   = var.triggers
+  depends_on = [aws_iam_role_policy.key_manager]
 }
 
 output "key_manager" {
-  value = data.external.key_manager_sts_token.result
+  value = {
+    AccessKeyId     = shell_script.key_manager_sts_token.output["AccessKeyId"]
+    SecretAccessKey = shell_script.key_manager_sts_token.output["SecretAccessKey"]
+    SessionToken    = shell_script.key_manager_sts_token.output["SessionToken"]
+    Expiration      = shell_script.key_manager_sts_token.output["Expiration"]
+    AssumedRoleId   = shell_script.key_manager_sts_token.output["AssumedRoleId"]
+    Arn             = shell_script.key_manager_sts_token.output["Arn"]
+  }
   type = object({
     AccessKeyId     = string
     SecretAccessKey = string

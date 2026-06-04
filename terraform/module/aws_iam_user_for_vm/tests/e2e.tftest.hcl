@@ -7,8 +7,7 @@ provider "aws" {
     }
   }
 }
-provider "external" {}
-provider "random" {}
+provider "shell" {}
 
 run "creates_iam_resources_and_sts_token" {
   command = apply
@@ -27,12 +26,12 @@ run "creates_iam_resources_and_sts_token" {
   }
 
   assert {
-    condition     = length(data.external.key_manager_sts_token.result["AccessKeyId"]) > 0
+    condition     = length(shell_script.key_manager_sts_token.output["AccessKeyId"]) > 0
     error_message = "sts assume-role did not return an AccessKeyId"
   }
 
   assert {
-    condition     = length(data.external.key_manager_sts_token.result["SessionToken"]) > 0
+    condition     = length(shell_script.key_manager_sts_token.output["SessionToken"]) > 0
     error_message = "sts assume-role did not return a SessionToken"
   }
 }

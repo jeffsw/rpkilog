@@ -181,8 +181,8 @@ resource "opensearch_index_template" "diff" {
     template : {
       settings : {
         index : {
-          number_of_shards : 1,
-          number_of_replicas : 0,
+          number_of_shards : "1",
+          number_of_replicas : "0",
         }
       }
       mappings : {
