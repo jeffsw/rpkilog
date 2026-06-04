@@ -861,8 +861,6 @@ class VrpDiff():
         )
         ap.add_argument('--sqs-name', required=True,
                         help='SQS queue name to consume (e.g. diff_dev)')
-        ap.add_argument('--bucket', required=True,
-                        help='S3 bucket containing diff files (e.g. rpkilog-diff)')
         ap.add_argument('--bulk-batch-size', type=int, default=200,
                         help='Number of records per OpenSearch _bulk operation (default: 200)')
         ap.add_argument('--es-endpoint',
@@ -899,12 +897,12 @@ class VrpDiff():
             if max_message_count is not None and messages_processed >= max_message_count:
                 break
             message_succeeded = True
-            for _bucket, key, _record in s3_events_from_message(message):
-                logger.info('Importing key %s from bucket %s', key, args['bucket'])
+            for bucket, key, _record in s3_events_from_message(message):
+                logger.info('Importing key %s from bucket %s', key, bucket)
                 result = cls.generic_entry_point_import(
                     es_bulk_batch_size=args['bulk_batch_size'],
                     es_endpoint=args['es_endpoint'],
-                    src_s3_bucket_name=args['bucket'],
+                    src_s3_bucket_name=bucket,
                     src_s3_key=key,
                     dry_run=args['dry_run'],
                 )
