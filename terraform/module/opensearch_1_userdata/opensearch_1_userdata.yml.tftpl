@@ -41,7 +41,15 @@ packages:
   - htop
   - incus-agent
   - openssh-server
+  - python3-full
+  - python3-pip
+  - python3-venv
+  - run-one
   - ssh-import-id
+  - unzip
+runcmd:
+  # ensure /home/rpkilog/.aws and other directories we may be creating with cloud-init have correct ownership
+  - "chown -R rpkilog:rpkilog /home/rpkilog"
 ssh_pwauth: false
 users:
   - name: opensearch
@@ -60,7 +68,48 @@ users:
     sudo: "ALL=(ALL) NOPASSWD: ALL"
     ssh_authorized_keys:
       - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC4k8nVaS9Ns+8jZ1C97eUcOvkFw6NOXS8e4xxG6XEH1l9PDluOCxAqgCvdKxX9ZhFvwW1SCSWuN95WrM7u/9p0flOX7DZFYld053ClWxMZZ4ZtKj8XWnmDU4LLXSmUWaKddW9pHZHvxfEFu+wCcnUiJM4NgS4owfaIGC3IOIXVrxsoNuoKyTQS9pRa5+3sMC3rHK8oWPkleJGO+cs8AxuetRtHS/ZHwshsyI27ROC/nIxZ7ZeKXf3g/jxEpbxI9LNFnocuUmeoNpndBFYND1ujwiHZvoWxx4ByiTRDNJDHJWdnJpz8rOmnoHeHFqV8F/I5CRG9Dh7aq5vd9LWdrkqb jeffsw6@gmail.com boomer 2013-05-28
+  - name: rpkilog
+    shell: /usr/bin/bash
 write_files:
+  - path: /root/.aws/config
+    owner: root:root
+    permissions: '0600'
+    content: |4
+        [default]
+        region = us-east-1
+  - path: /root/.aws/credentials
+    owner: root:root
+    permissions: '0600'
+    content: |4
+        [default]
+        aws_access_key_id = ${key_manager_aws_access_key_id}
+        aws_secret_access_key = ${key_manager_aws_secret_access_key}
+        aws_session_token = ${key_manager_aws_session_token}
+  - path: /usr/local/bin/100_aws_key_manager.py
+    permissions: "0755"
+    content: |4
+        ${indent(8, file(script_key_manager))}
+  - path: /var/lib/cloud/scripts/per-once/100_install_rpkilog.sh
+    permissions: "0755"
+    content: |4
+        ${indent(8, file(script_install_rpkilog))}
+  - path: /home/rpkilog/.aws/config
+    defer: true
+    owner: rpkilog:rpkilog
+    permissions: '0600'
+    content: |4
+        [default]
+        region = us-east-1
+  - path: /var/lib/cloud/scripts/per-once/100_aws_key_manager_wrapper.sh
+    defer: true
+    permissions: "0755"
+    content: |4
+        #!/bin/bash -e
+        /usr/local/bin/100_aws_key_manager.py \
+          --username ${opensearch_1_iam_username} \
+          --cred-file-path /home/rpkilog/.aws/credentials \
+          --cred-file-owner rpkilog \
+          --cred-file-group rpkilog
   - path: /etc/profile.d/rpkilog_prompt.sh
     permissions: '0644'
     content: |4

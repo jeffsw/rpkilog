@@ -41,11 +41,65 @@ output "opensearch_1_console_password" {
   value       = nonsensitive(random_password.opensearch_1_console.result)
 }
 
+data "aws_s3_bucket" "rpkilog_diff" {
+  bucket = "rpkilog-diff"
+}
+
+data "aws_sqs_queue" "diff_dev" {
+  name = "diff_dev"
+}
+
+module "opensearch_1_iam_user" {
+  source = "../../module/aws_iam_user_for_vm"
+  name   = "opensearch_1_${terraform.workspace}"
+}
+
+resource "aws_iam_policy" "opensearch_1" {
+  name = "opensearch_1_${terraform.workspace}"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectAttributes",
+          "s3:ListBucket",
+        ]
+        Resource = [
+          data.aws_s3_bucket.rpkilog_diff.arn,
+          "${data.aws_s3_bucket.rpkilog_diff.arn}/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ChangeMessageVisibility",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:ReceiveMessage",
+        ]
+        Resource = data.aws_sqs_queue.diff_dev.arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "opensearch_1" {
+  user       = module.opensearch_1_iam_user.user.name
+  policy_arn = aws_iam_policy.opensearch_1.arn
+}
+
 module "userdata_opensearch_1" {
-  source                     = "../../module/opensearch_1_userdata"
-  console_password_plaintext = nonsensitive(random_password.opensearch_1_console.result)
-  fqdn                       = "opensearch-1.rpkilog.dev"
-  opensearch_admin_password  = nonsensitive(random_password.opensearch_1_admin.result)
+  source                            = "../../module/opensearch_1_userdata"
+  console_password_plaintext        = nonsensitive(random_password.opensearch_1_console.result)
+  fqdn                              = "opensearch-1.rpkilog.dev"
+  key_manager_aws_access_key_id     = module.opensearch_1_iam_user.key_manager.AccessKeyId
+  key_manager_aws_secret_access_key = module.opensearch_1_iam_user.key_manager.SecretAccessKey
+  key_manager_aws_session_token     = module.opensearch_1_iam_user.key_manager.SessionToken
+  opensearch_1_iam_username         = module.opensearch_1_iam_user.user.name
+  opensearch_admin_password         = nonsensitive(random_password.opensearch_1_admin.result)
 }
 
 # https://registry.terraform.io/providers/lxc/incus/latest/docs/resources/instance
@@ -86,12 +140,42 @@ resource "aws_route53_record" "opensearch_1_A" {
   records = [incus_instance.opensearch_1.ipv4_address]
 }
 
+# Poll /_cluster/health until OpenSearch is accepting connections before
+# allowing the opensearch provider resources below to run.  The VM boots and
+# runs cloud-init (package upgrades, Docker pull, container start) before
+# OpenSearch is reachable, so a simple depends_on the instance is not enough.
+resource "terraform_data" "opensearch_1_ready" {
+  lifecycle {
+    replace_triggered_by = [incus_instance.opensearch_1]
+  }
+
+  provisioner "local-exec" {
+    environment = {
+      OS_PASSWORD = random_password.opensearch_1_admin.result
+    }
+    command = <<-EOT
+      echo "Waiting for OpenSearch at opensearch-1.rpkilog.dev:9200..."
+      until curl -sk -u "admin:$OS_PASSWORD" \
+          https://opensearch-1.rpkilog.dev:9200/_cluster/health \
+          | grep -q '"status"'; do
+        echo "  not ready yet, retrying in 15s..."
+        sleep 15
+      done
+      echo "OpenSearch is ready."
+    EOT
+  }
+
+  depends_on = [incus_instance.opensearch_1]
+}
+
 resource "opensearch_cluster_settings" "opensearch_1" {
   search_default_search_timeout = "30s"
+  depends_on                    = [terraform_data.opensearch_1_ready]
 }
 
 resource "opensearch_index_template" "diff" {
-  name = "diff"
+  name       = "diff"
+  depends_on = [terraform_data.opensearch_1_ready]
   body = jsonencode({
     index_patterns : ["diff-*"],
     template : {
@@ -104,15 +188,15 @@ resource "opensearch_index_template" "diff" {
       mappings : {
         properties : {
           observation_timestamp : { type : "date", format : "strict_date_time_no_millis" },
-          verb                  : { type : "keyword" },
-          prefix                : { type : "ip_range" },
-          maxLength             : { type : "integer" },
-          asn                   : { type : "long" },
-          ta                    : { type : "keyword" },
-          old_expires           : { type : "date", format : "strict_date_time_no_millis" },
-          new_expires           : { type : "date", format : "strict_date_time_no_millis" },
-          old_roa               : { type : "object" },
-          new_roa               : { type : "object" },
+          verb : { type : "keyword" },
+          prefix : { type : "ip_range" },
+          maxLength : { type : "integer" },
+          asn : { type : "long" },
+          ta : { type : "keyword" },
+          old_expires : { type : "date", format : "strict_date_time_no_millis" },
+          new_expires : { type : "date", format : "strict_date_time_no_millis" },
+          old_roa : { type : "object" },
+          new_roa : { type : "object" },
         }
       }
     }
