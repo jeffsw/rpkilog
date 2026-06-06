@@ -806,16 +806,25 @@ class VrpDiff():
     def cli_entry_point_import(cls):
         invocation_time=time.time()
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
-        ap.add_argument('--bucket', help='S3 bucket containing diff file')
-        ap.add_argument('--key', type=Path, help='S3 key of diff file')
-        ap.add_argument('--all-files', action='store_true',
-            help='Import all diff files found in the S3 bucket.  Used to re-populate database after a wipe.  Youngest files first.'
-        )
-        ap.add_argument('--all-limit', type=int, help='Max number of files to import when using -all-files')
+        source = ap.add_mutually_exclusive_group(required=True)
+        source.add_argument('--key', type=Path,
+                            help='S3 key of the diff file to import (requires --bucket)')
+        source.add_argument('--all-files', action='store_true',
+                            help='Import all diff files in the S3 bucket, youngest first (requires --bucket)')
+        source.add_argument('--import-from-disk', type=Path, metavar='PATH',
+                            help='Local diff file to import, e.g. /data/s3-rpkilog-diff/19810101T121314.vrpdiff.json.bz2')
+        ap.add_argument('--bucket', help='S3 bucket containing diff file (used with --key or --all-files)')
+        ap.add_argument('--all-limit', type=int, help='Max number of files to import when using --all-files')
         ap.add_argument('--all-date-min', type=dateutil.parser.parse, help='Import files only on-or-after this date')
         ap.add_argument('--all-date-max', type=dateutil.parser.parse, help='Import files only on-or-before this date')
         ap.add_argument('--bulk-batch-size', type=int, default=200, help='Number of records inserted per ES _bulk operation')
-        ap.add_argument('--es-endpoint', help='ElasticSearch endpoint')
+        ap.add_argument('--es-endpoint', help='OpenSearch endpoint e.g. https://es-prod.rpkilog.com')
+        ap.add_argument('--es-username',
+                        help='OpenSearch username for HTTP basic auth (dev only)')
+        ap.add_argument('--es-password',
+                        help='OpenSearch password for HTTP basic auth (dev only)')
+        ap.add_argument('--es-ssl-verify', action=argparse.BooleanOptionalAction,
+                        help='Verify OpenSearch TLS certificate; also settable via ES_SSL_VERIFY env var (disable for dev instances without a valid cert)')
         ap.add_argument('--limit-cpu', type=int, help='Try to limit CPU utilization to N percent, e.g. 10.')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
@@ -829,14 +838,35 @@ class VrpDiff():
             pdb.set_trace()
         logger.setLevel(args.get('log_level', 'INFO'))
         logger.info(f'rpkilog version {importlib.metadata.version("rpkilog")}')
+
+        es_username = args.get('es_username') or os.getenv('ES_USERNAME')
+        es_password = args.get('es_password') or os.getenv('ES_PASSWORD')
+        if 'es_ssl_verify' in args:
+            es_ssl_verify = args['es_ssl_verify']
+        elif os.getenv('ES_SSL_VERIFY', 'true').lower() in ('false', '0', 'no'):
+            es_ssl_verify = False
+        else:
+            es_ssl_verify = True
+
         for argname in ['all_date_min', 'all_date_max']:
             if argname in args:
                 # Add time zone information to the argument
                 args[argname] = args[argname].replace(tzinfo=timezone.utc)
 
-        if args.get('all_files', False):
-            # List files in the S3 bucket.
-            # Invoke cls.generic_entry_point_import() on every one, youngest first (reverse sort order).
+        if 'import_from_disk' in args:
+            result = cls.generic_entry_point_import(
+                es_bulk_batch_size=args['bulk_batch_size'],
+                es_endpoint=args['es_endpoint'],
+                src_local_path=args['import_from_disk'],
+                es_username=es_username,
+                es_password=es_password,
+                es_ssl_verify=es_ssl_verify,
+            )
+            print(json.dumps(result))
+        elif args.get('all_files', False):
+            if 'bucket' not in args:
+                ap.error('--bucket is required with --all-files')
+            # Invoke cls.generic_entry_point_import() on every file in the bucket, youngest first.
             diff_bucket = boto3.resource('s3').Bucket(args['bucket'])
             import_file_count = 0
             diff_bucket_objects = sorted(diff_bucket.objects.all(), key=operator.attrgetter('key'), reverse=True)
@@ -857,6 +887,9 @@ class VrpDiff():
                     progress_bar_enable=True,
                     src_s3_bucket_name=args['bucket'],
                     src_s3_key=buckobj.key,
+                    es_username=es_username,
+                    es_password=es_password,
+                    es_ssl_verify=es_ssl_verify,
                 )
                 import_file_count += 1
                 logger.info(F'Imported file count {import_file_count} name {buckobj.key} result: {json.dumps(result)}')
@@ -866,11 +899,17 @@ class VrpDiff():
                 if 'limit_cpu' in args:
                     cls.limit_cpu_sleep(invocation_time=invocation_time, limit=args['limit_cpu']/100)
         else:
+            # --key branch
+            if 'bucket' not in args:
+                ap.error('--bucket is required with --key')
             result = cls.generic_entry_point_import(
                 es_bulk_batch_size=args['bulk_batch_size'],
                 es_endpoint=args['es_endpoint'],
                 src_s3_bucket_name=args['bucket'],
-                src_s3_key=args['key']
+                src_s3_key=args['key'],
+                es_username=es_username,
+                es_password=es_password,
+                es_ssl_verify=es_ssl_verify,
             )
             print(json.dumps(result))
 
@@ -1066,8 +1105,9 @@ class VrpDiff():
     def generic_entry_point_import(
         cls,
         es_endpoint: str,
-        src_s3_bucket_name: str,
-        src_s3_key: str,
+        src_s3_bucket_name: str = None,
+        src_s3_key: str = None,
+        src_local_path: Path = None,
         es_bulk_batch_size: int = 200,
         progress_bar_enable: bool = False,
         dry_run: bool = False,
@@ -1076,12 +1116,13 @@ class VrpDiff():
         es_ssl_verify: bool = True,
     ):
         """
-        Invoked by cli_entry_point_import or aws_lambda_entry_point_import
+        Invoked by cli_entry_point_import or aws_lambda_entry_point_import.
 
-        Retrieve given vrp diff file from S3 and insert its records into ElasticSearch.
-        When dry_run=True, S3 download and file parsing are performed but no OpenSearch calls
-        are made and no index is created.  Returns 'records_would_insert' instead of
-        'records_inserted' to make dry-run results distinguishable.
+        Retrieve a vrp diff file and insert its records into OpenSearch.  Supply either
+        src_s3_bucket_name + src_s3_key (download from S3) or src_local_path (read from disk).
+
+        When dry_run=True, file parsing is performed but no OpenSearch calls are made and no
+        index is created.  Returns 'records_would_insert' instead of 'records_inserted'.
         """
         logging.basicConfig(
             datefmt='%Y-%m-%dT%H:%M:%S',
@@ -1089,12 +1130,13 @@ class VrpDiff():
         )
         logging.getLogger('opensearch').setLevel(logging.INFO)
         realtime_initial = time.time()
-        src_s3_path = Path(src_s3_key)
-        if not '.json' in src_s3_path.suffixes:
-            raise ValueError(F'Invoked upon upload of a file without .json in its Path().suffixes: {src_s3_path}')
-        s3 = boto3.client('s3')
-        tmpdir = tempfile.TemporaryDirectory()
-        diff_file_path = Path(tmpdir.name, src_s3_path.name)
+        if src_local_path is not None:
+            diff_file_path = src_local_path
+        else:
+            tmpdir = tempfile.TemporaryDirectory()
+            diff_file_path = Path(tmpdir.name, Path(src_s3_key).name)
+        if '.json' not in diff_file_path.suffixes:
+            raise ValueError(f'Diff file does not have .json in its suffixes: {diff_file_path}')
         rem = re.match(r'^(?P<datetime>\d{8}T\d{6}Z)', diff_file_path.name)
         diff_datetime = dateutil.parser.parse(rem.group('datetime'))
         if not dry_run:
@@ -1105,7 +1147,9 @@ class VrpDiff():
                 es_ssl_verify=es_ssl_verify,
             )
             es_index = cls.es_create_diff_index_for_datetime(index_datetime=diff_datetime, es_client=es_client)
-        s3.download_file(Bucket=src_s3_bucket_name, Key=str(src_s3_key), Filename=str(diff_file_path))
+        if src_local_path is None:
+            s3 = boto3.client('s3')
+            s3.download_file(Bucket=src_s3_bucket_name, Key=str(src_s3_key), Filename=str(diff_file_path))
         if diff_file_path.suffix == '.bz2':
             diff_file = bz2.open(diff_file_path)
         elif diff_file_path.suffix == '.json':
