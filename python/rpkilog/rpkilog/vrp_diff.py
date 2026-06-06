@@ -13,6 +13,8 @@ import socket
 import sys
 import tempfile
 import time
+import urllib.parse
+import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -450,39 +452,68 @@ class VrpDiff():
     @classmethod
     def get_es_client(
         cls,
-        es_hostname:str,
-        es_port:int=443,
+        es_endpoint: str,
+        es_username: str = None,
+        es_password: str = None,
+        es_ssl_verify: bool = True,
     ):
-        '''
-        Move this to a utility module?
+        """
+        Create and return an OpenSearch client, verified with a ping.
 
-        FIXME: hard-coded AWS region
-        '''
-        aws_credentials = boto3.Session().get_credentials()
-        try:
-            aws_auth = AWS4Auth(
-                region='us-east-1',
-                service='es',
-                refreshable_credentials=aws_credentials
+        es_endpoint must include a scheme (e.g. 'https://es-prod.rpkilog.com' or
+        'http://localhost:9200').  If no scheme is present, https:// is assumed and a
+        warning is logged — update the caller to supply an explicit scheme.
+
+        Supply es_username/es_password for HTTP basic auth (dev OpenSearch).
+        Omit both to use AWS IAM (AWS4Auth) — required for AWS-hosted OpenSearch.
+        """
+        if '://' not in es_endpoint:
+            logger.warning(
+                'es_endpoint %r has no scheme; assuming https://. Update the caller to supply an explicit scheme.',
+                es_endpoint,
             )
-        except:
-            aws_auth = AWS4Auth(
-                aws_credentials.access_key,
-                aws_credentials.secret_key,
-                'us-east-1',
-                'es',
-                aws_credentials.token,
-            )
+            es_endpoint = f'https://{es_endpoint}'
+        parsed = urllib.parse.urlsplit(es_endpoint)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        use_ssl = (parsed.scheme == 'https')
+
+        if not es_ssl_verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        if es_username is not None:
+            auth_desc = f'basic auth user={es_username!r}'
+            http_auth = (es_username, es_password)
+        else:
+            auth_desc = 'AWS4Auth'
+            aws_credentials = boto3.Session().get_credentials()
+            try:
+                http_auth = AWS4Auth(
+                    region='us-east-1',
+                    service='es',
+                    refreshable_credentials=aws_credentials,
+                )
+            except TypeError:
+                http_auth = AWS4Auth(
+                    aws_credentials.access_key,
+                    aws_credentials.secret_key,
+                    'us-east-1',
+                    'es',
+                    aws_credentials.token,
+                )
+
         es_client = OpenSearch(
-            hosts = [
-                {'host': es_hostname, 'port': es_port},
-            ],
-            http_auth=aws_auth,
-            use_ssl=True,
-            verify_certs=True,
+            hosts=[{'host': host, 'port': port}],
+            http_auth=http_auth,
+            use_ssl=use_ssl,
+            verify_certs=use_ssl and es_ssl_verify,
             connection_class=RequestsHttpConnection,
             http_compress=True,
         )
+        if not es_client.ping():
+            raise ConnectionError(
+                f'OpenSearch ping failed for {es_endpoint} (auth={auth_desc}, ssl_verify={es_ssl_verify})'
+            )
         return es_client
 
     @classmethod
@@ -861,12 +892,16 @@ class VrpDiff():
         )
         ap.add_argument('--sqs-name', required=True,
                         help='SQS queue name to consume (e.g. diff_dev)')
-        ap.add_argument('--bucket', required=True,
-                        help='S3 bucket containing diff files (e.g. rpkilog-diff)')
         ap.add_argument('--bulk-batch-size', type=int, default=200,
                         help='Number of records per OpenSearch _bulk operation (default: 200)')
         ap.add_argument('--es-endpoint',
-                        help='OpenSearch endpoint hostname (required unless --dry-run)')
+                        help='OpenSearch endpoint hostname e.g. https://localhost:9200 (required unless --dry-run)')
+        ap.add_argument('--es-username',
+                        help='OpenSearch username for HTTP basic auth (dev only)')
+        ap.add_argument('--es-password',
+                        help='OpenSearch password for HTTP basic auth (dev only)')
+        ap.add_argument('--es-ssl-verify', action=argparse.BooleanOptionalAction,
+                        help='Verify OpenSearch TLS certificate; also settable via ES_SSL_VERIFY env var')
         ap.add_argument('--max-message-count', type=int,
                         help='Stop after processing this many SQS messages')
         ap.add_argument('--dry-run', action='store_true', default=False,
@@ -888,6 +923,15 @@ class VrpDiff():
         if args['dry_run']:
             logger.info('Dry-run mode: SQS messages will not be deleted; OpenSearch will not be written')
 
+        es_username = args.get('es_username') or os.getenv('ES_USERNAME')
+        es_password = args.get('es_password') or os.getenv('ES_PASSWORD')
+        if 'es_ssl_verify' in args:
+            es_ssl_verify = args['es_ssl_verify']
+        elif os.getenv('ES_SSL_VERIFY', 'true').lower() in ('false', '0', 'no'):
+            es_ssl_verify = False
+        else:
+            es_ssl_verify = True
+
         sqs = boto3.client('sqs')
         queue_url = sqs.get_queue_url(QueueName=args['sqs_name'])['QueueUrl']
 
@@ -899,18 +943,34 @@ class VrpDiff():
             if max_message_count is not None and messages_processed >= max_message_count:
                 break
             message_succeeded = True
-            for _bucket, key, _record in s3_events_from_message(message):
-                logger.info('Importing key %s from bucket %s', key, args['bucket'])
+            notifications_processed = []
+            for bucket, key, record in s3_events_from_message(message):
+                logger.info('Importing key %s from bucket %s', key, bucket)
                 result = cls.generic_entry_point_import(
                     es_bulk_batch_size=args['bulk_batch_size'],
                     es_endpoint=args['es_endpoint'],
-                    src_s3_bucket_name=args['bucket'],
+                    src_s3_bucket_name=bucket,
                     src_s3_key=key,
                     dry_run=args['dry_run'],
+                    es_username=es_username,
+                    es_password=es_password,
+                    es_ssl_verify=es_ssl_verify,
                 )
                 logger.info('Result for key %s: %s', key, json.dumps(result))
                 keys_imported += 1
+                notifications_processed.append({
+                    'bucket': bucket,
+                    'key': key,
+                    's3RequestId': record.get('responseElements', {}).get('x-amz-request-id'),
+                })
             if not args['dry_run'] and message_succeeded:
+                logger.info(
+                    'Deleting SQS message: queue=%s messageId=%s notificationCount=%d notifications=%s',
+                    args['sqs_name'],
+                    message['MessageId'],
+                    len(notifications_processed),
+                    json.dumps(notifications_processed),
+                )
                 sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message['ReceiptHandle'])
             messages_processed += 1
 
@@ -1005,12 +1065,15 @@ class VrpDiff():
     @classmethod
     def generic_entry_point_import(
         cls,
-        es_endpoint:str,
-        src_s3_bucket_name:str,
-        src_s3_key:str,
-        es_bulk_batch_size:int=200,
-        progress_bar_enable:bool=False,
-        dry_run:bool=False,
+        es_endpoint: str,
+        src_s3_bucket_name: str,
+        src_s3_key: str,
+        es_bulk_batch_size: int = 200,
+        progress_bar_enable: bool = False,
+        dry_run: bool = False,
+        es_username: str = None,
+        es_password: str = None,
+        es_ssl_verify: bool = True,
     ):
         """
         Invoked by cli_entry_point_import or aws_lambda_entry_point_import
@@ -1035,7 +1098,12 @@ class VrpDiff():
         rem = re.match(r'^(?P<datetime>\d{8}T\d{6}Z)', diff_file_path.name)
         diff_datetime = dateutil.parser.parse(rem.group('datetime'))
         if not dry_run:
-            es_client = cls.get_es_client(es_hostname=es_endpoint)
+            es_client = cls.get_es_client(
+                es_endpoint=es_endpoint,
+                es_username=es_username,
+                es_password=es_password,
+                es_ssl_verify=es_ssl_verify,
+            )
             es_index = cls.es_create_diff_index_for_datetime(index_datetime=diff_datetime, es_client=es_client)
         s3.download_file(Bucket=src_s3_bucket_name, Key=str(src_s3_key), Filename=str(diff_file_path))
         if diff_file_path.suffix == '.bz2':
