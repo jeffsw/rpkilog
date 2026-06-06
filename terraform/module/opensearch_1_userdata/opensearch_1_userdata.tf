@@ -38,9 +38,22 @@ variable "opensearch_admin_password" {
   type        = string
 }
 
+variable "diff_import_es_username" {
+  description = "OpenSearch username for the diff_import_from_sqs cron job (e.g. vm-opensearch-1-dev)"
+  type        = string
+  default     = "vm-opensearch-1-dev"
+}
+
+variable "diff_import_es_password" {
+  description = "OpenSearch password for the diff_import_from_sqs cron job"
+  type        = string
+}
+
 locals {
   user_data_opensearch_1 = {
     console_password_plaintext        = nonsensitive(var.console_password_plaintext)
+    diff_import_es_username           = var.diff_import_es_username
+    diff_import_es_password           = var.diff_import_es_password
     fqdn                              = var.fqdn
     key_manager_aws_access_key_id     = var.key_manager_aws_access_key_id
     key_manager_aws_secret_access_key = var.key_manager_aws_secret_access_key

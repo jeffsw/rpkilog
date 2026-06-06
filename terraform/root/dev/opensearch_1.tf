@@ -5,6 +5,10 @@ provider "opensearch" {
   password = random_password.opensearch_1_admin.result
 }
 
+locals {
+  diff_import_es_username = "vm-opensearch-1-${terraform.workspace}"
+}
+
 resource "incus_storage_volume" "opensearch_1_volume_1" {
   name         = "opensearch-1-volume-1"
   pool         = data.incus_storage_pool.default.name
@@ -26,6 +30,19 @@ resource "random_password" "opensearch_1_admin" {
 output "opensearch_1_admin_password" {
   description = "OpenSearch initial admin password (OPENSEARCH_INITIAL_ADMIN_PASSWORD)"
   value       = nonsensitive(random_password.opensearch_1_admin.result)
+}
+
+resource "random_string" "opensearch_1_diff_import_password" {
+  length  = 24
+  lower   = true
+  upper   = false
+  numeric = true
+  special = false
+}
+
+output "opensearch_1_diff_import_password" {
+  description = "Password for OpenSearch user vm-opensearch-1-dev used by the diff_import_from_sqs cron job"
+  value       = random_string.opensearch_1_diff_import_password.result
 }
 
 resource "random_password" "opensearch_1_console" {
@@ -100,6 +117,8 @@ module "userdata_opensearch_1" {
   key_manager_aws_session_token     = module.opensearch_1_iam_user.key_manager.SessionToken
   opensearch_1_iam_username         = module.opensearch_1_iam_user.user.name
   opensearch_admin_password         = nonsensitive(random_password.opensearch_1_admin.result)
+  diff_import_es_username           = local.diff_import_es_username
+  diff_import_es_password           = random_string.opensearch_1_diff_import.result
 }
 
 # https://registry.terraform.io/providers/lxc/incus/latest/docs/resources/instance
@@ -171,6 +190,32 @@ resource "terraform_data" "opensearch_1_ready" {
 resource "opensearch_cluster_settings" "opensearch_1" {
   search_default_search_timeout = "30s"
   depends_on                    = [terraform_data.opensearch_1_ready]
+}
+
+resource "opensearch_role" "diff_import" {
+  role_name   = "diff_import"
+  description = "Read, write, and create-index on diff-* indices; cluster monitor for health checks"
+  depends_on  = [terraform_data.opensearch_1_ready]
+
+  cluster_permissions = ["cluster_monitor"]
+
+  index_permissions {
+    index_patterns  = ["diff-*"]
+    allowed_actions = ["read", "write", "create_index"]
+  }
+}
+
+resource "opensearch_user" "diff_import" {
+  username    = local.diff_import_es_username
+  password    = random_string.opensearch_1_diff_import.result
+  description = "Service account for the diff_import_from_sqs cron job on opensearch-1.rpkilog.dev"
+  depends_on  = [terraform_data.opensearch_1_ready]
+}
+
+resource "opensearch_roles_mapping" "diff_import" {
+  role_name  = opensearch_role.diff_import.role_name
+  users      = [opensearch_user.diff_import.username]
+  depends_on = [terraform_data.opensearch_1_ready]
 }
 
 resource "opensearch_index_template" "diff" {

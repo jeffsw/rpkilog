@@ -128,3 +128,10 @@ write_files:
         #!/bin/bash -e
         export OPENSEARCH_INITIAL_ADMIN_PASSWORD='${opensearch_admin_password}'
         /usr/local/bin/install_opensearch.sh
+  - path: /etc/cron.d/diff_import_from_sqs
+    owner: root:root
+    permissions: '0644'
+    content: |4
+        ES_USERNAME=${diff_import_es_username}
+        ES_PASSWORD=${diff_import_es_password}
+        */5 * * * * rpkilog run-one /opt/rpkilog/venv/bin/rpkilog-diff-import-from-sqs --sqs-name diff_dev --es-endpoint localhost:9200 --dry-run 2>&1 | logger -t diff_import_from_sqs
