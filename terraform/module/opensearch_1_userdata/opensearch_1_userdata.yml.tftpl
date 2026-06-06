@@ -34,6 +34,7 @@ package_reboot_if_required: true
 package_update: true
 package_upgrade: true
 packages:
+  - awscli
   - bzip2
   - ca-certificates
   - curl
@@ -54,6 +55,7 @@ packages:
 runcmd:
   # ensure /home/rpkilog/.aws and other directories we may be creating with cloud-init have correct ownership
   - "chown -R rpkilog:rpkilog /home/rpkilog"
+  - "mkdir -p /data/s3-rpkilog-diff && chown rpkilog:rpkilog /data/s3-rpkilog-diff"
 ssh_pwauth: false
 users:
   - name: opensearch
@@ -135,3 +137,8 @@ write_files:
         ES_USERNAME=${diff_import_es_username}
         ES_PASSWORD=${diff_import_es_password}
         */5 * * * * rpkilog run-one /opt/rpkilog/venv/bin/rpkilog-diff-import-from-sqs --sqs-name diff_dev --es-endpoint https://localhost:9200 --no-es-ssl-verify 2>&1 | logger -t diff_import_from_sqs
+  - path: /etc/cron.d/s3_sync_rpkilog_diff
+    owner: root:root
+    permissions: '0644'
+    content: |4
+        0 6 * * * rpkilog run-one aws s3 sync s3://rpkilog-diff /data/s3-rpkilog-diff/ --no-progress 2>&1 | logger -t s3_sync_rpkilog_diff
