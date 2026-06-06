@@ -134,4 +134,4 @@ write_files:
     content: |4
         ES_USERNAME=${diff_import_es_username}
         ES_PASSWORD=${diff_import_es_password}
-        */5 * * * * rpkilog run-one /opt/rpkilog/venv/bin/rpkilog-diff-import-from-sqs --sqs-name diff_dev --es-endpoint localhost:9200 --dry-run 2>&1 | logger -t diff_import_from_sqs
+        */5 * * * * rpkilog run-one /opt/rpkilog/venv/bin/rpkilog-diff-import-from-sqs --sqs-name diff_dev --es-endpoint https://localhost:9200 --no-es-ssl-verify --dry-run 2>&1 | logger -t diff_import_from_sqs
