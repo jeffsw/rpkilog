@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -477,6 +478,9 @@ class VrpDiff():
         port = parsed.port or (443 if parsed.scheme == 'https' else 80)
         use_ssl = (parsed.scheme == 'https')
 
+        if not es_ssl_verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         if es_username is not None:
             auth_desc = f'basic auth user={es_username!r}'
             http_auth = (es_username, es_password)
@@ -939,7 +943,8 @@ class VrpDiff():
             if max_message_count is not None and messages_processed >= max_message_count:
                 break
             message_succeeded = True
-            for bucket, key, _record in s3_events_from_message(message):
+            notifications_processed = []
+            for bucket, key, record in s3_events_from_message(message):
                 logger.info('Importing key %s from bucket %s', key, bucket)
                 result = cls.generic_entry_point_import(
                     es_bulk_batch_size=args['bulk_batch_size'],
@@ -953,7 +958,19 @@ class VrpDiff():
                 )
                 logger.info('Result for key %s: %s', key, json.dumps(result))
                 keys_imported += 1
+                notifications_processed.append({
+                    'bucket': bucket,
+                    'key': key,
+                    's3RequestId': record.get('responseElements', {}).get('x-amz-request-id'),
+                })
             if not args['dry_run'] and message_succeeded:
+                logger.info(
+                    'Deleting SQS message: queue=%s messageId=%s notificationCount=%d notifications=%s',
+                    args['sqs_name'],
+                    message['MessageId'],
+                    len(notifications_processed),
+                    json.dumps(notifications_processed),
+                )
                 sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message['ReceiptHandle'])
             messages_processed += 1
 
