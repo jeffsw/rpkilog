@@ -507,6 +507,7 @@ class VrpDiff():
             http_auth=http_auth,
             use_ssl=use_ssl,
             verify_certs=use_ssl and es_ssl_verify,
+            ssl_show_warn=es_ssl_verify,
             connection_class=RequestsHttpConnection,
             http_compress=True,
         )
