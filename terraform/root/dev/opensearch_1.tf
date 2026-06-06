@@ -32,7 +32,7 @@ output "opensearch_1_admin_password" {
   value       = nonsensitive(random_password.opensearch_1_admin.result)
 }
 
-resource "random_string" "opensearch_1_diff_import_password" {
+resource "random_string" "opensearch_1_diff_import" {
   length  = 24
   lower   = true
   upper   = false
@@ -40,9 +40,14 @@ resource "random_string" "opensearch_1_diff_import_password" {
   special = false
 }
 
+output "opensearch_1_diff_import_username" {
+  description = "OpenSearch username for the diff_import_from_sqs cron job"
+  value       = local.diff_import_es_username
+}
+
 output "opensearch_1_diff_import_password" {
-  description = "Password for OpenSearch user vm-opensearch-1-dev used by the diff_import_from_sqs cron job"
-  value       = random_string.opensearch_1_diff_import_password.result
+  description = "OpenSearch password for the diff_import_from_sqs cron job"
+  value       = random_string.opensearch_1_diff_import.result
 }
 
 resource "random_password" "opensearch_1_console" {
