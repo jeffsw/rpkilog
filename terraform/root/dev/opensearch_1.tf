@@ -223,6 +223,23 @@ resource "opensearch_roles_mapping" "diff_import" {
   depends_on = [terraform_data.opensearch_1_ready]
 }
 
+resource "opensearch_dashboard_object" "diff_index_pattern" {
+  tenant_name = ""
+  body = jsonencode([
+    {
+      _id = "index-pattern:diff-*"
+      _source = {
+        type = "index-pattern"
+        "index-pattern" = {
+          title         = "diff-*"
+          timeFieldName = "observation_timestamp"
+        }
+      }
+    }
+  ])
+  depends_on = [terraform_data.opensearch_1_ready]
+}
+
 resource "opensearch_index_template" "diff" {
   name       = "diff"
   depends_on = [terraform_data.opensearch_1_ready]
