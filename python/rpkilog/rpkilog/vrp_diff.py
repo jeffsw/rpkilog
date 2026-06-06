@@ -1183,6 +1183,7 @@ class VrpDiff():
                 bulk_generator = opensearchpy.helpers.streaming_bulk(
                     client=es_client,
                     actions=bulk_actions,
+                    chunk_size=es_bulk_batch_size,
                     initial_backoff=5,
                     max_backoff=20,
                     max_retries=5,
