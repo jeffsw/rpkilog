@@ -12,6 +12,7 @@ import urllib.parse
 
 import boto3
 import dateutil.parser
+from botocore.exceptions import ClientError
 
 from rpkilog.local_storage_type import LocalStorageType
 
@@ -24,6 +25,14 @@ class DataFileSuper(ABC):
     and other things common to the different types of files we work with.
     """
     default_filename_strftime_expression: str
+    repr_attrs: list[str] = [
+        'datetimestamp',
+        'local_filepath_uncompressed',
+        'local_filepath_bz2',
+        'local_storage_type',
+        's3_url',
+        's3_stored',
+    ]
     # used by property getter/setter
     _default_s3_base_url: str = None
     default_local_storage_dir: Path = None
@@ -75,19 +84,19 @@ class DataFileSuper(ABC):
                 case LocalStorageType.BZIP2:
                     os.unlink(self.local_filepath_bz2)
                     self.local_storage_type = LocalStorageType.UNCACHED
+                case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
+                    pass
 
     def __repr__(self):
-        # TODO: move this to a classvar so it can be overridden
-        include_attrs = [
-            'datetimestamp',
-            'local_filepath_uncompressed',
-            'local_filepath_bz2',
-            'local_storage_type',
-            's3_url',
-            's3_stored',
-        ]
+        """
+        repr_attrs is a classvar listing the instance attribute names to include.  Subclasses can
+        override it to add, remove, or reorder fields — no need to override __repr__ itself:
+
+            class VrpDiffFile(DataFileSuper):
+                repr_attrs = DataFileSuper.repr_attrs + ['diff_count']
+        """
         brief_dict = {}
-        for aname in include_attrs:
+        for aname in self.repr_attrs:
             if avalue := getattr(self, aname, None):
                 brief_dict[aname] = avalue
         cname = self.__class__.__name__
@@ -99,7 +108,7 @@ class DataFileSuper(ABC):
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
                 pass
-            case LocalStorageType.UNCACHED:
+            case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
                 raise ValueError(f'cannot compress when there is no locally-cached snapshot file: {self}')
             case LocalStorageType.BZIP2:
                 if self.warned_compress_invoked_on_already_compressed_snapshot < 1:
@@ -115,6 +124,7 @@ class DataFileSuper(ABC):
         self.local_storage_type = LocalStorageType.BZIP2
         os.unlink(self.local_filepath_uncompressed)
 
+    @property
     def default_filename(self) -> str:
         retstr = self.datetimestamp.strftime(self.default_filename_strftime_expression)
         return retstr
@@ -193,7 +203,7 @@ class DataFileSuper(ABC):
     def local_filepath_bz2(self) -> Path:
         if self._local_filepath_bz2:
             return self._local_filepath_bz2
-        retpath = Path(self.local_storage_dir, self.default_filename())
+        retpath = Path(self.local_storage_dir, self.default_filename + '.bz2')
         return retpath
 
     @local_filepath_bz2.setter
@@ -204,7 +214,7 @@ class DataFileSuper(ABC):
     def local_filepath_uncompressed(self) -> Path:
         if self._local_filepath_uncompressed:
             return self._local_filepath_uncompressed
-        retpath = Path(self.local_storage_dir, self.default_filename())
+        retpath = Path(self.local_storage_dir, self.default_filename)
         return retpath
 
     @local_filepath_uncompressed.setter
@@ -224,50 +234,75 @@ class DataFileSuper(ABC):
         self._local_storage_dir = value
 
     def open_for_read(self) -> IO[bytes] | IO[str]:
+        """
+        Kept as a method rather than a property because it returns an open file handle that the
+        caller must close — resource factories conventionally stay as methods.
+        """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
                 retfh = open(self.local_filepath_uncompressed)
             case LocalStorageType.BZIP2:
                 retfh = bz2.open(self.local_filepath_bz2, mode='rb')
-            case LocalStorageType.UNCACHED:
+            case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
                 self.s3_download()
                 retfh = bz2.open(self.local_filepath_bz2, mode='rb')
             case _:
                 raise ValueError(f'unexpected value of local_storage_type: {self}')
         return retfh
 
+    @property
     def s3_bucket(self) -> str:
         url = urllib.parse.urlparse(self.s3_url)
         return url.netloc
 
     def s3_download(self):
-        bucket = boto3.resource('s3').Bucket(self.s3_bucket())
+        bucket = boto3.resource('s3').Bucket(self.s3_bucket)
         bucket.download_file(
-            key=self.s3_path,
-            filename=self.local_filepath_bz2,
+            Key=self.s3_path,
+            Filename=str(self.local_filepath_bz2),
         )
         self.local_storage_type = LocalStorageType.BZIP2
 
+    def s3_exists(self) -> bool:
+        """
+        Return True if the S3 object at self.s3_url already exists.
+
+        Kept as a method rather than a property because it makes a live network call — a property
+        that silently hits S3 on every attribute access would be surprising.
+        """
+        try:
+            boto3.client('s3').head_object(Bucket=self.s3_bucket, Key=self.s3_path)
+            retval = True
+        except ClientError as exc:
+            if exc.response['Error']['Code'] == '404':
+                retval = False
+            else:
+                raise
+        return retval
+
+    @property
     def s3_path(self) -> str:
         url = urllib.parse.urlparse(self.s3_url)
         retstr = url.path.lstrip('/')
         return retstr
 
     def s3_upload(self):
-        bucket = boto3.resource('s3').Bucket(self.s3_bucket())
+        bucket = boto3.resource('s3').Bucket(self.s3_bucket)
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
                 uncomp_fh = open(self.local_filepath_uncompressed, 'rb')
                 data_uncompressed = uncomp_fh.read()
                 uncomp_fh.close()
                 data_bz2 = bz2.compress(data_uncompressed)
-                s3_object = bucket.put_object(Key=self.s3_path(), Body=data_bz2)
+                s3_object = bucket.put_object(Key=self.s3_path, Body=data_bz2)
             case LocalStorageType.BZIP2:
                 bz2_fh = open(self.local_filepath_bz2, 'rb')
-                s3_object = bucket.put_object(Key=self.s3_path(), Body=bz2_fh)
-            case _:
+                s3_object = bucket.put_object(Key=self.s3_path, Body=bz2_fh)
+            case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
                 raise ValueError(f'cannot upload without a local file to upload from: {self}')
-        self.s3_url = f's3://{self.s3_bucket()}/{self.s3_path()}'
+            case _:
+                raise ValueError(f'unexpected value of local_storage_type: {self}')
+        self.s3_url = f's3://{self.s3_bucket}/{self.s3_path}'
         logger.info(f'uploaded {self.s3_url}')
         self.cleanup_upon_destroy = True
         return s3_object
@@ -283,11 +318,35 @@ class DataFileSuper(ABC):
             _ = urllib.parse.urlparse(value)
         self._s3_url = value
 
-    def s3_url_default(self):
-        # set and return the default s3_url based on filename & '.bz2' suffix
-        retstr = self.default_s3_base_url_get() + str(self.default_filename()) + '.bz2'
+    def s3_url_set_to_default(self):
+        """
+        Set self.s3_url to the default value derived from default_s3_base_url and default_filename,
+        then return it.
+
+        Kept as a method rather than a property because it has the side effect of mutating self.s3_url.
+        """
+        retstr = self.default_s3_base_url_get() + str(self.default_filename) + '.bz2'
         self.s3_url = retstr
         return retstr
+
+    def write_json(self, data: dict | list):
+        """Write data as JSON to self.local_filepath_uncompressed and update local_storage_type."""
+        with open(self.local_filepath_uncompressed, 'wt') as fh:
+            json.dump(data, fh)
+        self.local_storage_type = LocalStorageType.UNCOMPRESSED
+
+    def write_to_path(self, dest: Path):
+        """Copy the locally-cached file to dest, downloading from S3 first if UNCACHED."""
+        match self.local_storage_type:
+            case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
+                self.s3_download()
+                shutil.copy2(self.local_filepath_bz2, dest)
+            case LocalStorageType.BZIP2:
+                shutil.copy2(self.local_filepath_bz2, dest)
+            case LocalStorageType.UNCOMPRESSED:
+                shutil.copy2(self.local_filepath_uncompressed, dest)
+            case _:
+                raise ValueError(f'unexpected value of local_storage_type: {self}')
 
     def unlink_cached(self):
         """
