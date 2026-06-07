@@ -35,3 +35,9 @@ popd
 ##############################
 # rpkilog python from github
 ${VENV_DIR}/bin/pip3 install "git+https://github.com/jeffsw/rpkilog.git@${INSTALL_BRANCH}#subdirectory=python/rpkilog"
+
+##############################
+# PATH: make venv tools available to all users via login shells
+cat > /etc/profile.d/rpkilog_venv.sh << 'EOF'
+export PATH="/opt/rpkilog/venv/bin:$PATH"
+EOF
