@@ -3,6 +3,7 @@ import argparse
 import bz2
 from collections import deque
 import getpass
+import glob
 import importlib.metadata
 import json
 import logging
@@ -812,8 +813,8 @@ class VrpDiff():
                             help='S3 key of the diff file to import (requires --bucket)')
         source.add_argument('--all-files', action='store_true',
                             help='Import all diff files in the S3 bucket, youngest first (requires --bucket)')
-        source.add_argument('--import-from-disk', type=Path, metavar='PATH',
-                            help='Local diff file to import, e.g. /data/s3-rpkilog-diff/19810101T121314.vrpdiff.json.bz2')
+        source.add_argument('--import-from-disk', type=str, metavar='PATTERN',
+                            help='Glob pattern of local diff files to import, e.g. /data/s3-rpkilog-diff/*.vrpdiff.json.bz2')
         ap.add_argument('--bucket', help='S3 bucket containing diff file (used with --key or --all-files)')
         ap.add_argument('--all-limit', type=int, help='Max number of files to import when using --all-files')
         ap.add_argument('--all-date-min', type=dateutil.parser.parse, help='Import files only on-or-after this date')
@@ -855,15 +856,41 @@ class VrpDiff():
                 args[argname] = args[argname].replace(tzinfo=timezone.utc)
 
         if 'import_from_disk' in args:
-            result = cls.generic_entry_point_import(
-                es_bulk_batch_size=args['bulk_batch_size'],
-                es_endpoint=args['es_endpoint'],
-                src_local_path=args['import_from_disk'],
-                es_username=es_username,
-                es_password=es_password,
-                es_ssl_verify=es_ssl_verify,
-            )
-            print(json.dumps(result))
+            matched_strs = glob.glob(str(args['import_from_disk']))
+            file_list = []
+            for p in matched_strs:
+                path = Path(p)
+                try:
+                    dt = cls.get_datetime_from_diff_filename(summary_filename=path.name)
+                except ValueError:
+                    logger.warning('Skipping %s: could not parse datetime from filename', path)
+                    continue
+                file_list.append((dt, path))
+            file_list.sort(key=operator.itemgetter(0), reverse=True)
+            import_file_count = 0
+            for dt, path in file_list:
+                if 'all_date_min' in args and dt < args['all_date_min']:
+                    logger.debug('SKIP %s: earlier than --all-date-min', path)
+                    continue
+                if 'all_date_max' in args and args['all_date_max'] < dt:
+                    logger.debug('SKIP %s: later than --all-date-max', path)
+                    continue
+                logger.info('Importing %s', path)
+                result = cls.generic_entry_point_import(
+                    es_bulk_batch_size=args['bulk_batch_size'],
+                    es_endpoint=args['es_endpoint'],
+                    progress_bar_enable=True,
+                    src_local_path=path,
+                    es_username=es_username,
+                    es_password=es_password,
+                    es_ssl_verify=es_ssl_verify,
+                )
+                import_file_count += 1
+                logger.info('Imported file count %d name %s result: %s', import_file_count, path, json.dumps(result))
+                if args.get('all_limit', 1000000000) <= import_file_count:
+                    break
+                if 'limit_cpu' in args:
+                    cls.limit_cpu_sleep(invocation_time=invocation_time, limit=args['limit_cpu'] / 100)
         elif args.get('all_files', False):
             if 'bucket' not in args:
                 ap.error('--bucket is required with --all-files')
