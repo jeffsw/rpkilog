@@ -806,17 +806,6 @@ class VrpDiff():
 
     @classmethod
     def cli_entry_point_import(cls):
-        """
-        TODO: The progress bar display conflicts with INFO loglevel from opensearch.  We must do something
-        about this, as it currently looks like below when importing multiple files:
-
-        2026-06-07T01:14:48.140 vrp_diff.py 1188 generic_entry_point_import INFO diff contains 167709 records
-         0%|                                | 0/167709 [00:00<?, ?records/s]
-        2026-06-07T01:14:49.437 base.py 258 log_request_success INFO POST https://localhost:9200/_bulk [status:200 request:0.311s]
-        12%|██████████████▋                 | 20000/167709 [00:01<00:09, 14961.86records/s]
-        2026-06-07T01:14:50.788 base.py 258 log_request_success INFO POST https://localhost:9200/_bulk [status:200 request:0.511s]
-        24%|█████████████████████████████▎  | 40000/167709 [00:02<00:08, 14833.48records/s]
-        """
         invocation_time=time.time()
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         source = ap.add_mutually_exclusive_group(required=True)
@@ -827,7 +816,7 @@ class VrpDiff():
         source.add_argument('--import-from-disk', type=str, metavar='PATTERN',
                             help='Glob pattern of local diff files to import, e.g. /data/s3-rpkilog-diff/*.vrpdiff.json.bz2')
         ap.add_argument('--bucket', help='S3 bucket containing diff file (used with --key or --all-files)')
-        ap.add_argument('--all-limit', type=int, help='Max number of files to import when using --all-files')
+        ap.add_argument('--all-limit', type=int, help='Max number of files to import (used with --all-files or --import-from-disk)')
         ap.add_argument('--all-date-min', type=dateutil.parser.parse, help='Import files only on-or-after this date')
         ap.add_argument('--all-date-max', type=dateutil.parser.parse, help='Import files only on-or-before this date')
         ap.add_argument('--bulk-batch-size', type=int, default=200, help='Number of records inserted per ES _bulk operation')
@@ -838,6 +827,8 @@ class VrpDiff():
                         help='OpenSearch password for HTTP basic auth (dev only)')
         ap.add_argument('--es-ssl-verify', action=argparse.BooleanOptionalAction,
                         help='Verify OpenSearch TLS certificate; also settable via ES_SSL_VERIFY env var (disable for dev instances without a valid cert)')
+        ap.add_argument('--progress', action=argparse.BooleanOptionalAction, default=False,
+                        help='Show a progress bar; lowers opensearch log level to WARNING to avoid conflicts (default: off)')
         ap.add_argument('--limit-cpu', type=int, help='Try to limit CPU utilization to N percent, e.g. 10.')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
@@ -868,6 +859,8 @@ class VrpDiff():
 
         if 'import_from_disk' in args:
             matched_strs = glob.glob(str(args['import_from_disk']))
+            if not matched_strs:
+                logger.warning('--import-from-disk pattern matched no files: %s', args['import_from_disk'])
             file_list = []
             for p in matched_strs:
                 path = Path(p)
@@ -890,7 +883,7 @@ class VrpDiff():
                 result = cls.generic_entry_point_import(
                     es_bulk_batch_size=args['bulk_batch_size'],
                     es_endpoint=args['es_endpoint'],
-                    progress_bar_enable=True,
+                    progress_bar_enable=args['progress'],
                     src_local_path=path,
                     es_username=es_username,
                     es_password=es_password,
@@ -923,7 +916,7 @@ class VrpDiff():
                 result = cls.generic_entry_point_import(
                     es_bulk_batch_size=args['bulk_batch_size'],
                     es_endpoint=args['es_endpoint'],
-                    progress_bar_enable=True,
+                    progress_bar_enable=args['progress'],
                     src_s3_bucket_name=args['bucket'],
                     src_s3_key=buckobj.key,
                     es_username=es_username,
@@ -1167,7 +1160,8 @@ class VrpDiff():
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
-        logging.getLogger('opensearch').setLevel(logging.INFO)
+        opensearch_log_level = logging.WARNING if progress_bar_enable else logging.INFO
+        logging.getLogger('opensearch').setLevel(opensearch_log_level)
         realtime_initial = time.time()
         if src_local_path is not None:
             diff_file_path = src_local_path
