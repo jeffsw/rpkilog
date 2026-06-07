@@ -26,7 +26,14 @@ class VrpDiffFile(DataFileSuper):
 
     @classmethod
     def from_summary_filename(cls, summary_filename: str, **kwargs) -> 'VrpDiffFile':
-        """Construct a VrpDiffFile with datetimestamp derived from a snapshot-summary filename."""
+        """
+        Construct a VrpDiffFile with datetimestamp derived from a snapshot-summary filename.
+
+        TODO: The regex uses [0-9]{4,6} for the time component, but SnapshotSummaryFile filenames
+         always use exactly 6 digits (HHMMSS).  The loose pattern silently accepts 4- or 5-digit
+         times.  Consider tightening to [0-9]{6} to match the summary class, or add a note here if
+         the looser match is intentional for legacy filename compatibility.
+        """
         rem = re.search(r'(?P<dt>\d{8}T\d{4,6}Z)\.json(\.bz2)?$', str(summary_filename))
         if not rem:
             raise ValueError(

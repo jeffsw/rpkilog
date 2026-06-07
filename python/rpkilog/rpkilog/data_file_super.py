@@ -23,6 +23,26 @@ class DataFileSuper(ABC):
     """
     Superclass for RoutinatorSnapshotFile, SummaryFile, and others.  This helps with bzipping, S3 uploads,
     and other things common to the different types of files we work with.
+
+    TODO: s3_stored is declared in __init__ and appears in repr_attrs, but s3_upload() never sets
+     self.s3_stored = True.  Either set it there or remove the attribute entirely.
+
+    TODO: default_filename_strftime_expression is a bare annotation with no default and no enforcement.
+     A subclass that omits it gets AttributeError deep inside the default_filename property rather than
+     a helpful error at class-definition time.  Consider an __init_subclass__ check, e.g.:
+       def __init_subclass__(cls, **kwargs):
+           super().__init_subclass__(**kwargs)
+           if not hasattr(cls, 'default_filename_strftime_expression'):
+               raise TypeError(f'{cls.__name__} must define default_filename_strftime_expression')
+
+    TODO: The warned_* counters are class-level ints.  In Python, self.x += 1 on a class-level int
+     creates a new instance attribute on first write, so they do work per-instance — but the pattern
+     is confusing to readers who expect class-level state to be shared.  Consider moving them to
+     __init__ as self.warned_... = 0 for clarity.
+
+    TODO: warned_default_local_storage_dir_unconfigured is declared but never referenced anywhere in
+     the codebase.  It was presumably intended for a warning path in local_storage_dir, which raises
+     instead.  Remove it or implement the warning it was meant for.
     """
     default_filename_strftime_expression: str
     repr_attrs: list[str] = [
@@ -173,6 +193,13 @@ class DataFileSuper(ABC):
         Raise an exception if neither are successful (type of exception depends on how json.load() fails)
 
         Update self.local_storage_type and self.local_filepath_uncompressed or self.local_filepath_bz2.
+
+        TODO: Both branches open a file handle with fh.close() rather than a with statement.  If
+         json.load(fh) raises (e.g. corrupt file, valid bz2 but invalid JSON), the handle leaks.
+         Fix: wrap both opens in with blocks.
+
+        TODO: Both branches parse the entire JSON just to confirm the file is readable.  Checking only
+         the first few bytes for the bz2 magic (\x42\x5a\x68) would be far cheaper for large files.
         """
         try:
             fh = bz2.open(filename=path, mode='r')
@@ -194,6 +221,10 @@ class DataFileSuper(ABC):
 
     @property
     def json_data_cache(self):
+        """
+        TODO: open_for_read() returns a file handle that is never closed here.  json.load(fh)
+         reads from it and then it is abandoned until GC.  Fix: with self.open_for_read() as fh:
+        """
         if not self._json_data_cache:
             fh = self.open_for_read()
             self._json_data_cache = json.load(fh)
@@ -252,6 +283,10 @@ class DataFileSuper(ABC):
 
     @property
     def s3_bucket(self) -> str:
+        """
+        TODO: if s3_url is None, urllib.parse.urlparse(None) raises TypeError with no helpful context.
+         Add: if self.s3_url is None: raise ValueError('s3_url must be set before accessing s3_bucket')
+        """
         url = urllib.parse.urlparse(self.s3_url)
         return url.netloc
 
@@ -282,6 +317,10 @@ class DataFileSuper(ABC):
 
     @property
     def s3_path(self) -> str:
+        """
+        TODO: if s3_url is None, urllib.parse.urlparse(None) raises TypeError with no helpful context.
+         Add: if self.s3_url is None: raise ValueError('s3_url must be set before accessing s3_path')
+        """
         url = urllib.parse.urlparse(self.s3_url)
         retstr = url.path.lstrip('/')
         return retstr
@@ -296,6 +335,7 @@ class DataFileSuper(ABC):
                 data_bz2 = bz2.compress(data_uncompressed)
                 s3_object = bucket.put_object(Key=self.s3_path, Body=data_bz2)
             case LocalStorageType.BZIP2:
+                # TODO: bz2_fh is never explicitly closed; use a with block
                 bz2_fh = open(self.local_filepath_bz2, 'rb')
                 s3_object = bucket.put_object(Key=self.s3_path, Body=bz2_fh)
             case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
@@ -353,7 +393,8 @@ class DataFileSuper(ABC):
         If there is a locally-cached copy of the snapshot, unlink it.
         If there's already NOT a copy, log a warning (just once) but don't raise an exception.
 
-        I think self.cleanup_upon_destroy will make this method unnecessary.  Maybe remove it.
+        TODO: cleanup_upon_destroy already handles deletion on GC.  Evaluate whether this method
+         is still needed at any call site, and remove it if not.
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
