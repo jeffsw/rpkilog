@@ -829,6 +829,8 @@ class VrpDiff():
                         help='Verify OpenSearch TLS certificate; also settable via ES_SSL_VERIFY env var (disable for dev instances without a valid cert)')
         ap.add_argument('--progress', action=argparse.BooleanOptionalAction, default=False,
                         help='Show a progress bar; lowers opensearch log level to WARNING to avoid conflicts (default: off)')
+        ap.add_argument('--sort-ascending', action='store_true', default=False,
+                        help='Import files in ascending datetime order; default is descending (newest first)')
         ap.add_argument('--limit-cpu', type=int, help='Try to limit CPU utilization to N percent, e.g. 10.')
         ap.add_argument('--log-level', help='Log level.  Try ERROR, INFO (default) or DEBUG.')
         ap.add_argument('--debugger', action='store_true', help='Initiate debugger upon startup')
@@ -870,7 +872,7 @@ class VrpDiff():
                     logger.warning('Skipping %s: could not parse datetime from filename', path)
                     continue
                 file_list.append((dt, path))
-            file_list.sort(key=operator.itemgetter(0), reverse=True)
+            file_list.sort(key=operator.itemgetter(0), reverse=not args['sort_ascending'])
             import_file_count = 0
             for dt, path in file_list:
                 if 'all_date_min' in args and dt < args['all_date_min']:
@@ -901,7 +903,7 @@ class VrpDiff():
             # Invoke cls.generic_entry_point_import() on every file in the bucket, youngest first.
             diff_bucket = boto3.resource('s3').Bucket(args['bucket'])
             import_file_count = 0
-            diff_bucket_objects = sorted(diff_bucket.objects.all(), key=operator.attrgetter('key'), reverse=True)
+            diff_bucket_objects = sorted(diff_bucket.objects.all(), key=operator.attrgetter('key'), reverse=not args['sort_ascending'])
             for buckobj in diff_bucket_objects:
                 dt = cls.get_datetime_from_diff_filename(summary_filename=buckobj.key)
                 if 'all_date_min' in args:
