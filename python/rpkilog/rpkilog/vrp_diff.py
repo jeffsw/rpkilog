@@ -806,6 +806,17 @@ class VrpDiff():
 
     @classmethod
     def cli_entry_point_import(cls):
+        """
+        TODO: The progress bar display conflicts with INFO loglevel from opensearch.  We must do something
+        about this, as it currently looks like below when importing multiple files:
+
+        2026-06-07T01:14:48.140 vrp_diff.py 1188 generic_entry_point_import INFO diff contains 167709 records
+         0%|                                | 0/167709 [00:00<?, ?records/s]
+        2026-06-07T01:14:49.437 base.py 258 log_request_success INFO POST https://localhost:9200/_bulk [status:200 request:0.311s]
+        12%|██████████████▋                 | 20000/167709 [00:01<00:09, 14961.86records/s]
+        2026-06-07T01:14:50.788 base.py 258 log_request_success INFO POST https://localhost:9200/_bulk [status:200 request:0.511s]
+        24%|█████████████████████████████▎  | 40000/167709 [00:02<00:08, 14833.48records/s]
+        """
         invocation_time=time.time()
         ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
         source = ap.add_mutually_exclusive_group(required=True)
