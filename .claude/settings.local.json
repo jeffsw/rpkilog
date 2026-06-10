@@ -4,7 +4,9 @@
       "Bash(python -m pytest tests/test_vrp_diff_list.py -v -m slow)",
       "Bash(python -m pytest tests/test_vrp_diff_list.py -v)",
       "Bash(python -m pytest tests/test_vrp_diff_list.py -v -m \"not slow\")",
-      "WebFetch(domain:registry.terraform.io)"
+      "WebFetch(domain:registry.terraform.io)",
+      "Bash(terraform fmt *)",
+      "Bash(terraform validate *)"
     ]
   }
 }
