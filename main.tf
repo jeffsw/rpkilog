@@ -740,6 +740,24 @@ resource "aws_sqs_queue" "snapshot_summary_dev" {
   name                       = "snapshot_summary_dev"
   message_retention_seconds  = 86400 * 14
   visibility_timeout_seconds = 300
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.sqs_dlq_snapshot_summary_dev.arn
+    maxReceiveCount     = 5
+  })
+}
+
+resource "aws_sqs_queue" "sqs_dlq_snapshot_summary_dev" {
+  name                       = "sqs_dlq_snapshot_summary_dev"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "sqs_dlq_snapshot_summary_dev" {
+  queue_url = aws_sqs_queue.sqs_dlq_snapshot_summary_dev.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue"
+    sourceQueueArns   = [aws_sqs_queue.snapshot_summary_dev.arn]
+  })
 }
 
 resource "aws_sqs_queue_policy" "snapshot_summary_dev" {
@@ -751,6 +769,24 @@ resource "aws_sqs_queue" "snapshot_summary_prod" {
   name                       = "snapshot_summary_prod"
   message_retention_seconds  = 86400 * 14
   visibility_timeout_seconds = 300
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.sqs_dlq_snapshot_summary_prod.arn
+    maxReceiveCount     = 5
+  })
+}
+
+resource "aws_sqs_queue" "sqs_dlq_snapshot_summary_prod" {
+  name                       = "sqs_dlq_snapshot_summary_prod"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "sqs_dlq_snapshot_summary_prod" {
+  queue_url = aws_sqs_queue.sqs_dlq_snapshot_summary_prod.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue"
+    sourceQueueArns   = [aws_sqs_queue.snapshot_summary_prod.arn]
+  })
 }
 
 resource "aws_sqs_queue_policy" "snapshot_summary_prod" {
@@ -857,12 +893,48 @@ resource "aws_sqs_queue" "diff_dev" {
   name                       = "diff_dev"
   message_retention_seconds  = 86400 * 14
   visibility_timeout_seconds = 300
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.sqs_dlq_diff_dev.arn
+    maxReceiveCount     = 5
+  })
+}
+
+resource "aws_sqs_queue" "sqs_dlq_diff_dev" {
+  name                       = "sqs_dlq_diff_dev"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "sqs_dlq_diff_dev" {
+  queue_url = aws_sqs_queue.sqs_dlq_diff_dev.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue"
+    sourceQueueArns   = [aws_sqs_queue.diff_dev.arn]
+  })
 }
 
 resource "aws_sqs_queue" "diff_prod" {
   name                       = "diff_prod"
   message_retention_seconds  = 86400 * 14
   visibility_timeout_seconds = 300
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.sqs_dlq_diff_prod.arn
+    maxReceiveCount     = 5
+  })
+}
+
+resource "aws_sqs_queue" "sqs_dlq_diff_prod" {
+  name                       = "sqs_dlq_diff_prod"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "sqs_dlq_diff_prod" {
+  queue_url = aws_sqs_queue.sqs_dlq_diff_prod.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue"
+    sourceQueueArns   = [aws_sqs_queue.diff_prod.arn]
+  })
 }
 
 data "aws_iam_policy_document" "sqs_diff_sns_send" {
