@@ -570,7 +570,7 @@ wheels = [
 
 [[package]]
 name = "rpkilog"
-version = "0.26060701"
+version = "0.26060702"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

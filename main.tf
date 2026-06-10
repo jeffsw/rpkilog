@@ -492,7 +492,7 @@ resource "aws_iam_policy" "lambda_vrp_cache_diff" {
           "sqs:SendMessage"
         ]
         Resource = [
-          aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn
+          aws_sqs_queue.lambda_dlq_vrp_cache_diff_prod.arn
         ]
       },
       {
@@ -558,6 +558,16 @@ resource "aws_iam_policy" "lambda_diff_import" {
         ]
         Resource : [
           "arn:aws:logs:*:*:*",
+        ]
+      },
+      {
+        Sid    = "DeadLetterQueue"
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = [
+          aws_sqs_queue.lambda_dlq_diff_import_prod.arn
         ]
       }
     ]
@@ -710,17 +720,20 @@ resource "aws_iam_group_membership" "es_master" {
 }
 
 ##############################
-# SNS
-resource "aws_sns_topic" "lambda_dead_letter_queue_for_diff" {
-  name = "lambda_dead_letter_queue_for_diff"
+# SQS
+# Dead-letter queues receiving on_failure Lambda Destination messages from our
+# asynchronously-invoked lambdas.  Messages are sent by each lambda's execution role,
+# which must have sqs:SendMessage permission on its queue.
+resource "aws_sqs_queue" "lambda_dlq_vrp_cache_diff_prod" {
+  name                       = "lambda_dlq_vrp_cache_diff_prod"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
 }
 
-##############################
-# SQS
-resource "aws_sqs_queue" "lambda_dlq_for_vrp_cache_diff" {
-  name                      = "lambda_dlq_for_vrp_cache_diff"
-  max_message_size          = 2048
-  message_retention_seconds = 1209600 # 14 days
+resource "aws_sqs_queue" "lambda_dlq_diff_import_prod" {
+  name                       = "lambda_dlq_diff_import_prod"
+  message_retention_seconds  = 86400 * 14
+  visibility_timeout_seconds = 300
 }
 
 resource "aws_sqs_queue" "snapshot_summary_dev" {
@@ -1236,9 +1249,6 @@ resource "aws_lambda_function" "vrp_cache_diff" {
       diff_bucket             = aws_s3_bucket.rpkilog_diff.id
     }
   }
-  dead_letter_config {
-    target_arn = aws_sqs_queue.lambda_dlq_for_vrp_cache_diff.arn
-  }
   lifecycle {
     # Never update the lambda deployment package.  We use another tool for that, not Terraform.
     ignore_changes = [filename]
@@ -1264,6 +1274,11 @@ resource "aws_lambda_permission" "vrp_cache_diff_from_sns" {
 resource "aws_lambda_function_event_invoke_config" "vrp_cache_diff" {
   function_name          = aws_lambda_function.vrp_cache_diff.function_name
   maximum_retry_attempts = 0
+  destination_config {
+    on_failure {
+      destination = aws_sqs_queue.lambda_dlq_vrp_cache_diff_prod.arn
+    }
+  }
 }
 
 resource "aws_lambda_function" "diff_import" {
@@ -1302,6 +1317,11 @@ resource "aws_lambda_permission" "diff_import_from_sns" {
 resource "aws_lambda_function_event_invoke_config" "diff_import" {
   function_name          = aws_lambda_function.diff_import.function_name
   maximum_retry_attempts = 0
+  destination_config {
+    on_failure {
+      destination = aws_sqs_queue.lambda_dlq_diff_import_prod.arn
+    }
+  }
 }
 
 ##############################
