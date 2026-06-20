@@ -23,26 +23,6 @@ class DataFileSuper(ABC):
     """
     Superclass for RoutinatorSnapshotFile, SummaryFile, and others.  This helps with bzipping, S3 uploads,
     and other things common to the different types of files we work with.
-
-    TODO: s3_stored is declared in __init__ and appears in repr_attrs, but s3_upload() never sets
-     self.s3_stored = True.  Either set it there or remove the attribute entirely.
-
-    TODO: default_filename_strftime_expression is a bare annotation with no default and no enforcement.
-     A subclass that omits it gets AttributeError deep inside the default_filename property rather than
-     a helpful error at class-definition time.  Consider an __init_subclass__ check, e.g.:
-       def __init_subclass__(cls, **kwargs):
-           super().__init_subclass__(**kwargs)
-           if not hasattr(cls, 'default_filename_strftime_expression'):
-               raise TypeError(f'{cls.__name__} must define default_filename_strftime_expression')
-
-    TODO: The warned_* counters are class-level ints.  In Python, self.x += 1 on a class-level int
-     creates a new instance attribute on first write, so they do work per-instance — but the pattern
-     is confusing to readers who expect class-level state to be shared.  Consider moving them to
-     __init__ as self.warned_... = 0 for clarity.
-
-    TODO: warned_default_local_storage_dir_unconfigured is declared but never referenced anywhere in
-     the codebase.  It was presumably intended for a warning path in local_storage_dir, which raises
-     instead.  Remove it or implement the warning it was meant for.
     """
     default_filename_strftime_expression: str
     repr_attrs: list[str] = [
@@ -58,9 +38,21 @@ class DataFileSuper(ABC):
     default_local_storage_dir: Path = None
     # warning deduplication so log won't get spammy about minor issues
     warned_compress_invoked_on_already_compressed_snapshot = 0
-    warned_default_local_storage_dir_unconfigured = 0
     warned_file_already_does_not_exist = 0
     warned_unlink_cached_none_found = 0
+
+    def __init_subclass__(cls, **kwargs):
+        """
+        Enforce at class-definition time that every concrete subclass defines
+        default_filename_strftime_expression.  Without this check, a subclass that omits it would
+        instead raise a confusing AttributeError deep inside the default_filename property.
+        """
+        super().__init_subclass__(**kwargs)
+        if not hasattr(cls, 'default_filename_strftime_expression'):
+            raise TypeError(
+                f"{cls.__name__} must define default_filename_strftime_expression, "
+                f"e.g. '%Y%m%dT%H%M%SZ.filetype.json'"
+            )
 
     def __init__(
             self,
@@ -131,9 +123,9 @@ class DataFileSuper(ABC):
             case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
                 raise ValueError(f'cannot compress when there is no locally-cached snapshot file: {self}')
             case LocalStorageType.BZIP2:
-                if self.warned_compress_invoked_on_already_compressed_snapshot < 1:
+                if type(self).warned_compress_invoked_on_already_compressed_snapshot < 1:
                     logger.warning(f'compress invoked on already-compressed snapshot file: {self}')
-                self.warned_compress_invoked_on_already_compressed_snapshot += 1
+                type(self).warned_compress_invoked_on_already_compressed_snapshot += 1
                 return
             case _:
                 raise ValueError(f'unexpected value of local_storage_type: {self}')
@@ -342,6 +334,7 @@ class DataFileSuper(ABC):
                 raise ValueError(f'cannot upload without a local file to upload from: {self}')
             case _:
                 raise ValueError(f'unexpected value of local_storage_type: {self}')
+        self.s3_stored = True
         self.s3_url = f's3://{self.s3_bucket}/{self.s3_path}'
         logger.info(f'uploaded {self.s3_url}')
         self.cleanup_upon_destroy = True
@@ -402,20 +395,20 @@ class DataFileSuper(ABC):
                     os.unlink(self.local_filepath_uncompressed)
                     self.local_storage_type = LocalStorageType.UNCACHED
                 except FileNotFoundError:
-                    if self.warned_unlink_cached_none_found < 1:
+                    if type(self).warned_unlink_cached_none_found < 1:
                         logger.warning(f'file already does not exist (warning only once): {self}')
-                    self.warned_unlink_cached_none_found += 1
+                    type(self).warned_unlink_cached_none_found += 1
             case LocalStorageType.BZIP2:
                 try:
                     os.unlink(self.local_filepath_bz2)
                     self.local_storage_type = LocalStorageType.UNCACHED
                 except FileNotFoundError:
-                    if self.warned_unlink_cached_none_found < 1:
+                    if type(self).warned_unlink_cached_none_found < 1:
                         logger.warning(f'file already does not exist (warning only once): {self}')
-                        self.warned_unlink_cached_none_found += 1
+                    type(self).warned_unlink_cached_none_found += 1
             case LocalStorageType.UNCACHED:
-                if self.warned_file_already_does_not_exist < 1:
+                if type(self).warned_file_already_does_not_exist < 1:
                     logger.warning(f'file already does not exist (warning only once): {self}')
-                    self.warned_file_already_does_not_exist += 1
+                type(self).warned_file_already_does_not_exist += 1
             case _:
                 logger.warning(f'unexpected value of LocalStorageType: {self}')
