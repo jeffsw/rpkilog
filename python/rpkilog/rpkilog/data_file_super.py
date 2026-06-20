@@ -84,20 +84,39 @@ class DataFileSuper(ABC):
 
         Caller can also manually set it to True.  Maybe they want this after summarization.
 
-        TODO: Consider adding context manager support to DataFileSuper and using for cleanup instead
-         of destructor.  Copilot PR review points out exceptions during destructor phase aren't ergonomic
-         and mutating external state in destructor may be surprising.
+        This destructor is retained as a fallback for instances not used in a `with` block.  When
+        deterministic cleanup is desired, prefer the context manager (__enter__/__exit__) instead.
         """
         if self.cleanup_upon_destroy:
-            match self.local_storage_type:
-                case LocalStorageType.UNCOMPRESSED:
-                    os.unlink(self.local_filepath_uncompressed)
-                    self.local_storage_type = LocalStorageType.UNCACHED
-                case LocalStorageType.BZIP2:
-                    os.unlink(self.local_filepath_bz2)
-                    self.local_storage_type = LocalStorageType.UNCACHED
-                case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
-                    pass
+            self._cleanup_local_cache()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Clean up the local cached file on context exit when self.cleanup_upon_destroy == True
+        (s3_upload() sets it True after a successful upload).  Returns False so any in-flight
+        exception is never suppressed.  __del__ remains a fallback for non-`with` usage.
+        """
+        if self.cleanup_upon_destroy:
+            self._cleanup_local_cache()
+        return False
+
+    def _cleanup_local_cache(self):
+        """
+        Unlink the locally-cached file (if any) and mark storage as UNCACHED.  Shared by __del__
+        and __exit__; callers gate on self.cleanup_upon_destroy.
+        """
+        match self.local_storage_type:
+            case LocalStorageType.UNCOMPRESSED:
+                os.unlink(self.local_filepath_uncompressed)
+                self.local_storage_type = LocalStorageType.UNCACHED
+            case LocalStorageType.BZIP2:
+                os.unlink(self.local_filepath_bz2)
+                self.local_storage_type = LocalStorageType.UNCACHED
+            case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
+                pass
 
     def __repr__(self):
         """
@@ -186,17 +205,13 @@ class DataFileSuper(ABC):
 
         Update self.local_storage_type and self.local_filepath_uncompressed or self.local_filepath_bz2.
 
-        TODO: Both branches open a file handle with fh.close() rather than a with statement.  If
-         json.load(fh) raises (e.g. corrupt file, valid bz2 but invalid JSON), the handle leaks.
-         Fix: wrap both opens in with blocks.
-
-        TODO: Both branches parse the entire JSON just to confirm the file is readable.  Checking only
-         the first few bytes for the bz2 magic (\x42\x5a\x68) would be far cheaper for large files.
+        NOTE: Both branches parse the entire JSON just to confirm the file is readable.  Checking only
+        the first few bytes for the bz2 magic (\x42\x5a\x68) would be far cheaper for large files.  I've
+        kept the full JSON load as a verification step.
         """
         try:
-            fh = bz2.open(filename=path, mode='r')
-            _ = json.load(fh)
-            fh.close()
+            with bz2.open(filename=path, mode='r') as fh:
+                _ = json.load(fh)
             self.local_storage_type = LocalStorageType.BZIP2
             self.local_filepath_bz2 = path
             return self.local_storage_type
@@ -204,22 +219,17 @@ class DataFileSuper(ABC):
             # bz2 raises OSError when you open a non-bz2 file and try to read from it.
             pass
 
-        fh = open(file=path, mode='rt')
-        _ = json.load(fh)
-        fh.close()
+        with open(file=path, mode='rt') as fh:
+            _ = json.load(fh)
         self.local_storage_type = LocalStorageType.UNCOMPRESSED
         self.local_filepath_uncompressed = path
         return self.local_storage_type
 
     @property
     def json_data_cache(self):
-        """
-        TODO: open_for_read() returns a file handle that is never closed here.  json.load(fh)
-         reads from it and then it is abandoned until GC.  Fix: with self.open_for_read() as fh:
-        """
         if not self._json_data_cache:
-            fh = self.open_for_read()
-            self._json_data_cache = json.load(fh)
+            with self.open_for_read() as fh:
+                self._json_data_cache = json.load(fh)
         return self._json_data_cache
 
     @property
@@ -275,10 +285,8 @@ class DataFileSuper(ABC):
 
     @property
     def s3_bucket(self) -> str:
-        """
-        TODO: if s3_url is None, urllib.parse.urlparse(None) raises TypeError with no helpful context.
-         Add: if self.s3_url is None: raise ValueError('s3_url must be set before accessing s3_bucket')
-        """
+        if self.s3_url is None:
+            raise ValueError('s3_url must be set before accessing s3_bucket')
         url = urllib.parse.urlparse(self.s3_url)
         return url.netloc
 
@@ -309,10 +317,8 @@ class DataFileSuper(ABC):
 
     @property
     def s3_path(self) -> str:
-        """
-        TODO: if s3_url is None, urllib.parse.urlparse(None) raises TypeError with no helpful context.
-         Add: if self.s3_url is None: raise ValueError('s3_url must be set before accessing s3_path')
-        """
+        if self.s3_url is None:
+            raise ValueError('s3_url must be set before accessing s3_path')
         url = urllib.parse.urlparse(self.s3_url)
         retstr = url.path.lstrip('/')
         return retstr
@@ -327,9 +333,8 @@ class DataFileSuper(ABC):
                 data_bz2 = bz2.compress(data_uncompressed)
                 s3_object = bucket.put_object(Key=self.s3_path, Body=data_bz2)
             case LocalStorageType.BZIP2:
-                # TODO: bz2_fh is never explicitly closed; use a with block
-                bz2_fh = open(self.local_filepath_bz2, 'rb')
-                s3_object = bucket.put_object(Key=self.s3_path, Body=bz2_fh)
+                with open(self.local_filepath_bz2, 'rb') as bz2_fh:
+                    s3_object = bucket.put_object(Key=self.s3_path, Body=bz2_fh)
             case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
                 raise ValueError(f'cannot upload without a local file to upload from: {self}')
             case _:
@@ -385,9 +390,6 @@ class DataFileSuper(ABC):
         """
         If there is a locally-cached copy of the snapshot, unlink it.
         If there's already NOT a copy, log a warning (just once) but don't raise an exception.
-
-        TODO: cleanup_upon_destroy already handles deletion on GC.  Evaluate whether this method
-         is still needed at any call site, and remove it if not.
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:

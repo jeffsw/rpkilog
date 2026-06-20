@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -575,6 +575,7 @@ source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "boto3-stubs" },
+    { name = "botocore" },
     { name = "netaddr" },
     { name = "opensearch-py" },
     { name = "psutil" },
@@ -617,6 +618,7 @@ dev = [
 requires-dist = [
     { name = "boto3" },
     { name = "boto3-stubs", specifier = "~=1.43.14" },
+    { name = "botocore", specifier = ">=1.43.14" },
     { name = "build", marker = "extra == 'dev'" },
     { name = "flake8", marker = "extra == 'dev'" },
     { name = "flake8", marker = "extra == 'tests'" },

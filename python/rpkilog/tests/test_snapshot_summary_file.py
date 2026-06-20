@@ -74,6 +74,38 @@ def test_bzip2_compress_changes_state(tmp_path):
     assert not f.local_filepath_uncompressed.exists()
 
 
+def test_context_manager_cleans_up_when_flagged(tmp_path):
+    sample_data = {'metadata': {'buildtime': '2025-07-20T10:01:45Z'}, 'roas': []}
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT, local_storage_dir=tmp_path)
+    with f as cm:
+        assert cm is f
+        f.write_json(sample_data)
+        f.cleanup_upon_destroy = True
+        local_path = f.local_filepath_uncompressed
+        assert local_path.exists()
+    assert not local_path.exists()
+    assert f.local_storage_type == LocalStorageType.UNCACHED
+
+
+def test_context_manager_keeps_file_when_not_flagged(tmp_path):
+    sample_data = {'metadata': {'buildtime': '2025-07-20T10:01:45Z'}, 'roas': []}
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT, local_storage_dir=tmp_path)
+    with f:
+        f.write_json(sample_data)
+        local_path = f.local_filepath_uncompressed
+        assert local_path.exists()
+    assert local_path.exists()
+    assert f.local_storage_type == LocalStorageType.UNCOMPRESSED
+
+
+def test_context_manager_does_not_suppress_exceptions(tmp_path):
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT, local_storage_dir=tmp_path)
+    f.cleanup_upon_destroy = True
+    with pytest.raises(ValueError):
+        with f:
+            raise ValueError('boom')
+
+
 # --- Golden data tests (read test_data/ only, no S3) ---
 
 @pytest.mark.slow
