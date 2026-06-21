@@ -1,31 +1,34 @@
 #!/usr/bin/env python
-""""
+"""
 Crawl an HTTP index of RPKI archive data and download desirable files.  Upload those files to S3.
 
-TODO: Ensure we have --filename-datetime-min and --filename-datetime-max arguments which allow us to
-  download & process only files with datetime values in their names which fall between those arguments.
-  The arguments should be supported separately and together.
+For each discovered RPKI archive TAR we don't already have, download it, validate it, extract the
+rpki-client summary JSON, and upload the TAR to the snapshot bucket and the summary to the summary
+bucket.  The file/storage/S3 concerns are delegated to SnapshotFile and SnapshotSummaryFile; this
+module owns acquisition (crawling, downloading, retry) and orchestration.
+
+--filename-datetime-min / --filename-datetime-max restrict processing to snapshots whose filename
+datetime falls within the given bounds.  They may be used separately or together.
 """
 import argparse
 import boto3
-import bz2
 from datetime import datetime, timedelta, UTC
 import dateutil
 from html.parser import HTMLParser
-import inspect
-from inspect import Parameter
 import json
 import logging
 import os
-import re
 import requests
 from pathlib import Path
-import tarfile
 import tempfile
 from urllib.parse import urlparse
 
 import tenacity
 
+from rpkilog.cleanup_policy import CleanupPolicy
+from rpkilog.local_storage_type import LocalStorageType
+from rpkilog.snapshot_file import SnapshotFile
+from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 from rpkilog.util import list_s3_snapshot_files_within_range, list_s3_summary_files_within_range
 
 
@@ -72,118 +75,78 @@ class ArchiveSiteCrawler():
     }
     fetch_index_page_timeout = 10
     fetch_snapshot_timeout = 300
-    s3_snapshot_bucket_name: str
-
-    @classmethod
-    def extract_matching_file_from_tar(
-        cls,
-        input_tar:Path,
-        output_dir:Path,
-        find_file_re:str=None,
-        bzip_result_file:bool=True,
-    ) -> Path:
-        '''
-        Extract file matching find_file_re from given TAR file.  Name the resulting file based on contatenation
-        of the regex match groups.  Optionally, bzip the file and add '.bz2' to the filename.
-
-        Returns a Path object to the resulting file on disk.
-        '''
-        if find_file_re==None: find_file_re=r'^rpki-(\d{8}T\d{6}Z)/output/rpki-client(.json)$'
-        logger.info(F'Extracting useful JSON data from {input_tar}')
-        tf = tarfile.open(name=input_tar, mode='r')
-        for member in tf.getmembers():
-            if not member.isfile():
-                continue
-            rem = re.match(find_file_re, member.name)
-            if not rem:
-                continue
-            result_file_name = ''.join(rem.groups())
-            if not len(result_file_name):
-                raise ValueError(F'Matching file {member.name} has no regex groups matching. Need those for filename.')
-            ef = tf.extractfile(member)
-            if bzip_result_file:
-                result_path = Path(output_dir, result_file_name + '.bz2')
-                output_file = bz2.open(result_path, mode='xb')
-            else:
-                result_path = Path(output_dir, result_file_name)
-                output_file = open(result_path, 'xb')
-            output_file.write(ef.read())
-            output_file.close()
-            return result_path
-        else:
-            raise KeyError(F'No matching file found in TAR file {input_tar}')
 
     @classmethod
     @tenacity.retry(before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
                     stop=tenacity.stop_after_attempt(5),
                     wait=tenacity.wait_random(min=3, max=10),
                     )
-    def fetch_tar_file_and_extract_summary(
-            cls,
-            s3_snapshot_destination_filename: str,
-            uploaded: list,
-            url,
-    ) -> Path | None:
-        """
-        Passing the list `uploaded` into this function and modifying it is ugly.  It should instead return
-        a complex type, or modify something like cls.uploaded_snapshots.  We'll be ugly for now.
+    def download_tar(cls, url: str, dest_path: Path):
+        '''
+        Download the RPKI archive TAR at url to dest_path, streaming to disk.
 
-        Additionally, this method does too much.  It's an improvement from what we had before, but this
-        can be de-composed a bit more sensibly.
-        """
-        logger.info(F'DOWNLOADING {url}')
-        # get a temporary file
-        with tempfile.NamedTemporaryFile(mode='w+b', delete=True) as tar_tempfile:
-            # download
-            try:
-                count_bytes_downloaded = 0
-                with requests.get(url=url, stream=True, timeout=cls.fetch_snapshot_timeout) as tar_response:
-                    tar_response.raise_for_status()
-                    for chunk in tar_response.iter_content(chunk_size=1024*64):
+        Acquisition only: the per-archive transport + retry policy live here, NOT on SnapshotFile.
+        Raises RuntimeError (with download progress) on failure so the caller aborts rather than
+        silently skipping a file.  Retried by the tenacity decorator above.
+        '''
+        logger.info(f'DOWNLOADING {url}')
+        count_bytes_downloaded = 0
+        tar_response = None
+        try:
+            with requests.get(url=url, stream=True, timeout=cls.fetch_snapshot_timeout) as tar_response:
+                tar_response.raise_for_status()
+                with open(dest_path, 'wb') as dest_fh:
+                    for chunk in tar_response.iter_content(chunk_size=1024 * 64):
                         count_bytes_downloaded += len(chunk)
-                        tar_tempfile.write(chunk)
-                    tar_tempfile.flush()
-            except Exception as exc:
-                if 'Content-Length' in tar_response.headers:
-                    content_length = int(tar_response.headers['Content-Length'])
-                    percent_downloaded = count_bytes_downloaded / content_length * 100
-                    raise RuntimeError(
-                        f'Failed downloading {url} after {percent_downloaded}%'
-                        f' bytes {count_bytes_downloaded:.0f} of {content_length}'
-                    ) from exc
-                else:
-                    raise RuntimeError(f'Failed downloading {url} after {count_bytes_downloaded}') from exc
+                        dest_fh.write(chunk)
+        except Exception as exc:
+            if tar_response is not None and 'Content-Length' in tar_response.headers:
+                content_length = int(tar_response.headers['Content-Length'])
+                percent_downloaded = count_bytes_downloaded / content_length * 100
+                raise RuntimeError(
+                    f'Failed downloading {url} after {percent_downloaded:.0f}%'
+                    f' bytes {count_bytes_downloaded} of {content_length}'
+                ) from exc
+            raise RuntimeError(
+                f'Failed downloading {url} after {count_bytes_downloaded} bytes'
+            ) from exc
 
-            try:
-                logger.info(f'VALIDATING tar file can be read {tar_tempfile.name}')
-                # iterate through the tar file's members
-                # if the file is truncated, this should raise an exception, eliminating partial downloads
-                with tarfile.open(tar_tempfile.name, 'r:*') as tar_test_reader:
-                    for member in tar_test_reader.getmembers():
-                        if not member.isfile():
-                            continue
-                        member_reader = tar_test_reader.extractfile(member)
-                        member_size = 0
-                        while chunk := member_reader.read(1024*64):
-                            member_size += len(chunk)
-            except Exception as exc:
-                logger.exception(f'TAR_FAILED_VALIDATION skipping {url} {tar_tempfile.name}')
+    @classmethod
+    def process_tar_url(cls, url: str, datetimestamp: datetime) -> str | None:
+        '''
+        Download one archive TAR, validate it, extract its summary, and upload both the TAR (to the
+        snapshot bucket) and the summary (to the summary bucket).
+
+        Acquisition (download + retry) lives in download_tar(); every file/storage/S3 concern is
+        delegated to SnapshotFile / SnapshotSummaryFile.  SnapshotFile.default_s3_base_url and
+        SnapshotSummaryFile.default_s3_base_url must already be set (see wrapped_entry_point).
+
+        Returns the snapshot's S3 key on success, or None when the TAR failed validation and was
+        skipped (a later run re-downloads it).  Raises on download or upload failure (so the job
+        aborts rather than silently skipping a file).  All local temp files live under a
+        TemporaryDirectory that is removed on return.
+        '''
+        with tempfile.TemporaryDirectory() as work_dir_str:
+            work_dir = Path(work_dir_str)
+            snapshot = SnapshotFile(
+                datetimestamp=datetimestamp,
+                local_storage_dir=work_dir,
+                local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+                source_url=url,
+                cleanup_policy=CleanupPolicy.CLEANUP_NEVER,
+            )
+            cls.download_tar(url=url, dest_path=snapshot.local_filepath_tgz)
+            if not snapshot.validate_tar():
+                logger.warning(f'TAR_FAILED_VALIDATION skipping {url}')
                 return None
-
-            logger.info(F'EXTRACTING useful summary file from tar')
-            json_file_path = cls.extract_matching_file_from_tar(
-                input_tar=Path(tar_tempfile.name),
-                output_dir=Path('/tmp'),
-            )
-
-            logger.info(F'UPLOADING {tar_tempfile.name} to {cls.s3_snapshot_bucket_name}')
-            cls.s3.upload_file(
-                Filename=str(tar_tempfile.name),
-                Bucket=cls.s3_snapshot_bucket_name,
-                Key=s3_snapshot_destination_filename,
-            )
-            uploaded.append(s3_snapshot_destination_filename)
-            return json_file_path
+            summary = snapshot.extract_summary_file(output_dir=work_dir)
+            summary.cleanup_policy = CleanupPolicy.CLEANUP_NEVER
+            logger.info(f'UPLOADING snapshot {snapshot.default_filename} to snapshot bucket')
+            snapshot.s3_upload()
+            logger.info(f'UPLOADING summary {summary.default_filename} to summary bucket')
+            summary.s3_upload()
+            retstr = snapshot.s3_path
+        return retstr
 
     @classmethod
     def fetch_tar_urls_from_archive_site(
@@ -233,12 +196,13 @@ class ArchiveSiteCrawler():
         for url in sorted(urls_on_day_page):
             if not url.startswith(day_page_url):
                 continue
-            relative_url = url[len(site_root):]
-            rem = re.search(r'rpki-(?P<datetime>\d{8}T\d{6})Z.tgz$', relative_url)
-            if not rem:
+            try:
+                tar_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(url))
+            except ValueError:
+                # not an 'rpki-...Z.tgz' link (parent-dir links, other files, etc.)
                 continue
-            if dateutil.parser.parse(rem.group('datetime')) < start_date:
-                logger.debug(F'Not crawling into {relative_url} because it is before {start_date.isoformat()}')
+            if tar_datetime.replace(tzinfo=None) < start_date:
+                logger.debug(F'Not crawling into {url} because it is before {start_date.isoformat()}')
                 continue
             tar_file_urls.add(url)
         return(tar_file_urls)
@@ -278,6 +242,10 @@ class ArchiveSiteCrawler():
         ap.add_argument('--s3-snapshot-summary-bucket-name', help='S3 bucket containing JSON summary files')
         ap.add_argument('--site-root', help='Root of web archive site')
         ap.add_argument('--start-date', type=dateutil.parser.parse, help='Do not download snapshots earlier than this date')
+        ap.add_argument('--filename-datetime-min', type=dateutil.parser.parse,
+                        help='Only process snapshots whose filename datetime is >= this (optional)')
+        ap.add_argument('--filename-datetime-max', type=dateutil.parser.parse,
+                        help='Only process snapshots whose filename datetime is <= this (optional)')
         ap.add_argument('--job-max-runtime', type=float, help='Max runtime in seconds (default: unlimited)')
         ap.add_argument('--job-max-downloads', default=2, type=int, help='Max files to download before stopping (default: 2)')
         args = vars(ap.parse_args())
@@ -311,17 +279,19 @@ class ArchiveSiteCrawler():
         debug_save_urls: Path | None = None,
         fetch_snapshot_timeout: str = None,
         start_date:datetime=None,
+        filename_datetime_min:datetime=None,
+        filename_datetime_max:datetime=None,
         minimum_file_age:timedelta=None,
         maximum_crawl_age:str=None,
         job_deadline:datetime=None,
         job_max_downloads:int=None,
     ):
         '''
-        Invoked by other entry points, e.g. cli_entry_point, aws_lambda_entry_point
+        Invoked by other entry points, e.g. cli_entry_point.
 
         Web-crawl the given site_root and find relevant RPKI archive TAR URLs in the HTML a-tags.
         Crawling will try to avoid requesting pages that list only TAR files before start_date.
-        
+
         Get the list of already-downloaded RPKI TARs by listing the s3_snapshot_summary_bucket
         and comparing the date-based filenames, for example:
             snapshot_summary: 20211121T000709Z.json.bz2
@@ -331,16 +301,22 @@ class ArchiveSiteCrawler():
         some to-be-processed TARs already there.
 
         In ascending date-based order, download any TAR files we haven't previously processed,
-        except TAR files with a datetime-based filename before start_date.
+        except TAR files with a datetime-based filename before start_date or outside the optional
+        [filename_datetime_min, filename_datetime_max] bounds (each bound applies independently).
 
-        After downloading each TAR, upload it to the s3_snapshot_bucket_name.
-
-        Extract relevant JSON summary from each TAR and upload that to the s3_snapshot_summary_bucket_name.
+        For each such TAR, process_tar_url() uploads the TAR to s3_snapshot_bucket_name and its
+        extracted summary to s3_snapshot_summary_bucket_name (both via SnapshotFile /
+        SnapshotSummaryFile, whose default S3 base URLs are set below from the bucket names).
 
         Abort if a download fails, or if an upload fails, to avoid skipping any files.
         '''
-        cls.s3 = boto3.client('s3')
-        cls.s3_snapshot_bucket_name = s3_snapshot_bucket_name
+        SnapshotFile.default_s3_base_url_set(f's3://{s3_snapshot_bucket_name}/')
+        SnapshotSummaryFile.default_s3_base_url_set(f's3://{s3_snapshot_summary_bucket_name}/')
+
+        if filename_datetime_min is not None:
+            filename_datetime_min = filename_datetime_min.replace(tzinfo=None)
+        if filename_datetime_max is not None:
+            filename_datetime_max = filename_datetime_max.replace(tzinfo=None)
 
         if maximum_crawl_age:
             maximum_crawl_age = timedelta(days=float(maximum_crawl_age))
@@ -366,25 +342,27 @@ class ArchiveSiteCrawler():
             end_datetime=datetime.now(UTC).replace(tzinfo=None),
         )
         for buckobj in snapshots:
-            rem = re.search(r'^rpki-(?P<datetime>\d{8}T\d{6})Z\.', buckobj.key)
-            if rem:
-                already_have_by_datetime[rem.group('datetime')] = buckobj
-            else:
+            try:
+                buckobj_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(buckobj.key))
+            except ValueError:
                 logger.warning(f'UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
+                continue
+            already_have_by_datetime[buckobj_datetime] = buckobj
 
-        cls.s3_summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
+        summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
         summaries = list_s3_summary_files_within_range(
-            bucket=cls.s3_summary_bucket,
+            bucket=summary_bucket,
             start_datetime=start_date - timedelta(days=1),
             end_datetime=datetime.now(UTC).replace(tzinfo=None),
         )
         for buckobj in summaries:
-            rem = re.search(r'^(?P<datetime>\d{8}T\d{6})Z.json', buckobj.key)
-            if rem:
-                already_have_by_datetime[rem.group('datetime')] = buckobj
-            else:
-                logger.warning('UNMATCHED key in summary bucket {summary_bucket} : {buckobj.key}')
-        logger.info(F'LISTED {len(snapshots)} snapshots and {len(summaries)} summaires in S3 buckets.')
+            try:
+                buckobj_datetime = SnapshotSummaryFile.infer_datetimestamp_from_path(Path(buckobj.key))
+            except ValueError:
+                logger.warning(f'UNMATCHED key in summary bucket {summary_bucket} : {buckobj.key}')
+                continue
+            already_have_by_datetime[buckobj_datetime] = buckobj
+        logger.info(F'LISTED {len(snapshots)} snapshots and {len(summaries)} summaries in S3 buckets.')
 
         # get the list of all rpki tar files, after start_date, from the specified rpki archive site
         archive_site_available_tar_file_urls = cls.fetch_tar_urls_from_archive_site(
@@ -405,17 +383,20 @@ class ArchiveSiteCrawler():
         # Determine which ones we don't already have.  Download those from archive and re-upload to snapshot bucket.
         # Stop if we're within 60s of job_deadline (lambda runtime might be exhausted because the downloads are slow.)
         for available_tar_url in sorted(archive_site_available_tar_file_urls):
-            rem = re.search(r'(?P<filename>rpki-(?P<datetime>\d{8}T\d{6})Z\.tgz)$', available_tar_url)
-            if not rem:
+            try:
+                available_tar_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(available_tar_url))
+            except ValueError:
                 logger.warning(F'UNMATCHED available_tar_url {available_tar_url}')
                 continue
-            available_tar_datetimestr = rem.group('datetime')
-            destination_filename = rem.group('filename')
-            if available_tar_datetimestr in already_have_by_datetime:
+            if available_tar_datetime in already_have_by_datetime:
                 # we've previously downloaded this tar from the archive site
                 continue
-            available_tar_datetime = dateutil.parser.parse(available_tar_datetimestr)
-            available_tar_age = datetime.now(UTC).replace(tzinfo=None) - available_tar_datetime
+            available_tar_datetime_naive = available_tar_datetime.replace(tzinfo=None)
+            if filename_datetime_min is not None and available_tar_datetime_naive < filename_datetime_min:
+                continue
+            if filename_datetime_max is not None and available_tar_datetime_naive > filename_datetime_max:
+                continue
+            available_tar_age = datetime.now(UTC).replace(tzinfo=None) - available_tar_datetime_naive
             if available_tar_age < minimum_file_age:
                 # file is too young; skip it.  A future iteration will download it.
                 # This is a workaround for some archive sites writing files into their public directories
@@ -426,25 +407,15 @@ class ArchiveSiteCrawler():
             # new tar we need from archive site
             if job_deadline!=None and job_deadline < datetime.utcnow():
                 # We're past the deadline.  Could run out of lambda execution time.  Stop here.
-                logger.warn(F'JOB_DEADLINE reached.')
+                logger.warning(F'JOB_DEADLINE reached.')
                 break
             if job_max_downloads!=None and job_max_downloads <= len(uploaded):
-                logger.warn(F'JOB_MAX_DOWNLOADS reached.')
+                logger.warning(F'JOB_MAX_DOWNLOADS reached.')
                 break
 
-            json_file_path = cls.fetch_tar_file_and_extract_summary(
-                s3_snapshot_destination_filename=destination_filename,
-                uploaded=uploaded,
-                url=available_tar_url,
-            )
-            if json_file_path is None:
+            snapshot_key = cls.process_tar_url(url=available_tar_url, datetimestamp=available_tar_datetime)
+            if snapshot_key is None:
                 continue
-            logger.info(F'UPLOADING extracted file {json_file_path.name} to {s3_snapshot_summary_bucket_name}')
-            cls.s3.upload_file(
-                Filename=str(json_file_path),
-                Bucket=s3_snapshot_summary_bucket_name,
-                Key=json_file_path.name,
-            )
-            os.remove(json_file_path)
+            uploaded.append(snapshot_key)
 
         return uploaded

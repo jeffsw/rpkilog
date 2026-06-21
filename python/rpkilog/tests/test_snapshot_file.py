@@ -1,3 +1,6 @@
+import io
+import json
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -6,9 +9,28 @@ import pytest
 from rpkilog.cleanup_policy import CleanupPolicy
 from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.snapshot_file import SnapshotFile
+from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 
 GOLDEN_DT = datetime(2021, 11, 21, 0, 7, 9, tzinfo=timezone.utc)
 GOLDEN_NAME = 'rpki-20211121T000709Z.tgz'
+
+TEST_DATA_DIR = Path(__file__).parent.parent.parent.parent / 'test_data'
+# Golden snapshot TAR (large): internal member is rpki-20260111T194523Z/output/rpki-client.json
+GOLDEN_SNAPSHOT_TGZ = TEST_DATA_DIR / 'rpkiclient_snapshot_20260111T194523Z.tgz'
+GOLDEN_SNAPSHOT_DT = datetime(2026, 1, 11, 19, 45, 23, tzinfo=timezone.utc)
+
+
+def _make_tgz(path, members):
+    """Write a gzipped tar at path containing {member_name: bytes} entries."""
+    with tarfile.open(path, 'w:gz') as tf:
+        for member_name, payload in members.items():
+            info = tarfile.TarInfo(member_name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+
+
+def _summary_member_name(dt=GOLDEN_DT):
+    return f'rpki-{dt.strftime("%Y%m%dT%H%M%SZ")}/output/rpki-client.json'
 
 
 # --- Unit tests: filename / path derivation (no disk I/O, no S3) ---
@@ -89,16 +111,6 @@ def test_json_only_operations_raise():
         f.infer_local_storage_type(Path('/tmp/x'))
     with pytest.raises(TypeError):
         f.open_for_read()
-
-
-# --- Unit tests: domain I/O methods are still stubs ---
-
-def test_domain_io_methods_are_stubs():
-    f = SnapshotFile(datetimestamp=GOLDEN_DT, local_storage_dir=Path('/tmp'))
-    with pytest.raises(NotImplementedError):
-        f.validate_tar()
-    with pytest.raises(NotImplementedError):
-        f.extract_summary_file()
 
 
 # --- Unit tests: local-cache handling (tmp_path only) ---
@@ -208,3 +220,106 @@ def test_s3_roundtrip(tmp_path, s3_test_bucket, s3_base_url_factory):
     finally:
         if test_key is not None:
             s3_test_bucket.Object(test_key).delete()
+
+
+# --- validate_tar (synthetic tars, no network) ---
+
+def test_validate_tar_good(tmp_path):
+    tgz = tmp_path / GOLDEN_NAME
+    _make_tgz(tgz, {_summary_member_name(): b'{}', 'rpki-x/output/rpki-client.log': b'log'})
+    f = SnapshotFile(
+        datetimestamp=GOLDEN_DT, local_filepath_tgz=tgz,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+    )
+    assert f.validate_tar() is True
+
+
+def test_validate_tar_corrupt_returns_false(tmp_path):
+    bad = tmp_path / GOLDEN_NAME
+    bad.write_bytes(b'this is not a gzipped tar')
+    f = SnapshotFile(
+        datetimestamp=GOLDEN_DT, local_filepath_tgz=bad,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+    )
+    assert f.validate_tar() is False
+
+
+def test_validate_tar_requires_local_tgz():
+    f = SnapshotFile(
+        datetimestamp=GOLDEN_DT, local_storage_dir=Path('/tmp'),
+        local_storage_type=LocalStorageType.UNCACHED,
+    )
+    with pytest.raises(ValueError):
+        f.validate_tar()
+
+
+# --- extract_summary_file (synthetic tars, no network) ---
+
+def test_extract_summary_file(tmp_path):
+    summary_payload = json.dumps({'metadata': {'buildtime': '2021-11-21T00:07:09Z'}, 'roas': []}).encode()
+    tgz = tmp_path / GOLDEN_NAME
+    _make_tgz(tgz, {
+        _summary_member_name(): summary_payload,
+        'rpki-20211121T000709Z/output/rpki-client.log': b'log',
+    })
+    snapshot = SnapshotFile(
+        datetimestamp=GOLDEN_DT, local_filepath_tgz=tgz,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+    )
+    summary = snapshot.extract_summary_file(output_dir=tmp_path)
+    assert isinstance(summary, SnapshotSummaryFile)
+    assert summary.local_storage_type == LocalStorageType.UNCOMPRESSED
+    # named by the snapshot's datetimestamp, not the in-TAR member path
+    assert summary.local_filepath_uncompressed.name == '20211121T000709Z.json'
+    assert json.loads(summary.local_filepath_uncompressed.read_bytes()) == json.loads(summary_payload)
+
+
+def test_extract_summary_file_no_member_raises(tmp_path):
+    tgz = tmp_path / GOLDEN_NAME
+    _make_tgz(tgz, {'rpki-20211121T000709Z/output/other.json': b'{}'})
+    snapshot = SnapshotFile(
+        datetimestamp=GOLDEN_DT, local_filepath_tgz=tgz,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+    )
+    with pytest.raises(KeyError):
+        snapshot.extract_summary_file(output_dir=tmp_path)
+
+
+def test_extract_summary_file_multiple_members_raises(tmp_path):
+    tgz = tmp_path / GOLDEN_NAME
+    _make_tgz(tgz, {
+        'rpki-20211121T000709Z/output/rpki-client.json': b'{}',
+        'rpki-20211121T000710Z/output/rpki-client.json': b'{}',
+    })
+    snapshot = SnapshotFile(
+        datetimestamp=GOLDEN_DT, local_filepath_tgz=tgz,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+    )
+    with pytest.raises(ValueError):
+        snapshot.extract_summary_file(output_dir=tmp_path)
+
+
+# --- Golden snapshot TAR (large; reads test_data/ only, no S3) ---
+
+@pytest.mark.slow
+def test_validate_tar_golden(tmp_path):
+    snapshot = SnapshotFile(
+        datetimestamp=GOLDEN_SNAPSHOT_DT, local_filepath_tgz=GOLDEN_SNAPSHOT_TGZ,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+        cleanup_policy=CleanupPolicy.CLEANUP_NEVER,
+    )
+    assert snapshot.validate_tar() is True
+
+
+@pytest.mark.slow
+def test_extract_summary_file_golden(tmp_path):
+    snapshot = SnapshotFile(
+        datetimestamp=GOLDEN_SNAPSHOT_DT, local_filepath_tgz=GOLDEN_SNAPSHOT_TGZ,
+        local_storage_type=LocalStorageType.SNAPSHOT_TGZ,
+        cleanup_policy=CleanupPolicy.CLEANUP_NEVER,
+    )
+    summary = snapshot.extract_summary_file(output_dir=tmp_path)
+    assert summary.local_filepath_uncompressed.name == '20260111T194523Z.json'
+    data = json.loads(summary.local_filepath_uncompressed.read_bytes())
+    assert 'metadata' in data
+    assert 'roas' in data

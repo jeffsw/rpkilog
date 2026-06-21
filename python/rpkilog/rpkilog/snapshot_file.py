@@ -7,12 +7,12 @@ that we extract into a SnapshotSummaryFile.  This class is the planned home for 
 *file* concerns currently scattered through archive_site_crawler.py: filename/datetime derivation,
 validating the TAR, extracting the summary, and uploading the TAR to S3.
 
-STATUS: the storage model is implemented.  A snapshot's cached bytes are an opaque gzipped TAR
+STATUS: implemented.  A snapshot's cached bytes are an opaque gzipped TAR
 (LocalStorageType.SNAPSHOT_TGZ) held at local_filepath_tgz.  Operations that only make sense for a
 JSON document raise (see the type-invalid overrides below), the S3 round-trip moves the TAR
-byte-for-byte under its '.tgz' key, and local-cache cleanup unlinks the TAR.  The domain I/O methods
-(validate_tar, extract_summary_file) remain stubs, and archive_site_crawler is NOT yet rebased onto
-this class; both are a separate, later task.
+byte-for-byte under its '.tgz' key, local-cache cleanup unlinks the TAR, validate_tar() checks the
+archive is readable, and extract_summary_file() pulls the rpki-client JSON out as a
+SnapshotSummaryFile.  archive_site_crawler is rebased onto this class.
 
 Design notes:
   - SnapshotFile does NOT acquire bytes from, or parse the URLs of, the archive site.  Acquisition
@@ -35,22 +35,11 @@ TODO(sql-files-table): When the SQL files table lands, a SnapshotFile should map
   explicit s3_url so the instance never consults the process-global default base URL (DataFileSuper
   already supports known-url instances).  Decide whether to_sql_row()/from_sql_row() belong here or
   on DataFileSuper, shared by all file types.
-
-TODO(crawler-rebase): the later archive_site_crawler.py refactor should replace these in-line pieces
-  with the methods here:
-    - S3-key / filename regex matching of 'rpki-...Z.tgz'      -> infer_datetimestamp_from_path()
-    - destination filename derivation                          -> default_filename
-    - day-page archive-URL parsing + streaming requests.get()  -> stays in the crawler / future
-      download                                                    ArchiveSite; construct a SnapshotFile
-                                                                  from the downloaded temp path
-                                                                  (local_filepath_tgz + SNAPSHOT_TGZ)
-    - tarfile readability check                                -> validate_tar()
-    - extract_matching_file_from_tar() + summary handling      -> extract_summary_file()
-    - cls.s3.upload_file(...) of the TAR to the snapshot bucket -> s3_upload()
 """
 import logging
 import os
 import shutil
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 import re
@@ -60,6 +49,7 @@ import dateutil.parser
 
 from rpkilog.data_file_super import DataFileSuper
 from rpkilog.local_storage_type import LocalStorageType
+from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +75,11 @@ class SnapshotFile(DataFileSuper):
     ]
 
     # Regex matching the rpki-client summary JSON member inside a snapshot TAR, e.g.
-    # 'rpki-20211121T000709Z/output/rpki-client.json'.  Group 1 is the YYYYMMDDTHHMMSSZ stamp and
-    # group 2 is '.json'.  archive_site_crawler.extract_matching_file_from_tar() owns this today;
-    # extract_summary_file() will use it once implemented.
-    summary_member_re = r'^rpki-(\d{8}T\d{6}Z)/output/rpki-client(\.json)$'
+    # 'rpki-20211121T000709Z/output/rpki-client.json'.  Used by extract_summary_file().
+    summary_member_re = r'^rpki-(\d{8}T\d{6}Z)/output/rpki-client\.json$'
 
-    def __init__(self, *args, source_url: str = None, local_filepath_tgz: Path = None, **kwargs):
+    def __init__(self, *args, source_url: str | None = None, local_filepath_tgz: Path | None = None,
+                 **kwargs):
         """
         Add source_url and local_filepath_tgz on top of the DataFileSuper constructor.
 
@@ -266,35 +255,75 @@ class SnapshotFile(DataFileSuper):
             'extract_summary_file() (which use tarfile)'
         )
 
-    # --- domain I/O (still stubbed; later task) -------------------------------------------------
+    # --- TAR-content operations (read the already-acquired local .tgz) ---------------------------
 
     def validate_tar(self) -> bool:
         """
-        Open the locally-cached TAR and iterate every member, reading each fully, to confirm the
-        archive is complete and not truncated.
+        Confirm the locally-cached TAR is complete and readable.
 
-        Intended to replace the tarfile validation block in
-        ArchiveSiteCrawler.fetch_tar_file_and_extract_summary(), which today logs and skips (returns
-        None) on failure rather than raising.
-
-        TODO: implement.  Decide and document the contract on a bad TAR (raise vs. return False) and
-          align the crawler rebase with that choice.
+        Opens the '.tgz' and reads every regular member in full; a truncated or corrupt archive
+        raises somewhere in tarfile, which we catch.  Contract: returns True when the whole archive
+        reads cleanly, and False (logging the cause) when it does not — it does NOT raise on a bad
+        TAR, so the crawler can simply skip-and-continue (a later run re-downloads it).  Raises only
+        when there is no local '.tgz' to validate.
         """
-        raise NotImplementedError('SnapshotFile.validate_tar() is a stub; see TODO')
+        if self.local_storage_type != LocalStorageType.SNAPSHOT_TGZ:
+            raise ValueError(f'cannot validate a snapshot without a local .tgz file: {self}')
+        retval = True
+        try:
+            with tarfile.open(self.local_filepath_tgz, 'r:*') as tar_reader:
+                for member in tar_reader.getmembers():
+                    if not member.isfile():
+                        continue
+                    member_reader = tar_reader.extractfile(member)
+                    while member_reader.read(1024 * 64):
+                        pass
+        except Exception:
+            logger.exception(f'TAR_FAILED_VALIDATION {self}')
+            retval = False
+        return retval
 
-    def extract_summary_file(self, output_dir: Path = None) -> 'SnapshotSummaryFile':
+    def extract_summary_file(self, output_dir: Path | None = None) -> SnapshotSummaryFile:
         """
         Extract the rpki-client output JSON member (matching summary_member_re) from the
-        locally-cached TAR and return a SnapshotSummaryFile wrapping it.
+        locally-cached TAR and return an UNCOMPRESSED SnapshotSummaryFile wrapping it.
 
-        Intended to replace ArchiveSiteCrawler.extract_matching_file_from_tar() plus the
-        summary-handling that follows it.  The returned SnapshotSummaryFile shares this snapshot's
-        datetimestamp and, once the SQL files table exists, should link back to this SnapshotFile's
-        row.
-
-        TODO: implement.  Confirm exactly one member matches summary_member_re; decide whether the
-          extracted summary is written UNCOMPRESSED or BZIP2 and where (output_dir vs.
-          local_storage_dir).  Import SnapshotSummaryFile at implementation time (no import cycle:
-          snapshot_summary_file imports only data_file_super, not this module).
+        Exactly one member must match summary_member_re (raises KeyError if none, ValueError if more
+        than one).  The summary is written under output_dir (default: this snapshot's
+        local_storage_dir) and left UNCOMPRESSED; SnapshotSummaryFile.s3_upload() bzip2-compresses on
+        upload.  The returned summary is named by THIS snapshot's datetimestamp (not the in-TAR member
+        path), tying summary identity to the snapshot it came from.
         """
-        raise NotImplementedError('SnapshotFile.extract_summary_file() is a stub; see TODO')
+        if self.local_storage_type != LocalStorageType.SNAPSHOT_TGZ:
+            raise ValueError(f'cannot extract a summary without a local .tgz file: {self}')
+        if output_dir is None:
+            output_dir = self.local_storage_dir
+        member_re = re.compile(self.summary_member_re)
+        matched_member_name = None
+        summary_bytes: bytes | None = None
+        with tarfile.open(self.local_filepath_tgz, 'r:*') as tar_reader:
+            for member in tar_reader.getmembers():
+                if not member.isfile():
+                    continue
+                if not member_re.match(member.name):
+                    continue
+                if matched_member_name is not None:
+                    raise ValueError(
+                        f'expected exactly one member matching {self.summary_member_re!r} in '
+                        f'{self.local_filepath_tgz}; found multiple: '
+                        f'{matched_member_name} and {member.name}'
+                    )
+                extracted = tar_reader.extractfile(member)
+                if extracted is None:
+                    continue
+                matched_member_name = member.name
+                summary_bytes = extracted.read()
+        if summary_bytes is None:
+            raise KeyError(
+                f'no member matching {self.summary_member_re!r} in {self.local_filepath_tgz}'
+            )
+        summary = SnapshotSummaryFile(datetimestamp=self.datetimestamp, local_storage_dir=output_dir)
+        with open(summary.local_filepath_uncompressed, 'wb') as summary_fh:
+            summary_fh.write(summary_bytes)
+        summary.local_storage_type = LocalStorageType.UNCOMPRESSED
+        return summary
