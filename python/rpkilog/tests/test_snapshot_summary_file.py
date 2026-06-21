@@ -166,29 +166,30 @@ def test_write_to_path(tmp_path):
 # --- S3 tests (require live AWS credentials) ---
 
 @pytest.mark.slow
-def test_s3_roundtrip(tmp_path, s3_test_bucket):
+def test_s3_roundtrip(tmp_path, s3_test_bucket, s3_base_url_factory):
     # Copy golden file so s3_upload()'s post-upload cleanup won't touch test_data/
     local_copy = tmp_path / GOLDEN_SUMMARY.name
     shutil.copy2(GOLDEN_SUMMARY, local_copy)
-    test_key = f'test_snapshot_summary_file/{GOLDEN_SUMMARY.name}'
-    s3_url = f's3://{s3_test_bucket.name}/{test_key}'
+    # Point the class at a run-unique base URL; the object derives its key from base + filename.
+    s3_base_url_factory(SnapshotSummaryFile, 'test_snapshot_summary_file')
 
     f = SnapshotSummaryFile(
         datetimestamp=GOLDEN_DT,
         local_filepath_bz2=local_copy,
         local_storage_type=LocalStorageType.BZIP2,
-        s3_url=s3_url,
     )
+    test_key = None
     try:
         f.s3_upload()
         assert f.s3_exists()
+        test_key = f.s3_path
 
         download_path = tmp_path / 'downloaded.json.bz2'
         f2 = SnapshotSummaryFile(
             datetimestamp=GOLDEN_DT,
             local_filepath_bz2=download_path,
             local_storage_type=LocalStorageType.UNCACHED,
-            s3_url=s3_url,
+            s3_url=f.s3_url,
         )
         f2.s3_download()
         assert download_path.exists()
@@ -197,4 +198,5 @@ def test_s3_roundtrip(tmp_path, s3_test_bucket):
         assert 'metadata' in data
         assert 'buildtime' in data['metadata']
     finally:
-        s3_test_bucket.Object(test_key).delete()
+        if test_key is not None:
+            s3_test_bucket.Object(test_key).delete()

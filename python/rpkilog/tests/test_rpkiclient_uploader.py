@@ -3,6 +3,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -41,8 +42,10 @@ def test_datetimestamp_from_json_matches_legacy():
 def test_s3_upload_skips_when_object_exists(tmp_path, monkeypatch):
     source = tmp_path / 'json'
     _write_sample_json(source)
+    # isolate the process-global base-url classvar the uploader sets (auto-restored on teardown)
+    monkeypatch.setattr(SnapshotSummaryFile, '_default_s3_base_url', None, raising=False)
     monkeypatch.setattr(SnapshotSummaryFile, 's3_exists', lambda self: True)
-    result = rpkiclient_uploader.s3_upload(rpkiclient_json=source, s3_bucket_name='example-bucket')
+    result = rpkiclient_uploader.s3_upload(rpkiclient_json=source, s3_base_url='s3://example-bucket/')
     assert result is None
     assert source.exists()
 
@@ -54,11 +57,13 @@ def test_s3_upload_preserves_source_file(tmp_path, monkeypatch):
     class _FakeS3Object:
         key = GOLDEN_KEY
 
+    # isolate the process-global base-url classvar the uploader sets (auto-restored on teardown)
+    monkeypatch.setattr(SnapshotSummaryFile, '_default_s3_base_url', None, raising=False)
     monkeypatch.setattr(SnapshotSummaryFile, 's3_exists', lambda self: False)
     # skip the real size gate; the sample file is far below MINIMUM_SIZE
     monkeypatch.setattr(SnapshotSummaryFile, 'validate_size', lambda self: None)
     monkeypatch.setattr(SnapshotSummaryFile, 's3_upload', lambda self: _FakeS3Object())
-    result = rpkiclient_uploader.s3_upload(rpkiclient_json=source, s3_bucket_name='example-bucket')
+    result = rpkiclient_uploader.s3_upload(rpkiclient_json=source, s3_base_url='s3://example-bucket/')
     assert result == GOLDEN_KEY
     # CLEANUP_NEVER must leave rpki-client's live source file in place
     assert source.exists()
@@ -67,26 +72,27 @@ def test_s3_upload_preserves_source_file(tmp_path, monkeypatch):
 # --- S3 tests (require live AWS credentials) ---
 
 @pytest.mark.slow
-def test_s3_upload_end_to_end(tmp_path, s3_test_bucket):
+def test_s3_upload_end_to_end(tmp_path, s3_test_bucket, s3_base_url_factory):
     # decompress the golden summary into an uncompressed source file, mimicking output/json
     source = tmp_path / 'json'
     with bz2.open(GOLDEN_SUMMARY, 'rb') as src_fh:
         with open(source, 'wb') as dst_fh:
             shutil.copyfileobj(src_fh, dst_fh, length=1024 * 1024)
 
-    # the key derives from the JSON's metadata.buildtime, which differs from the filename's
+    # run-unique base URL so concurrent CI jobs don't collide on the bucket-derived key
+    base_url = s3_base_url_factory(SnapshotSummaryFile, 'test_rpkiclient_uploader')
+    # the key derives from base URL + metadata.buildtime, which differs from the filename's
     # timestamp in the golden data, so compute it the same way the uploader does
     with open(source, 'rt') as fh:
         json_data = json.load(fh)
     expected_dt = SnapshotSummaryFile.datetimestamp_from_json(json_data)
-    expected_key = expected_dt.strftime('%Y%m%dT%H%M%SZ.json.bz2')
+    expected_filename = expected_dt.strftime('%Y%m%dT%H%M%SZ.json') + '.bz2'
+    expected_key = urlparse(base_url).path.lstrip('/') + expected_filename
 
-    # ensure a clean slate so s3_exists() doesn't short-circuit the upload
-    s3_test_bucket.Object(expected_key).delete()
     try:
         result = rpkiclient_uploader.s3_upload(
             rpkiclient_json=source,
-            s3_bucket_name=s3_test_bucket.name,
+            s3_base_url=base_url,
         )
         assert result == expected_key
         # object landed in S3 (load() raises if it does not exist)

@@ -2,6 +2,7 @@
 Shared fixtures for rpkilog tests.
 """
 import os
+import uuid
 
 import boto3
 import pytest
@@ -43,3 +44,37 @@ def s3_test_bucket():
             raise
 
     yield bucket
+
+
+@pytest.fixture(scope='session')
+def s3_run_id():
+    """
+    A per-test-process identifier used to namespace S3 objects so concurrent CI matrix jobs (which
+    share one bucket) never collide on the same key.  Includes GITHUB_RUN_ID when present so any
+    leaked objects are traceable back to the run that created them.
+    """
+    run = os.environ.get('GITHUB_RUN_ID', 'local')
+    retstr = f'{run}-{uuid.uuid4().hex}'
+    return retstr
+
+
+@pytest.fixture
+def s3_base_url_factory(s3_test_bucket, s3_run_id):
+    """
+    Yields a callable set_base_url(cls, namespace) -> str that points a DataFileSuper subclass at a
+    run-unique S3 base URL of the form s3://{bucket}/citest/{run_id}/{namespace}/ and returns it.
+    The subclass then derives object URLs from that base.  Each subclass's prior class default is
+    restored on teardown so the process-global classvar does not leak between tests.
+    """
+    originals = []
+
+    def set_base_url(cls, namespace):
+        originals.append((cls, cls._default_s3_base_url))
+        base_url = f's3://{s3_test_bucket.name}/citest/{s3_run_id}/{namespace}/'
+        cls.default_s3_base_url_set(base_url)
+        return base_url
+
+    yield set_base_url
+
+    for cls, prev in originals:
+        cls._default_s3_base_url = prev

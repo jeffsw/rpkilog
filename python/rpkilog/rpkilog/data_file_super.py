@@ -34,7 +34,12 @@ class DataFileSuper(ABC):
         's3_url',
         's3_stored',
     ]
-    # used by property getter/setter
+    # Caller-supplied base URL (e.g. 's3://bucket/' or 's3://bucket/prefix/') used to derive a NEW
+    # object's s3_url once, via s3_url_set_to_default()/_ensure_s3_url().  This is process-global
+    # class state: fine for the one-shot uploader CLI and single-process pytest, but a footgun for a
+    # future long-lived multi-bucket process.  Note an object whose s3_url is already KNOWN (e.g.
+    # loaded from a future SQL files table) never consults this — s3_url/s3_path/s3_bucket depend
+    # solely on the stored URL.
     _default_s3_base_url: str = None
     default_local_storage_dir: Path = None
     # warning deduplication so log won't get spammy about minor issues
@@ -309,7 +314,21 @@ class DataFileSuper(ABC):
         url = urllib.parse.urlparse(self.s3_url)
         return url.netloc
 
+    def _ensure_s3_url(self):
+        """
+        Resolve this object's s3_url exactly once when it is not already known.
+
+        If s3_url is unset, derive it from the class default base URL plus default_filename (via
+        s3_url_set_to_default()) and store it.  Once known — including for an object constructed with
+        an explicit s3_url, e.g. a future SQL-loaded record — the stored URL is authoritative and the
+        base URL is never consulted again.  Gating S3 operations on this keeps s3_path/s3_bucket
+        dependent solely on the known URL.
+        """
+        if self._s3_url is None:
+            self.s3_url_set_to_default()
+
     def s3_download(self):
+        self._ensure_s3_url()
         bucket = boto3.resource('s3').Bucket(self.s3_bucket)
         bucket.download_file(
             Key=self.s3_path,
@@ -324,6 +343,7 @@ class DataFileSuper(ABC):
         Kept as a method rather than a property because it makes a live network call — a property
         that silently hits S3 on every attribute access would be surprising.
         """
+        self._ensure_s3_url()
         try:
             boto3.client('s3').head_object(Bucket=self.s3_bucket, Key=self.s3_path)
             retval = True
@@ -343,6 +363,7 @@ class DataFileSuper(ABC):
         return retstr
 
     def s3_upload(self):
+        self._ensure_s3_url()
         bucket = boto3.resource('s3').Bucket(self.s3_bucket)
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:

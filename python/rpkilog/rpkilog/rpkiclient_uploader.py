@@ -18,23 +18,26 @@ from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 logger = logging.getLogger(__name__)
 
 
-def s3_upload(rpkiclient_json: Path, s3_bucket_name: str) -> str | None:
+def s3_upload(rpkiclient_json: Path, s3_base_url: str) -> str | None:
     """
-    Given a Path to rpkiclient's output/json file, determine if it is already present in the given S3
-    bucket.  If not, bzip2 and upload it.  Filename format is YYYYMMDDTHHMMSSZ.json.bz2.
+    Given a Path to rpkiclient's output/json file, determine if it is already present under the given
+    S3 base URL.  If not, bzip2 and upload it.  Object key format is YYYYMMDDTHHMMSSZ.json.bz2.
+
+    The caller supplies the S3 base URL (e.g. 's3://bucket/' or 's3://bucket/prefix/'); we set it as
+    the class default and let SnapshotSummaryFile derive the object's URL from it plus the buildtime.
 
     CLEANUP_NEVER keeps us from deleting rpki-client's live source file, which we point at directly.
     """
     with open(rpkiclient_json, 'rt') as json_fh:
         json_data = json.load(json_fh)
     json_datetime = SnapshotSummaryFile.datetimestamp_from_json(json_data)
+    SnapshotSummaryFile.default_s3_base_url_set(s3_base_url)
     ssf = SnapshotSummaryFile(
         datetimestamp=json_datetime,
         local_filepath_uncompressed=rpkiclient_json,
         local_storage_type=LocalStorageType.UNCOMPRESSED,
         cleanup_policy=CleanupPolicy.CLEANUP_NEVER,
     )
-    ssf.s3_url = f's3://{s3_bucket_name}/{ssf.default_filename}.bz2'
     if ssf.s3_exists():
         logger.info(f'Currently available rpkiclient json file {json_datetime} has already been uploaded.')
         return None
@@ -71,7 +74,8 @@ def cli_entry_point():
             f'System uptime {uptime:.0f}s is less than --minimum-uptime {args.minimum_uptime:.0f}s; skipping upload'
         )
         return
+    s3_base_url = f's3://{args.s3_snapshot_summary_bucket}/'
     s3_upload(
         rpkiclient_json=args.json_file_path,
-        s3_bucket_name=args.s3_snapshot_summary_bucket,
+        s3_base_url=s3_base_url,
     )
