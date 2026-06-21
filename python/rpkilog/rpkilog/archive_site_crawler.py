@@ -260,32 +260,6 @@ class ArchiveSiteCrawler():
         return parser.href_urls
 
     @classmethod
-    def aws_lambda_entry_point(cls, event, context):
-        '''
-        TODO: Move this to AWS Lambda wrapper for use everywhere.
-        TODO: CORS options.
-        TODO: Web requests & return values w/ exception handling.
-        '''
-        logging.basicConfig(level='INFO')
-        args = {}
-        sig = inspect.signature(cls.wrapped_entry_point)
-        if 'job_deadline' in sig.parameters:
-            args['job_deadline'] = datetime.utcnow() + timedelta(milliseconds=context.get_remaining_time_in_millis())
-        for pname, param in sig.parameters:
-            if param.default == Parameter.empty:
-                # required
-                pass
-            if param.annotation == Parameter.empty:
-                pass
-            elif param.annotation in [list, set]:
-                raise NotImplemented('Need to convert input to list or set')
-            penv = os.getenv(pname)
-            if penv != None:
-                args[pname] = penv
-        wrapped_retval = cls.wrapped_entry_point(**args)
-        return wrapped_retval
-
-    @classmethod
     def cli_entry_point(cls):
         realtime_initial = datetime.utcnow()
         logging.basicConfig(
