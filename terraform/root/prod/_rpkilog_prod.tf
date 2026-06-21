@@ -119,6 +119,7 @@ resource "aws_iam_policy" "rpkiclient_uploader" {
       {
         Effect = "Allow",
         Action = [
+          "s3:GetObject",
           "s3:ListBucket",
           "s3:PutObject",
           "s3:PutObjectAcl",
