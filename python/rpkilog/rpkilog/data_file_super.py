@@ -136,6 +136,9 @@ class DataFileSuper(ABC):
         """
         Unlink the locally-cached file (if any) and mark storage as UNCACHED.  Shared by __del__
         and __exit__; callers gate on _should_cleanup().
+
+        The default case raises so an unhandled storage state (e.g. SNAPSHOT_TGZ, which SnapshotFile
+        overrides this method to clean up) fails loudly rather than silently leaking the cache.
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
@@ -146,6 +149,8 @@ class DataFileSuper(ABC):
                 self.local_storage_type = LocalStorageType.UNCACHED
             case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
                 pass
+            case _:
+                raise ValueError(f'unexpected value of local_storage_type: {self}')
 
     def __repr__(self):
         """

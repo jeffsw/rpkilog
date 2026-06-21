@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-'''
-Crawl an HTTP index of RPKI archive data and download desirable files.
+""""
+Crawl an HTTP index of RPKI archive data and download desirable files.  Upload those files to S3.
 
-Upload those files to S3.
-
-TODO: Move to its own module.
-'''
+TODO: Ensure we have --filename-datetime-min and --filename-datetime-max arguments which allow us to
+  download & process only files with datetime values in their names which fall between those arguments.
+  The arguments should be supported separately and together.
+"""
 import argparse
 import boto3
 import bz2
