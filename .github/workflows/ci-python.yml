@@ -64,14 +64,14 @@ jobs:
         if: github.event.pull_request.draft == true
         timeout-minutes: 15
         run: |
-          pushd python/
+          pushd python/rpkilog/
           pytest --verbose -m "not slow"
           popd
       - name: Test with pytest, including slow tests
         if: github.event.pull_request.draft == false
         timeout-minutes: 15
         run: |
-          pushd python/
+          pushd python/rpkilog/
           pytest --verbose
           popd
       #####
