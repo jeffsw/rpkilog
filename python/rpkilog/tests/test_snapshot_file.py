@@ -19,6 +19,14 @@ TEST_DATA_DIR = Path(__file__).parent.parent.parent.parent / 'test_data'
 GOLDEN_SNAPSHOT_TGZ = TEST_DATA_DIR / 'rpkiclient_snapshot_20260111T194523Z.tgz'
 GOLDEN_SNAPSHOT_DT = datetime(2026, 1, 11, 19, 45, 23, tzinfo=timezone.utc)
 
+# The golden snapshot TAR is too large to commit to git, so it exists only on developer machines.
+# Tests that read it skip cleanly where it is absent (e.g. GitHub CI).  The synthetic-tar tests above
+# cover the same code paths without it.
+skipif_no_golden_snapshot = pytest.mark.skipif(
+    not GOLDEN_SNAPSHOT_TGZ.exists(),
+    reason='large snapshot TAR fixture not committed to git; present only locally',
+)
+
 
 def _make_tgz(path, members):
     """Write a gzipped tar at path containing {member_name: bytes} entries."""
@@ -302,6 +310,7 @@ def test_extract_summary_file_multiple_members_raises(tmp_path):
 # --- Golden snapshot TAR (large; reads test_data/ only, no S3) ---
 
 @pytest.mark.slow
+@skipif_no_golden_snapshot
 def test_validate_tar_golden(tmp_path):
     snapshot = SnapshotFile(
         datetimestamp=GOLDEN_SNAPSHOT_DT, local_filepath_tgz=GOLDEN_SNAPSHOT_TGZ,
@@ -312,6 +321,7 @@ def test_validate_tar_golden(tmp_path):
 
 
 @pytest.mark.slow
+@skipif_no_golden_snapshot
 def test_extract_summary_file_golden(tmp_path):
     snapshot = SnapshotFile(
         datetimestamp=GOLDEN_SNAPSHOT_DT, local_filepath_tgz=GOLDEN_SNAPSHOT_TGZ,
