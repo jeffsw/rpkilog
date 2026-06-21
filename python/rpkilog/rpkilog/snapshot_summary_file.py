@@ -21,7 +21,7 @@ class SnapshotSummaryFile(DataFileSuper):
     @classmethod
     def infer_datetimestamp_from_path(cls, path) -> datetime:
         """Extract datetime from a snapshot-summary filename; rejects diff filenames."""
-        rem = re.search(r'(?P<dt>\d{8}T\d{6}Z)\.json(\.bz2)?$', str(path.name))
+        rem = re.search(r'(?P<dt>\d{8}T\d{4,6}Z)\.json(\.bz2)?$', str(path.name))
         if not rem:
             raise ValueError(f'regex did not match a snapshot-summary filename in given path: {path}')
         dt = dateutil.parser.parse(rem.group('dt'))

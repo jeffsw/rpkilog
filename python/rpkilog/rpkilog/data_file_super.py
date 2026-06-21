@@ -93,8 +93,13 @@ class DataFileSuper(ABC):
         This destructor is retained as a fallback for instances not used in a `with` block.  When
         deterministic cleanup is desired, prefer the context manager (__enter__/__exit__) instead.
         """
-        if self._should_cleanup():
-            self._cleanup_local_cache()
+        try:
+            if self._should_cleanup():
+                self._cleanup_local_cache()
+        except AttributeError:
+            # __del__ can run on a partially-initialized instance (__init__ raised before
+            # cleanup_policy was set); there is nothing cached to clean up.
+            pass
 
     def __enter__(self):
         return self
@@ -194,14 +199,16 @@ class DataFileSuper(ABC):
     @classmethod
     def default_s3_base_url_set(cls, value: Union[str, urllib.parse.ParseResult]):
         """
-        This setter exists purely to ensure the URL contains at least one '/' after the hostname/netloc.
-        For example, if you give it 'http://bucket' it will set the value to 'http://bucket/'.
+        Validate the 's3://' scheme and ensure the URL contains at least one '/' after the
+        hostname/netloc.  For example, given 's3://bucket' it stores 's3://bucket/'.
         """
         if isinstance(value, urllib.parse.ParseResult):
             # instead of deepcopy
             u1 = value
         else:
             u1 = urllib.parse.urlparse(str(value))
+        if u1.scheme != 's3':
+            raise ValueError(f"default s3 base URL must use the 's3://' scheme, got: {value!r}")
         s1 = urllib.parse.urlunparse(u1)
         if u1.path == '':
             cls._default_s3_base_url = s1 + '/'
@@ -393,8 +400,10 @@ class DataFileSuper(ABC):
     @s3_url.setter
     def s3_url(self, value: str | None):
         if value is not None:
-            # validate & allow exception to be raised if urlparse fails
-            _ = urllib.parse.urlparse(value)
+            # validate scheme; allow exception to be raised if urlparse fails
+            parsed = urllib.parse.urlparse(value)
+            if parsed.scheme != 's3':
+                raise ValueError(f"s3_url must use the 's3://' scheme, got: {value!r}")
         self._s3_url = value
 
     def s3_url_set_to_default(self):

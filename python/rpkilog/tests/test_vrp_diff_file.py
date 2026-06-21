@@ -50,19 +50,19 @@ def test_infer_datetimestamp_rejects_summary_filename():
         VrpDiffFile.infer_datetimestamp_from_path(p)
 
 
-def test_from_summary_filename_bz2():
-    f = VrpDiffFile.from_summary_filename('20250720T100145Z.json.bz2', local_storage_dir=Path('/tmp'))
+def test_from_filename_bz2():
+    f = VrpDiffFile.from_filename('20250720T100145Z.json.bz2', local_storage_dir=Path('/tmp'))
     assert f.datetimestamp == GOLDEN_DT
 
 
-def test_from_summary_filename_plain():
-    f = VrpDiffFile.from_summary_filename('20250720T100145Z.json', local_storage_dir=Path('/tmp'))
+def test_from_filename_plain():
+    f = VrpDiffFile.from_filename('20250720T100145Z.json', local_storage_dir=Path('/tmp'))
     assert f.datetimestamp == GOLDEN_DT
 
 
-def test_from_summary_filename_rejects_diff_filename():
+def test_from_filename_rejects_diff_filename():
     with pytest.raises(ValueError):
-        VrpDiffFile.from_summary_filename('20250720T100145Z.vrpdiff.json.bz2')
+        VrpDiffFile.from_filename('20250720T100145Z.vrpdiff.json.bz2')
 
 
 # --- Golden data tests (read test_data/ only, no S3) ---

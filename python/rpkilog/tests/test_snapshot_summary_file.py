@@ -60,6 +60,44 @@ def test_datetimestamp_from_json_naive_buildtime_becomes_utc():
     assert dt == GOLDEN_DT
 
 
+# --- s3_url derivation unit tests (no network) ---
+
+def test_s3_url_derived_from_base_url_when_unset(monkeypatch):
+    # isolate the process-global base-url classvar (auto-restored on teardown)
+    monkeypatch.setattr(SnapshotSummaryFile, '_default_s3_base_url', None, raising=False)
+    SnapshotSummaryFile.default_s3_base_url_set('s3://example-bucket/prefix/')
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT)
+    # resolving derives the URL from base + filename; s3_path/s3_bucket then read the stored URL
+    f._ensure_s3_url()
+    assert f.s3_url == 's3://example-bucket/prefix/20250720T100145Z.json.bz2'
+    assert f.s3_bucket == 'example-bucket'
+    assert f.s3_path == 'prefix/20250720T100145Z.json.bz2'
+
+
+def test_explicit_s3_url_not_overridden_by_base_url(monkeypatch):
+    # A known URL (e.g. a future SQL-loaded record) must win over the class base URL.
+    monkeypatch.setattr(SnapshotSummaryFile, '_default_s3_base_url', None, raising=False)
+    SnapshotSummaryFile.default_s3_base_url_set('s3://example-bucket/prefix/')
+    explicit = 's3://other-bucket/known/object.json.bz2'
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT, s3_url=explicit)
+    f._ensure_s3_url()  # must be a no-op when a URL is already known
+    assert f.s3_url == explicit
+    assert f.s3_bucket == 'other-bucket'
+    assert f.s3_path == 'known/object.json.bz2'
+
+
+def test_s3_url_rejects_non_s3_scheme():
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT)
+    with pytest.raises(ValueError):
+        f.s3_url = 'https://example-bucket/object.json.bz2'
+
+
+def test_default_s3_base_url_set_rejects_non_s3_scheme(monkeypatch):
+    monkeypatch.setattr(SnapshotSummaryFile, '_default_s3_base_url', None, raising=False)
+    with pytest.raises(ValueError):
+        SnapshotSummaryFile.default_s3_base_url_set('https://example-bucket/')
+
+
 # --- File I/O unit tests (tmp_path only, no golden data) ---
 
 def test_write_json_roundtrip(tmp_path):
