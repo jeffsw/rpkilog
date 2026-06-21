@@ -10,6 +10,11 @@ Prefer bullet points over prose.
 
 There are standard pre-commit hooks in this repository.  They can be invoked manually with: `uv run --directory python/rpkilog prek run` which is a good way to perform basic verifications after edits, too.
 
+Prefer scoping a manual run to the files you changed (`prek run --files <abs-path> ...`) rather than
+`prek run --all-files`.  A number of committed text files (SVGs are excluded, but various HTML, CSS,
+config, and test-data files) lack a trailing newline, so `--all-files` makes `end-of-file-fixer`
+churn files unrelated to your change.
+
 ## Python
 
 ### Style Guide
@@ -34,6 +39,14 @@ alright default choices.
 #### Enums
 
 Use Docstrings on Enum members to describe the values.
+
+### Testing
+
+The golden file `test_data/rpkiclient_summary_20250720T100145Z.json.bz2` has an internal
+`metadata.buildtime` of `20250720T100143Z` — two seconds earlier than the `100145Z` in its filename.
+Code that derives a filename/S3 key from the JSON buildtime (e.g. `rpkiclient_uploader.s3_upload` via
+`SnapshotSummaryFile.datetimestamp_from_json()`) therefore produces a `100143Z` key, not `100145Z`.
+Tests that assert against such a key should compute it from the JSON buildtime, not the filename.
 
 ## Reviewing PRs or branches
 

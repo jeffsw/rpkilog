@@ -14,6 +14,7 @@ import boto3
 import dateutil.parser
 from botocore.exceptions import ClientError
 
+from rpkilog.cleanup_policy import CleanupPolicy
 from rpkilog.local_storage_type import LocalStorageType
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class DataFileSuper(ABC):
     def __init__(
             self,
             datetimestamp: datetime,
-            cleanup_upon_destroy: bool = False,
+            cleanup_policy: CleanupPolicy = CleanupPolicy.CLEANUP_IF_IN_S3,
             local_filepath_uncompressed: Path = None,
             local_filepath_bz2: Path = None,
             local_storage_dir: Path = None,
@@ -66,7 +67,7 @@ class DataFileSuper(ABC):
             s3_stored: bool = False,
     ):
         self.datetimestamp = datetimestamp
-        self.cleanup_upon_destroy = cleanup_upon_destroy
+        self.cleanup_policy = cleanup_policy
         self.local_filepath_bz2 = local_filepath_bz2
         self.local_filepath_uncompressed = local_filepath_uncompressed
         self.local_storage_type = local_storage_type
@@ -77,17 +78,17 @@ class DataFileSuper(ABC):
 
     def __del__(self):
         """
-        Clean up cached files on disk when destructor invoked AND self.cleanup_upon_destroy == True.
+        Clean up cached files on disk when the destructor runs AND self.cleanup_policy permits it
+        (see _should_cleanup()).
 
-        Generally, self.cleanup_upon_destroy will be set true if a snapshot is uploaded to S3.  A caller
-        could override that by setting it back to false after an upload.
-
-        Caller can also manually set it to True.  Maybe they want this after summarization.
+        Under the default CLEANUP_IF_IN_S3 policy, cleanup happens once the file has been uploaded
+        to S3.  A caller can force or suppress cleanup by setting self.cleanup_policy to
+        CLEANUP_ALWAYS or CLEANUP_NEVER.
 
         This destructor is retained as a fallback for instances not used in a `with` block.  When
         deterministic cleanup is desired, prefer the context manager (__enter__/__exit__) instead.
         """
-        if self.cleanup_upon_destroy:
+        if self._should_cleanup():
             self._cleanup_local_cache()
 
     def __enter__(self):
@@ -95,18 +96,36 @@ class DataFileSuper(ABC):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """
-        Clean up the local cached file on context exit when self.cleanup_upon_destroy == True
-        (s3_upload() sets it True after a successful upload).  Returns False so any in-flight
-        exception is never suppressed.  __del__ remains a fallback for non-`with` usage.
+        Clean up the local cached file on context exit when self.cleanup_policy permits it (see
+        _should_cleanup()).  Under the default CLEANUP_IF_IN_S3 policy, s3_upload() sets s3_stored
+        True so cleanup happens after a successful upload.  Returns False so any in-flight exception
+        is never suppressed.  __del__ remains a fallback for non-`with` usage.
         """
-        if self.cleanup_upon_destroy:
+        if self._should_cleanup():
             self._cleanup_local_cache()
         return False
+
+    def _should_cleanup(self) -> bool:
+        """
+        Decide whether the locally-cached file should be unlinked on destroy/exit, per
+        self.cleanup_policy.  CLEANUP_ALWAYS always cleans up, CLEANUP_NEVER never does, and
+        CLEANUP_IF_IN_S3 cleans up only once the file is stored in S3.
+        """
+        match self.cleanup_policy:
+            case CleanupPolicy.CLEANUP_ALWAYS:
+                retval = True
+            case CleanupPolicy.CLEANUP_NEVER:
+                retval = False
+            case CleanupPolicy.CLEANUP_IF_IN_S3:
+                retval = self.s3_stored
+            case _:
+                raise ValueError(f'unexpected value of cleanup_policy: {self}')
+        return retval
 
     def _cleanup_local_cache(self):
         """
         Unlink the locally-cached file (if any) and mark storage as UNCACHED.  Shared by __del__
-        and __exit__; callers gate on self.cleanup_upon_destroy.
+        and __exit__; callers gate on _should_cleanup().
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
@@ -342,7 +361,8 @@ class DataFileSuper(ABC):
         self.s3_stored = True
         self.s3_url = f's3://{self.s3_bucket}/{self.s3_path}'
         logger.info(f'uploaded {self.s3_url}')
-        self.cleanup_upon_destroy = True
+        # s3_stored is now True; under the default CLEANUP_IF_IN_S3 policy the local cache will be
+        # unlinked on destroy/exit, while CLEANUP_NEVER leaves an externally owned source file alone.
         return s3_object
 
     @property

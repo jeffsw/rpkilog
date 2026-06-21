@@ -1,62 +1,49 @@
 """
-This is being written in a bit of a rush to start sourcing snapshots from our own validator.
-There is opportunity for re-use being ignored here.
+Upload rpkiclient's output/json snapshot-summary file to S3, driving a SnapshotSummaryFile so the
+filename derivation, size validation, bzip2 compression, and S3 upload all live in one place.
 """
 import argparse
-import bz2
-from datetime import datetime, timezone, UTC
 import json
 import logging
 from pathlib import Path
 import time
 
-import boto3
-import dateutil.parser
 import psutil
+
+from rpkilog.cleanup_policy import CleanupPolicy
+from rpkilog.local_storage_type import LocalStorageType
+from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 
 
 logger = logging.getLogger(__name__)
-MINIMUM_JSON_SIZE = 8_500_000
-
-
-def get_bz2_filename_from_datetime(dt: datetime) -> str:
-    retval = dt.strftime('%Y%m%dT%H%M%SZ.json.bz2')
-    return retval
-
-
-def get_rpkiclient_datetime_from_json(json_serialized: bytes | str) -> datetime:
-    json_data = json.loads(json_serialized)
-    retval = dateutil.parser.parse(json_data['metadata']['buildtime'])
-    return retval
 
 
 def s3_upload(rpkiclient_json: Path, s3_bucket_name: str) -> str | None:
     """
-    Given a Path to rpkiclient's output/json file, determine if it is already present in the given S3 bucket.
-    If not, bzip2 and upload it.  Filename format is YYYYMMDDTHHMMSSZ.json.bz2.
+    Given a Path to rpkiclient's output/json file, determine if it is already present in the given S3
+    bucket.  If not, bzip2 and upload it.  Filename format is YYYYMMDDTHHMMSSZ.json.bz2.
+
+    CLEANUP_NEVER keeps us from deleting rpki-client's live source file, which we point at directly.
     """
-    with open(rpkiclient_json, 'rb') as json_fh:
-        json_buffer = json_fh.read()
-    if len(json_buffer) < MINIMUM_JSON_SIZE:
-        raise RuntimeError(f'JSON file is too small to be reliable: {rpkiclient_json} < {MINIMUM_JSON_SIZE}')
-    json_datetime = get_rpkiclient_datetime_from_json(json_serialized=json_buffer)
-    bz2_filename = get_bz2_filename_from_datetime(json_datetime)
-    s3 = boto3.client('s3')
-    s3_list_result = s3.list_objects(
-        Bucket = s3_bucket_name,
-        Prefix = bz2_filename,
+    with open(rpkiclient_json, 'rt') as json_fh:
+        json_data = json.load(json_fh)
+    json_datetime = SnapshotSummaryFile.datetimestamp_from_json(json_data)
+    ssf = SnapshotSummaryFile(
+        datetimestamp=json_datetime,
+        local_filepath_uncompressed=rpkiclient_json,
+        local_storage_type=LocalStorageType.UNCOMPRESSED,
+        cleanup_policy=CleanupPolicy.CLEANUP_NEVER,
     )
-    if len(s3_list_result.get('Contents', [])):
+    ssf.s3_url = f's3://{s3_bucket_name}/{ssf.default_filename}.bz2'
+    if ssf.s3_exists():
         logger.info(f'Currently available rpkiclient json file {json_datetime} has already been uploaded.')
         return None
-    logger.info(f'Preparing to upload {len(json_buffer)/1048576:.1f} MB by compressing to {bz2_filename}')
-    bz2_buffer = bz2.compress(json_buffer)
-    bucket = boto3.resource('s3').Bucket(s3_bucket_name)
-    logger.info(f'Uploading {bz2_filename} to {s3_bucket_name} uncompressed: {len(json_buffer)/1048576:.1f} MB'
-                f' compressed: {len(bz2_buffer)/1048576:.1f} MB')
-    s3_object = bucket.put_object(Key=bz2_filename, Body=bz2_buffer)
+    ssf.validate_size()
+    logger.info(f'Preparing to compress and upload {ssf.s3_url}')
+    s3_object = ssf.s3_upload()
     logger.info(f'Uploaded successfully: {s3_object}')
-    return s3_object.key
+    retstr = s3_object.key
+    return retstr
 
 
 def cli_entry_point():

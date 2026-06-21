@@ -99,7 +99,7 @@ def test_write_to_path(tmp_path):
 
 @pytest.mark.slow
 def test_s3_roundtrip(tmp_path, s3_test_bucket):
-    # Copy golden file so s3_upload()'s cleanup_upon_destroy won't touch test_data/
+    # Copy golden file so s3_upload()'s post-upload cleanup won't touch test_data/
     local_copy = tmp_path / GOLDEN_DIFF.name
     shutil.copy2(GOLDEN_DIFF, local_copy)
     test_key = f'test_vrp_diff_file/{GOLDEN_DIFF.name}'

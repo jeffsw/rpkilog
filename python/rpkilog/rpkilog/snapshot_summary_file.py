@@ -33,27 +33,32 @@ class SnapshotSummaryFile(DataFileSuper):
         """
         Extract the buildtime datetime from rpkiclient metadata.
 
-        TODO: dateutil.parser.parse() returns a naive datetime if the buildtime string has no
-         timezone indicator.  The base class always calls .replace(tzinfo=timezone.utc) after
-         parsing; add the same here for consistency and robustness against malformed input.
+        dateutil.parser.parse() returns a naive datetime if the buildtime string has no timezone
+        indicator.  Like the base class, we call .replace(tzinfo=timezone.utc) after parsing for
+        consistency and robustness against malformed input.
         """
-        retval = dateutil.parser.parse(json_data['metadata']['buildtime'])
+        dt = dateutil.parser.parse(json_data['metadata']['buildtime'])
+        retval = dt.replace(tzinfo=timezone.utc)
         return retval
 
     def validate_size(self):
         """
         Raise RuntimeError if the uncompressed data is below MINIMUM_SIZE bytes.
 
-        TODO: The BZIP2 branch decompresses the entire file into memory just to count bytes.
-         For large files a streaming count avoids the memory spike:
-           size = sum(len(chunk) for chunk in iter(lambda: fh.read(65536), b''))
+        The BZIP2 branch streams the decompressed bytes in 256 KiB chunks and counts them rather
+        than reading the whole file into memory, avoiding a memory spike on large files.
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
                 size = self.local_filepath_uncompressed.stat().st_size
             case LocalStorageType.BZIP2:
+                size = 0
                 with bz2.open(self.local_filepath_bz2, 'rb') as fh:
-                    size = len(fh.read())
+                    while True:
+                        chunk = fh.read(256 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
             case _:
                 raise ValueError(f'cannot validate size without a locally-cached file: {self}')
         if size < self.MINIMUM_SIZE:

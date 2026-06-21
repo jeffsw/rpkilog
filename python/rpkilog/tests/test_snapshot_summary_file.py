@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from rpkilog.cleanup_policy import CleanupPolicy
 from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 
@@ -51,6 +52,14 @@ def test_infer_datetimestamp_rejects_diff_filename():
         SnapshotSummaryFile.infer_datetimestamp_from_path(p)
 
 
+def test_datetimestamp_from_json_naive_buildtime_becomes_utc():
+    # buildtime with no timezone indicator must come back tz-aware in UTC
+    json_data = {'metadata': {'buildtime': '2025-07-20 10:01:45'}}
+    dt = SnapshotSummaryFile.datetimestamp_from_json(json_data)
+    assert dt.tzinfo == timezone.utc
+    assert dt == GOLDEN_DT
+
+
 # --- File I/O unit tests (tmp_path only, no golden data) ---
 
 def test_write_json_roundtrip(tmp_path):
@@ -80,7 +89,7 @@ def test_context_manager_cleans_up_when_flagged(tmp_path):
     with f as cm:
         assert cm is f
         f.write_json(sample_data)
-        f.cleanup_upon_destroy = True
+        f.cleanup_policy = CleanupPolicy.CLEANUP_ALWAYS
         local_path = f.local_filepath_uncompressed
         assert local_path.exists()
     assert not local_path.exists()
@@ -100,7 +109,7 @@ def test_context_manager_keeps_file_when_not_flagged(tmp_path):
 
 def test_context_manager_does_not_suppress_exceptions(tmp_path):
     f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT, local_storage_dir=tmp_path)
-    f.cleanup_upon_destroy = True
+    f.cleanup_policy = CleanupPolicy.CLEANUP_ALWAYS
     with pytest.raises(ValueError):
         with f:
             raise ValueError('boom')
@@ -158,7 +167,7 @@ def test_write_to_path(tmp_path):
 
 @pytest.mark.slow
 def test_s3_roundtrip(tmp_path, s3_test_bucket):
-    # Copy golden file so s3_upload()'s cleanup_upon_destroy won't touch test_data/
+    # Copy golden file so s3_upload()'s post-upload cleanup won't touch test_data/
     local_copy = tmp_path / GOLDEN_SUMMARY.name
     shutil.copy2(GOLDEN_SUMMARY, local_copy)
     test_key = f'test_snapshot_summary_file/{GOLDEN_SUMMARY.name}'
