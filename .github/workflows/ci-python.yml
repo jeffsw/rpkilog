@@ -47,6 +47,7 @@ jobs:
               python/rpkilog/rpkilog/data_file_super.py
               python/rpkilog/rpkilog/local_storage_type.py
               python/rpkilog/rpkilog/roa.py
+              python/rpkilog/rpkilog/snapshot_file.py
               python/rpkilog/rpkilog/snapshot_summary_file.py
               python/rpkilog/rpkilog/util.py
               python/rpkilog/rpkilog/vrp_diff_file.py
