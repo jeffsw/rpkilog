@@ -1,0 +1,66 @@
+#cloud-config
+%{~ if fqdn != null }
+fqdn: ${fqdn}
+prefer_fqdn_over_hostname: true
+%{~ endif }
+# MariaDB data lives on the root filesystem; this dev VM has no separate data disk.
+package_reboot_if_required: true
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - htop
+  - incus-agent
+  - mariadb-client
+  - mariadb-server
+  - openssh-server
+  - ssh-import-id
+ssh_pwauth: false
+users:
+  - name: jsw
+    groups: adm,sudo
+    lock_passwd: false
+    plain_text_passwd: "${console_password_plaintext}"
+    shell: /usr/bin/bash
+    sudo: "ALL=(ALL) NOPASSWD: ALL"
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC4k8nVaS9Ns+8jZ1C97eUcOvkFw6NOXS8e4xxG6XEH1l9PDluOCxAqgCvdKxX9ZhFvwW1SCSWuN95WrM7u/9p0flOX7DZFYld053ClWxMZZ4ZtKj8XWnmDU4LLXSmUWaKddW9pHZHvxfEFu+wCcnUiJM4NgS4owfaIGC3IOIXVrxsoNuoKyTQS9pRa5+3sMC3rHK8oWPkleJGO+cs8AxuetRtHS/ZHwshsyI27ROC/nIxZ7ZeKXf3g/jxEpbxI9LNFnocuUmeoNpndBFYND1ujwiHZvoWxx4ByiTRDNJDHJWdnJpz8rOmnoHeHFqV8F/I5CRG9Dh7aq5vd9LWdrkqb jeffsw6@gmail.com boomer 2013-05-28
+write_files:
+  - path: /etc/profile.d/rpkilog_prompt.sh
+    permissions: '0644'
+    content: |4
+        # rpkilog: single source of truth for the interactive prompt.
+        # Colored, with fully-qualified hostname (\H).
+        PS1='\[\033[01;32m\]\u@\H\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+  - path: /etc/skel/.bashrc
+    append: true
+    content: |4
+        # rpkilog: prompt is managed in /etc/profile.d/rpkilog_prompt.sh
+        [ -r /etc/profile.d/rpkilog_prompt.sh ] && . /etc/profile.d/rpkilog_prompt.sh
+  - path: /root/.bashrc
+    append: true
+    content: |4
+        # rpkilog: prompt is managed in /etc/profile.d/rpkilog_prompt.sh
+        [ -r /etc/profile.d/rpkilog_prompt.sh ] && . /etc/profile.d/rpkilog_prompt.sh
+  - path: /etc/mysql/mariadb.conf.d/99-rpkilog.cnf
+    owner: root:root
+    permissions: '0644'
+    content: |4
+        [mysqld]
+        # Listen on all interfaces so dev clients and the Atlas / petoju-mysql Terraform
+        # providers can reach MariaDB over the rpkilog.dev network.  This is a dev VM with
+        # no RDS IAM auth, so access is username/password only.
+        bind-address = 0.0.0.0
+  - path: /var/lib/cloud/scripts/per-once/100_mariadb_bootstrap.sh
+    permissions: "0755"
+    content: |4
+        #!/bin/bash -e
+        # Ensure MariaDB is running, then create the dev admin user.  root on the VM
+        # authenticates to MariaDB over the unix socket, so no password is needed here.
+        systemctl enable --now mariadb
+        mysql <<'SQL'
+        CREATE USER IF NOT EXISTS '${db_admin_username}'@'%' IDENTIFIED BY '${db_admin_password}';
+        GRANT ALL PRIVILEGES ON *.* TO '${db_admin_username}'@'%' WITH GRANT OPTION;
+        FLUSH PRIVILEGES;
+        SQL
