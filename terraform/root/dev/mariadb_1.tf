@@ -2,7 +2,8 @@
 # MariaDB data lives on the VM's root filesystem — the dataset is modest and dev disk is cheap.
 
 locals {
-  mariadb_1_admin_username = "rpkilog_admin"
+  mariadb_1_admin_username     = "rpkilog_admin"
+  mariadb_1_developer_username = "developer"
 }
 
 resource "random_password" "mariadb_1_console" {
@@ -14,6 +15,14 @@ resource "random_password" "mariadb_1_console" {
 }
 
 resource "random_password" "mariadb_1_admin" {
+  length  = 24
+  lower   = true
+  numeric = true
+  special = false
+  upper   = true
+}
+
+resource "random_password" "mariadb_1_developer" {
   length  = 24
   lower   = true
   numeric = true
@@ -36,11 +45,23 @@ output "mariadb_1_admin_password" {
   value       = nonsensitive(random_password.mariadb_1_admin.result)
 }
 
+output "mariadb_1_developer_username" {
+  description = "MariaDB localhost-only, fully-privileged convenience user; its credentials are preinstalled in /etc/mysql on the VM, so a bare `mariadb` works for any OS user without a password"
+  value       = local.mariadb_1_developer_username
+}
+
+output "mariadb_1_developer_password" {
+  description = "Password for the MariaDB developer convenience user (also written to /etc/mysql/mariadb.conf.d on the VM)"
+  value       = nonsensitive(random_password.mariadb_1_developer.result)
+}
+
 module "userdata_mariadb_1" {
   source                     = "../../module/mariadb_userdata"
   console_password_plaintext = nonsensitive(random_password.mariadb_1_console.result)
   db_admin_username          = local.mariadb_1_admin_username
   db_admin_password          = nonsensitive(random_password.mariadb_1_admin.result)
+  db_developer_username      = local.mariadb_1_developer_username
+  db_developer_password      = nonsensitive(random_password.mariadb_1_developer.result)
   fqdn                       = "mariadb-1.rpkilog.dev"
 }
 

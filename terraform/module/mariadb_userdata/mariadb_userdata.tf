@@ -23,11 +23,23 @@ variable "db_admin_password" {
   type        = string
 }
 
+variable "db_developer_username" {
+  description = "MariaDB convenience user created at first boot, restricted to @localhost but fully privileged. Its credentials are written to a world-readable /etc/mysql client config so any OS user can run `mariadb` with no password prompt."
+  type        = string
+}
+
+variable "db_developer_password" {
+  description = "Password for the MariaDB developer convenience user"
+  type        = string
+}
+
 locals {
   user_data_mariadb = {
     console_password_plaintext = nonsensitive(var.console_password_plaintext)
     db_admin_username          = var.db_admin_username
     db_admin_password          = nonsensitive(var.db_admin_password)
+    db_developer_username      = var.db_developer_username
+    db_developer_password      = nonsensitive(var.db_developer_password)
     fqdn                       = var.fqdn
   }
 }
