@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="regenerate .terraform.lock.hcl for every root/module with all dev & CI platforms (writes changes)"
+set -euo pipefail
+cd "$MISE_PROJECT_ROOT"
+
+# Record provider hashes for every platform contributors and CI run on, so `terraform init`
+# (see `mise run verify-tf`, which uses -lockfile=readonly) never needs to mutate a committed
+# .terraform.lock.hcl. Commit the resulting lock files.
+#
+# Platforms: linux_amd64 (GitHub CI), darwin_arm64 (Apple Silicon), darwin_amd64 (Intel Mac).
+while IFS= read -r d; do
+    echo "==> lock ${d}"
+    terraform -chdir="${d}" providers lock \
+        -platform=linux_amd64 \
+        -platform=darwin_arm64 \
+        -platform=darwin_amd64
+    # Provider-less modules (e.g. *_userdata) yield a header-only lock with no `provider` blocks.
+    # Don't leave those behind — terraform init won't recreate them, so they'd just be noise.
+    lock="${d}/.terraform.lock.hcl"
+    if [[ -f "${lock}" ]] && ! grep -q '^provider ' "${lock}"; then
+        rm -f "${lock}"
+    fi
+done < <(find . -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)

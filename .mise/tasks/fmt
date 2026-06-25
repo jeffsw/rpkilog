@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="auto-format sources: terraform fmt -recursive (writes changes)"
+#MISE description="auto-format sources: terraform fmt for every root and module (writes changes)"
 set -euo pipefail
 cd "$MISE_PROJECT_ROOT"
-terraform fmt -recursive terraform/
+
+# Same directory discovery as `verify-tf`: includes the repo-root module (./main.tf), excludes
+# provider/module caches. Formatted per-directory so we never descend into a .terraform cache.
+while IFS= read -r d; do
+    terraform fmt "${d}"
+done < <(find . -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
