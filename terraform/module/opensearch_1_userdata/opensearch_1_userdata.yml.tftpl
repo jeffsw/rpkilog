@@ -119,7 +119,19 @@ write_files:
   - path: /etc/profile.d/rpkilog_prompt.sh
     permissions: '0644'
     content: |4
-        PS1='\u@\H:\w\$ '
+        # rpkilog: single source of truth for the interactive prompt.
+        # Colored, with fully-qualified hostname (\H).
+        PS1='\[\033[01;32m\]\u@\H\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+  - path: /etc/skel/.bashrc
+    append: true
+    content: |4
+        # rpkilog: prompt is managed in /etc/profile.d/rpkilog_prompt.sh
+        [ -r /etc/profile.d/rpkilog_prompt.sh ] && . /etc/profile.d/rpkilog_prompt.sh
+  - path: /root/.bashrc
+    append: true
+    content: |4
+        # rpkilog: prompt is managed in /etc/profile.d/rpkilog_prompt.sh
+        [ -r /etc/profile.d/rpkilog_prompt.sh ] && . /etc/profile.d/rpkilog_prompt.sh
   - path: /usr/local/bin/install_opensearch.sh
     permissions: "0755"
     content: |4
