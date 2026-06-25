@@ -4,8 +4,8 @@ resource "mysql_database" "rpkilog" {
 }
 
 # manages the database schema
-module "snapshot_db_schema" {
-  source = "../../module/snapshot_db_schema"
+module "sqldb_schema" {
+  source = "../../module/sqldb_schema"
 
   db_host     = aws_route53_record.mariadb_1_A.fqdn
   db_user     = local.mariadb_1_admin_username

@@ -25,15 +25,15 @@ locals {
 
 # Reads the migration directory and the live database to compute migration status (current /
 # next / latest applied version). Drives the resource below so a plan shows pending migrations.
-data "atlas_migration" "snapshot_db" {
+data "atlas_migration" "sqldb" {
   dir = local.migration_dir
   url = local.atlas_url
 }
 
 # Applies every pending migration up to the latest version in the directory. Idempotent: when
 # the database is already at `latest`, there is nothing to apply.
-resource "atlas_migration" "snapshot_db" {
+resource "atlas_migration" "sqldb" {
   dir     = local.migration_dir
   url     = local.atlas_url
-  version = data.atlas_migration.snapshot_db.latest
+  version = data.atlas_migration.sqldb.latest
 }

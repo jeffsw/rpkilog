@@ -65,7 +65,7 @@ provider "incus" {
 }
 
 # The atlas provider shells out to the `atlas` CLI, which mise pins and puts on PATH
-# (see .mise.toml). Connection details are passed per-resource by the snapshot_db_schema module.
+# (see .mise.toml). Connection details are passed per-resource by the sqldb_schema module.
 provider "atlas" {}
 
 # Manages the rpkilog database (and later users/grants) on the dev MariaDB. Connects as the
