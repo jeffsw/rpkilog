@@ -41,4 +41,3 @@ information.  Use an IAM user with superuser membership, not the root user.
         * Tie breaker fields: `prefix,maxLength,asn,_doc`
         * Default columns: `prefix,maxLength,asn,verb`
         * Default sort direction: Ascending
-
