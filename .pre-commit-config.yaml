@@ -10,3 +10,14 @@ repos:
       - id: end-of-file-fixer
         exclude: '\.svg$'
       - id: no-commit-to-branch
+  - repo: local
+    hooks:
+      # terraform fmt -check + init -backend=false + validate, reusing the one mise definition.
+      # Runs only when *.tf files are involved; pass_filenames is off because verify-tf scans
+      # all roots/modules itself.
+      - id: terraform-verify
+        name: terraform fmt/validate (mise run verify-tf)
+        entry: mise run verify-tf
+        language: system
+        files: '\.tf$'
+        pass_filenames: false

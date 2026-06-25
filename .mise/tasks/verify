@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="run all verification: terraform, pre-commit hooks, python lint + fast tests"
+#MISE depends=["verify-hooks", "verify-py"]
+set -euo pipefail
+# The work happens in the depends above. terraform fmt/init/validate runs via the
+# `terraform-verify` prek local hook inside verify-hooks, so it isn't listed here a second time.
+:

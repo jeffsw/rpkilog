@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="pytest excluding slow tests (pytest -m 'not slow')"
+#MISE dir="python/rpkilog"
+set -euo pipefail
+pytest -m "not slow"

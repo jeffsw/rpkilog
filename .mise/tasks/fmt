@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="auto-format sources: terraform fmt -recursive (writes changes)"
+set -euo pipefail
+cd "$MISE_PROJECT_ROOT"
+terraform fmt -recursive terraform/

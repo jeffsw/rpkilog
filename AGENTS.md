@@ -8,12 +8,39 @@ Prefer bullet points over prose.
 
 ### pre-commit hooks
 
-There are standard pre-commit hooks in this repository.  They can be invoked manually with: `uv run --directory python/rpkilog prek run` which is a good way to perform basic verifications after edits, too.
+Standard pre-commit hooks run via `prek` — see [Verification](#verification). `prek run --all-files`
+is the normal invocation: the repo's trailing newlines are normalized, so it no longer churns
+unrelated files. `prek` is on `PATH` via the project venv, so plain `prek run` works (no
+`uv run --directory …` wrapper needed).
 
-Prefer scoping a manual run to the files you changed (`prek run --files <abs-path> ...`) rather than
-`prek run --all-files`.  A number of committed text files (SVGs are excluded, but various HTML, CSS,
-config, and test-data files) lack a trailing newline, so `--all-files` makes `end-of-file-fixer`
-churn files unrelated to your change.
+## Verification
+
+Verification is defined once as **mise tasks** (`.mise/tasks/`), so the same checks run for Claude,
+in pre-commit hooks, on developer CLIs, and in GitHub CI. The terraform/atlas versions the tasks
+use are pinned in `.mise.toml`.
+
+- `mise run verify` — everything: terraform + all pre-commit hooks + python lint & fast tests.
+- `mise run verify-tf` — `terraform fmt -check` + `init -backend=false` + `validate` for every
+  root and module under `terraform/`.
+- `mise run verify-hooks` — all `prek` (pre-commit) hooks on all files.
+- `mise run verify-py` — flake8 (`mise run lint`) + fast tests (`mise run test-fast`).
+- `mise run fmt` — auto-format (`terraform fmt -recursive`, writes changes).
+- `mise run test` — full pytest; `mise run test-fast` skips slow tests.
+
+The four contexts, all sharing those definitions:
+
+1. **Claude / humans** run `mise run verify` (or a narrower `verify-*` / `lint` / `test` task).
+   These are allow-listed in the committed `.claude/settings.json`, so Claude runs them without a
+   permission prompt. The `lint` task is the single source of truth for the flake8 file set.
+2. **pre-commit / git** — `prek` runs the file-hygiene hooks plus a `terraform-verify` local hook
+   that calls `mise run verify-tf`.
+3. **GitHub CI** — the `verify` job runs `mise run verify-hooks` + `mise run lint`; the pytest
+   matrix runs `mise run test` / `test-fast`.
+
+After a set of changes, Claude should run `mise run verify` on its own initiative — it is
+allow-listed in `.claude/settings.json` (`Bash(mise run verify*)`), so it runs without a
+permission prompt and needs no approval. Don't ask the user which verification to run; just run
+`mise run verify` (or a scoped `verify-*` task when only one area changed) and report the result.
 
 ## Python
 

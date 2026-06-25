@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="pytest (single definition; pass extra args after --, e.g. -- -m 'not slow')"
+#MISE dir="python/rpkilog"
+set -euo pipefail
+pytest "$@"
