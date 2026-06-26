@@ -15,7 +15,37 @@ permissions:
   contents: read
 
 jobs:
+  # Single-shot verification shared with local dev: terraform fmt/init/validate + all prek
+  # hooks + flake8, all via the mise tasks (the one source of truth). Runs once, not per
+  # Python version. mise provides the pinned terraform/atlas; prek/flake8 come from pip.
+  verify:
+    name: verify (terraform, hooks, lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Set up mise (pinned terraform, atlas)
+        uses: jdx/mise-action@v2
+      - name: Install lint/hook deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'python/rpkilog[dev]'
+      - name: pre-commit hooks + terraform (mise run verify-hooks)
+        # no-commit-to-branch would fail on pushes to the default branch; it's a local guard.
+        env:
+          SKIP: no-commit-to-branch
+        run: mise run verify-hooks
+      - name: flake8 (mise run lint)
+        run: mise run lint
+
+  # pytest across supported Python versions, with the pytest command defined once in the mise
+  # `test` / `test-fast` tasks. flake8 lives in the verify job above, so it isn't repeated here.
   ci-python:
+    name: pytest + build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -24,7 +54,6 @@ jobs:
           - "3.12"
           - "3.13"
           - "3.14"
-
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -32,28 +61,13 @@ jobs:
         with:
           architecture: x64
           python-version: ${{ matrix.python-version }}
+      - name: Set up mise
+        uses: jdx/mise-action@v2
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 pytest build
+          pip install build
           python -m pip install python/rpkilog[dev] python/rpkilog[tests]
-      - name: flake8
-        run: |
-          # only lint certain files for now
-          LINT_FILES=(
-              # versions of these files in GH-29 branch should pass linting.
-              # un-comment as they are merged.
-              #
-              python/rpkilog/rpkilog/data_file_super.py
-              python/rpkilog/rpkilog/local_storage_type.py
-              python/rpkilog/rpkilog/roa.py
-              python/rpkilog/rpkilog/snapshot_file.py
-              python/rpkilog/rpkilog/snapshot_summary_file.py
-              python/rpkilog/rpkilog/util.py
-              python/rpkilog/rpkilog/vrp_diff_file.py
-              python/rpkilog/tests
-          )
-          flake8 --count --show-source --statistics "${LINT_FILES[@]}"
       - name: Obtain AWS credentials from repo variables / secrets
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -64,17 +78,11 @@ jobs:
       - name: Test with pytest, skipping slow tests for draft PR
         if: github.event.pull_request.draft == true
         timeout-minutes: 15
-        run: |
-          pushd python/rpkilog/
-          pytest --verbose -m "not slow"
-          popd
+        run: mise run test-fast
       - name: Test with pytest, including slow tests
         if: github.event.pull_request.draft == false
         timeout-minutes: 15
-        run: |
-          pushd python/rpkilog/
-          pytest --verbose
-          popd
+        run: mise run test
       #####
       - name: build
         run: |

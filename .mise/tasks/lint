@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="flake8 lint of the cleaned file set (single source of truth; CI calls this)"
+#MISE dir="python/rpkilog"
+set -euo pipefail
+# Scoped allowlist: files known to pass flake8 today. As more files are cleaned up, add them
+# here — this is the one place the set is defined (CI runs `mise run lint`, not its own list).
+flake8 --count --show-source --statistics \
+    rpkilog/data_file_super.py \
+    rpkilog/local_storage_type.py \
+    rpkilog/roa.py \
+    rpkilog/snapshot_file.py \
+    rpkilog/snapshot_summary_file.py \
+    rpkilog/util.py \
+    rpkilog/vrp_diff_file.py \
+    tests

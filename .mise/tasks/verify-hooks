@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="run all pre-commit (prek) hooks on all files"
+set -euo pipefail
+cd "$MISE_PROJECT_ROOT"
+# prek is on PATH via the project venv (see .mise.toml [env]). The terraform-verify local hook
+# in .pre-commit-config.yaml reaches `mise run verify-tf`, so terraform is checked here too.
+prek run --all-files

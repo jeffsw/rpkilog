@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="terraform fmt -check + init -backend=false + validate for every root and module"
+set -euo pipefail
+cd "$MISE_PROJECT_ROOT"
+
+# Every directory that contains *.tf, discovered dynamically so new roots/modules are covered
+dirs=$(find . -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
+
+# Non-mutating: check formatting (use `mise run fmt` to actually rewrite). Checked per-directory
+# (non-recursive) rather than `-recursive .` so we never descend into a .terraform module cache.
+while IFS= read -r d; do
+    terraform fmt -check "${d}"
+done <<< "${dirs}"
+
+# Each directory is init'd with -backend=false (no state/credentials) then validated.
+#
+# -lockfile=readonly: never mutate the committed .terraform.lock.hcl. If a lock is missing the
+# running platform's hashes (e.g. CI is linux_amd64 but the lock was generated on macOS), init
+# fails with a clear, actionable error instead of silently editing a tracked file — which would
+# otherwise surface only as pre-commit's opaque "files were modified by this hook". To add a
+# missing platform's hashes, run `mise run tf-lock` and commit the result.
+while IFS= read -r d; do
+    echo "==> validate ${d}"
+    terraform -chdir="${d}" init -backend=false -input=false -lockfile=readonly -no-color
+    terraform -chdir="${d}" validate -no-color
+done <<< "${dirs}"

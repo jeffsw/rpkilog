@@ -4,6 +4,7 @@
 locals {
   mariadb_1_admin_username     = "rpkilog_admin"
   mariadb_1_developer_username = "developer"
+  mariadb_1_database_name      = "rpkilog"
 }
 
 resource "random_password" "mariadb_1_console" {

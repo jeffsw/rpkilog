@@ -12,4 +12,3 @@ dist/
 .claude/settings.local.json
 test_data/*
 __pycache__/
-

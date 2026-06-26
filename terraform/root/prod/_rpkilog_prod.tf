@@ -52,6 +52,8 @@ variable "uploader_cron_enable" {
 
 locals {
   dns_domains_by_workspace = {
+    # "default" is a placeholder used only when CI runs `terraform validate`
+    "default" : "rpkilog.example"
     "prod" : "rpkilog.com"
     "dev" : "rpkilog.dev"
   }

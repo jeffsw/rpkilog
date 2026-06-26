@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mise run verify*)",
+      "Bash(mise run fmt)",
+      "Bash(mise run lint)",
+      "Bash(mise run test*)",
+      "Bash(prek run*)",
+      "Bash(terraform fmt*)",
+      "Bash(terraform validate*)",
+      "Bash(terraform init -backend=false*)",
+      "WebFetch(domain:registry.terraform.io)",
+      "mcp__ide__getDiagnostics"
+    ]
+  }
+}

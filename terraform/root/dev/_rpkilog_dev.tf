@@ -8,6 +8,10 @@ terraform {
     use_lockfile         = true
   }
   required_providers {
+    atlas = {
+      source  = "ariga/atlas"
+      version = "~> 0.10.3"
+    }
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.44.0"
@@ -15,6 +19,10 @@ terraform {
     incus = {
       source  = "lxc/incus"
       version = "~> 1.1.0"
+    }
+    mysql = {
+      source  = "petoju/mysql"
+      version = "~> 3.0.94"
     }
     random = {
       source  = "hashicorp/random"
@@ -54,6 +62,18 @@ provider "incus" {
   remote {
     name = "router26a"
   }
+}
+
+# The atlas provider shells out to the `atlas` CLI, which mise pins and puts on PATH
+# (see .mise.toml). Connection details are passed per-resource by the sqldb_schema module.
+provider "atlas" {}
+
+# Manages the rpkilog database (and later users/grants) on the dev MariaDB. Connects as the
+# admin user cloud-init creates; prod will configure the same provider against RDS instead.
+provider "mysql" {
+  endpoint = "mariadb-1.rpkilog.dev:3306"
+  username = local.mariadb_1_admin_username
+  password = random_password.mariadb_1_admin.result
 }
 
 provider "random" {}

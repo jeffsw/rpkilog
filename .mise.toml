@@ -1,3 +1,9 @@
 [env]
 # Activate the project venv so mise tasks can use Python and project CLI tools
 _.python.venv = "python/rpkilog/.venv"
+
+[tools]
+# Atlas Community Edition: applies the snapshot-db schema migrations
+"atlas-community" = "1.2.0"
+# Terraform: pinned so Claude, humans, and CI all run the same version (dev root requires ~> 1.15.0)
+terraform = "1.15.6"

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="python checks: flake8 lint + fast tests (delegates to the lint and test-fast tasks)"
+#MISE depends=["lint", "test-fast"]
+set -euo pipefail
+# Work is done by the depends above (single definitions of lint and the fast test run).
+:
