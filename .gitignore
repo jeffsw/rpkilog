@@ -4,6 +4,9 @@
 *.egg-info*
 .terraform
 terraform.tfstate*
+# terraform provider plugin cache (TF_PLUGIN_CACHE_DIR); keep the dir, ignore cached providers
+.terraform.d/plugin-cache/*
+!.terraform.d/plugin-cache/.gitkeep
 backup/
 bucket_clones/
 build/

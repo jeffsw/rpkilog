@@ -1,9 +1,10 @@
 -- Initial snapshot-tracking schema (GH-81).
 --
 -- This file is the single source of truth for the intended database structure.  It is applied
--- by Atlas Community Edition via the ariga/atlas Terraform provider (versioned-migrations
--- workflow): Atlas executes these statements verbatim and records the applied version in its
--- atlas_schema_revisions table.  Hand-written on purpose -- Atlas cannot model MariaDB
+-- by Atlas Community Edition via the `atlas migrate apply` CLI (versioned-migrations workflow),
+-- invoked from the sqldb_schema Terraform module: Atlas executes these statements verbatim and
+-- records the applied version in its atlas_schema_revisions table.  Hand-written on purpose --
+-- Atlas cannot model MariaDB
 -- `WITH SYSTEM VERSIONING`, so `migrate diff` is unusable and atlas.sum is maintained with
 -- `atlas migrate hash`.
 
