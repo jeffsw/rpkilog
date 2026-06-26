@@ -12,6 +12,16 @@ repos:
       - id: no-commit-to-branch
   - repo: local
     hooks:
+      # Re-hash atlas migration dirs so an edited *.sql can't be committed with a stale atlas.sum
+      # (which would only fail later, at `atlas migrate apply`). Auto-fixes like end-of-file-fixer:
+      # if it rewrites atlas.sum, prek reports the change and aborts the commit until it's staged.
+      # pass_filenames is off because migrate-hash scans the migrations dirs itself.
+      - id: atlas-migrate-hash
+        name: atlas migration checksums (mise run migrate-hash)
+        entry: mise run migrate-hash
+        language: system
+        files: '(migrations/.*\.sql|atlas\.sum)$'
+        pass_filenames: false
       # terraform fmt -check + init -backend=false + validate, reusing the one mise definition.
       # Runs only when *.tf files are involved; pass_filenames is off because verify-tf scans
       # all roots/modules itself.

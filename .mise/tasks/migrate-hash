@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="re-hash atlas migration directories (writes migrations/atlas.sum)"
+set -euo pipefail
+cd "$MISE_PROJECT_ROOT"
+
+# `atlas migrate hash` recomputes the integrity file (atlas.sum) from the migration directory; it
+# needs no database. Run it for every migrations dir (discovered dynamically, like verify-tf/fmt),
+# so editing a *.sql without re-hashing can't slip through. Idempotent: a no-op on a correct tree.
+# Used both manually (`mise run migrate-hash`) and as the atlas-migrate-hash prek auto-fix hook --
+# when it rewrites atlas.sum, prek reports the modification and fails the run (like end-of-file-fixer).
+while IFS= read -r dir; do
+    echo "==> hash ${dir}"
+    # relative file:// URL resolves from the project root (cwd)
+    atlas migrate hash --dir "file://${dir#./}"
+done < <(find terraform -type d -name migrations -not -path '*/.terraform/*' | sort -u)

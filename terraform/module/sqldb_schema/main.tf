@@ -40,6 +40,9 @@ locals {
 resource "terraform_data" "sqldb_migrate" {
   triggers_replace = [
     filesha256("${path.module}/migrations/atlas.sum"),
+    # Re-run when the target database server is (re)created (e.g. a dev VM replace): a wiped server
+    # loses the atlas_schema_revisions history along with the data, so the schema must be reapplied.
+    var.db_server_token,
   ]
 
   provisioner "local-exec" {

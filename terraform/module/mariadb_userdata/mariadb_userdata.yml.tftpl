@@ -56,31 +56,15 @@ write_files:
     permissions: "0755"
     content: |4
         #!/bin/bash -e
-        # Create the DB users, then install a global client config so any OS user can
-        # run `mariadb` with no password.  We connect as root over the unix socket with
-        # --no-defaults so the developer client config written below can't interfere
-        # with this bootstrap (or with anything that connects before the user exists).
+        # Create the admin DB user.  We connect as root over the unix socket with
+        # --no-defaults so no stray client config can interfere with this bootstrap.
+        # cloud-init owns ONLY the admin user; the developer user and all grants are
+        # managed by Terraform, which connects as this admin.
         systemctl enable --now mariadb
         mysql --no-defaults --user=root --socket=/run/mysqld/mysqld.sock <<'SQL'
-        -- Admin user: username/password from any host; for dev access and, later, the
-        -- Atlas / petoju-mysql Terraform providers.
+        -- Admin user: username/password from any host; for dev access and for the
+        -- petoju/mysql + Atlas-CLI Terraform tooling (which manages the developer user).
         CREATE USER IF NOT EXISTS '${db_admin_username}'@'%' IDENTIFIED BY '${db_admin_password}';
         GRANT ALL PRIVILEGES ON *.* TO '${db_admin_username}'@'%' WITH GRANT OPTION;
-        -- Developer user: fully privileged but restricted to localhost (socket), so the
-        -- preinstalled credentials below are useless off-box even with bind-address 0.0.0.0.
-        CREATE USER IF NOT EXISTS '${db_developer_username}'@'localhost' IDENTIFIED BY '${db_developer_password}';
-        GRANT ALL PRIVILEGES ON *.* TO '${db_developer_username}'@'localhost' WITH GRANT OPTION;
         FLUSH PRIVILEGES;
         SQL
-        # World-readable on purpose: every OS user gets passwordless local access via the
-        # localhost-only developer account.  Written only after the account exists, so it
-        # can't disrupt the MariaDB package postinst (which runs earlier in cloud-init).
-        cat > /etc/mysql/mariadb.conf.d/99-rpkilog-developer-client.cnf <<'CNF'
-        # Dev convenience: the bare `mariadb` / `mysql` client connects as the
-        # fully-privileged, localhost-only developer account with no prompt.
-        [client]
-        user = ${db_developer_username}
-        password = ${db_developer_password}
-        socket = /run/mysqld/mysqld.sock
-        CNF
-        chmod 0644 /etc/mysql/mariadb.conf.d/99-rpkilog-developer-client.cnf

@@ -25,6 +25,8 @@ use are pinned in `.mise.toml`.
 - `mise run verify-hooks` — all `prek` (pre-commit) hooks on all files.
 - `mise run verify-py` — flake8 (`mise run lint`) + fast tests (`mise run test-fast`).
 - `mise run fmt` — auto-format (`terraform fmt -recursive`, writes changes).
+- `mise run migrate-hash` — re-hash atlas migration dirs (writes `migrations/atlas.sum`); another
+  auto-fixer, sibling to `fmt`.
 - `mise run test` — full pytest; `mise run test-fast` skips slow tests.
 
 The four contexts, all sharing those definitions:
@@ -33,7 +35,10 @@ The four contexts, all sharing those definitions:
    These are allow-listed in the committed `.claude/settings.json`, so Claude runs them without a
    permission prompt. The `lint` task is the single source of truth for the flake8 file set.
 2. **pre-commit / git** — `prek` runs the file-hygiene hooks plus a `terraform-verify` local hook
-   that calls `mise run verify-tf`.
+   that calls `mise run verify-tf`, and an `atlas-migrate-hash` local hook that calls
+   `mise run migrate-hash`. The latter auto-fixes a stale `migrations/atlas.sum`: if a migration
+   `*.sql` was edited without re-hashing, the hook rewrites `atlas.sum` and the commit aborts —
+   re-stage and re-commit. (Otherwise the mismatch only surfaces later at `atlas migrate apply`.)
 3. **GitHub CI** — the `verify` job runs `mise run verify-hooks` + `mise run lint`; the pytest
    matrix runs `mise run test` / `test-fast`.
 
