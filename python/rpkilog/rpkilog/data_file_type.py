@@ -7,10 +7,8 @@ if TYPE_CHECKING:
 
 class DataFileType:
     """
-    Represents one row of the `file_type` SQL table: a (kind, version) lookup describing the
-    format of an underlying data file, e.g. name='rpkiclient_snapshot_summary_v1' kind='summary'.
-    A new format revision is a new row; rows referencing a deprecated_at format are the
-    reprocessing/upgrade backlog.  See the file_type decision in tmp/plan/gh-81-sqldb.md.
+    One row of the `file_type` SQL table: a (kind, version) lookup describing the format of an
+    underlying data file, e.g. name='rpkiclient_snapshot_summary_v1' kind='summary'.
     """
     default_db_connection: 'mariadb.SyncConnection' = None
 
@@ -22,11 +20,7 @@ class DataFileType:
             description: str = None,
             deprecated_at: datetime.datetime = None,
     ):
-        """
-        Attributes mirror the `file_type` table columns.
-
-        TODO: consider a Python Enum mirroring the SQL ENUM('full','summary','diff') for kind
-        """
+        # TODO: consider a Python Enum mirroring the SQL ENUM('full','summary','diff') for kind
         self.id = id
         self.kind = kind
         self.name = name
@@ -36,20 +30,12 @@ class DataFileType:
     @classmethod
     def get_by_name(cls, name: str, db: 'mariadb.SyncConnection' = None) -> 'DataFileType':
         """
-        Retrieve the row with the given file_type.name (e.g. SnapshotSummaryFile.sql_file_type_name)
-        and return it as a DataFileType.
-
-        Raises KeyError when no row matches — file_type rows are seeded/added by schema
-        migrations, so a miss indicates code/schema drift.
-
-        db defaults to cls.default_db_connection when not supplied.
+        Return the DataFileType with the given file_type.name.  Raises KeyError for an unknown name.
 
         TOTEST (fake db cursor):
-        - test_get_by_name_hydrates_from_row: returned DataFileType carries the row's column
-          values
+        - test_get_by_name_hydrates_from_row
         - test_get_by_name_unknown_raises_keyerror
-        - test_get_by_name_uses_default_db_connection: db omitted falls back to
-          cls.default_db_connection
+        - test_get_by_name_uses_default_db_connection
         """
         if db is None:
             db = cls.default_db_connection

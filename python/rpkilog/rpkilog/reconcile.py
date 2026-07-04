@@ -56,7 +56,6 @@ def cli_entry_point():
         level=logging.INFO,
     )
     ap1 = argparse.ArgumentParser()
-    # datetime range
     ap1.add_argument(
         '--datetime-min',
         type=dateutil.parser.parse,
@@ -148,10 +147,7 @@ def reconcile_from_s3_summary(
 ):
     """
     Reconcile summary files found under --s3-summary-prefix into the SQL data_file table.  Doubles
-    as the initial backfill of that table (see "How reconciliation uses this" in gh-81-sqldb.md).
-
-    With args.dry_run, no data_file rows are inserted; the per-file and summary logs show what
-    a real run would have done.
+    as the initial backfill of that table.
     """
     # thousands of instances may be alive at once; don't retain multi-MB parsed JSON on each
     SnapshotSummaryFile._json_data_cache_enable = False
@@ -200,25 +196,15 @@ def list_summary_files_from_s3(
 ) -> list[SnapshotSummaryFile]:
     """
     List summary files stored under the given s3://bucket-name/prefix within the datetime range
-    and return a SnapshotSummaryFile for each, sorted by datetimestamp for orderly progress
-    logging.
+    and return a SnapshotSummaryFile for each, sorted by datetimestamp.
 
-    The s3 service resource is caller-supplied (from boto3.resource('s3')) so one authenticated
-    session serves all AWS interactions in a reconcile run.
-
-    util.list_s3_summary_files_within_range queries S3 by per-day prefixes (or one whole-prefix
-    listing for ranges wider than util.LIST_PER_DAY_MAX_DAYS), so its results are approximate at
-    the range boundaries; files outside datetime_min ... datetime_max are filtered out here.
-    Naive datetime bounds are assumed UTC, matching SnapshotSummaryFile.datetimestamp.
+    util.list_s3_summary_files_within_range is approximate at the range boundaries; files outside
+    datetime_min ... datetime_max are filtered out here.  Naive datetime bounds are assumed UTC.
 
     TOTEST:
-    - test_list_summary_files_rejects_non_s3_url: an https:// or bare-path prefix raises
-      ValueError
-    - test_list_summary_files_sorted_and_filtered: with list_s3_summary_files_within_range
-      monkeypatched to return out-of-order ObjectSummaries including one outside the range,
-      the result is sorted by datetimestamp and excludes the out-of-range file
-    - test_list_summary_files_naive_bounds_assumed_utc: naive datetime_min/datetime_max do not
-      raise on comparison against tz-aware datetimestamps
+    - test_list_summary_files_rejects_non_s3_url
+    - test_list_summary_files_sorted_and_filtered
+    - test_list_summary_files_naive_bounds_assumed_utc
     """
     parsed_prefix = urllib.parse.urlparse(s3_summary_prefix)
     if parsed_prefix.scheme != 's3' or not parsed_prefix.netloc:
@@ -253,29 +239,17 @@ def reconcile_summary_file(
 ) -> ReconcileOutcome:
     """
     Ensure the SQL data_file table has a row for one summary file; insert one if missing.
-    Returns the outcome for the caller's summary counts.
 
-    The db_row_exists() check is cheap for files instantiated from an S3 listing: its
-    summary_s3_url branch needs no download.  Attributing a file to a source does download it
-    (buildmachine and observation_datetime read the JSON content).  A file matching no
-    buildmachine_to_source mapping is logged at WARNING and counted UNATTRIBUTABLE — it cannot be
-    keyed in data_file.  A mapping naming a source absent from the source table (KeyError from
-    DataFileSource.get_by_name) is config/schema drift and propagates.
-
-    With dry_run, the INSERT is skipped and logged as would-insert; the outcome is INSERTED
-    either way.
+    A file matching no buildmachine_to_source mapping is counted UNATTRIBUTABLE, but a mapping
+    naming a source absent from the source table is config/schema drift and propagates as
+    KeyError.  With dry_run, the INSERT is skipped but the outcome is INSERTED either way.
 
     TOTEST (fake db/config; SnapshotSummaryFile methods monkeypatched):
-    - test_reconcile_summary_file_already_recorded: db_row_exists True short-circuits before any
-      source lookup; returns ALREADY_RECORDED
-    - test_reconcile_summary_file_inserts: db_insert called with the given summary_file_type and
-      the source assigned from DataFileSource.get_by_name; returns INSERTED
-    - test_reconcile_summary_file_dry_run_skips_insert: dry_run=True returns INSERTED without
-      calling db_insert
-    - test_reconcile_summary_file_unattributable: get_source_name raising KeyError yields
-      UNATTRIBUTABLE and no db_insert
-    - test_reconcile_summary_file_unknown_source_propagates: DataFileSource.get_by_name KeyError
-      is not swallowed
+    - test_reconcile_summary_file_already_recorded
+    - test_reconcile_summary_file_inserts
+    - test_reconcile_summary_file_dry_run_skips_insert
+    - test_reconcile_summary_file_unattributable
+    - test_reconcile_summary_file_unknown_source_propagates
     """
     if summary_file.db_row_exists(db=db):
         logger.debug(f'already recorded: {summary_file.s3_url}')

@@ -18,10 +18,6 @@ class BuildMachineToSourceMapping(pydantic.BaseModel):
     comment: str | None = None
 
     def matches(self, buildmachine: str, observation_datetime: datetime.datetime) -> bool:
-        """
-        Return True if observation_datetime falls within [datetime_start, datetime_end]
-        (inclusive of both ends) and buildmachine matches any of self.regex.
-        """
         retval = False
         if self.datetime_start <= observation_datetime <= self.datetime_end:
             for pattern in self.regex:

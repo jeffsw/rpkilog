@@ -27,7 +27,7 @@ variable "db_schema" {
 }
 
 variable "db_server_token" {
-  description = "Opaque value that changes whenever the target database server is (re)created (e.g. the DB VM instance id or a readiness-gate id). Folded into the migration's replace trigger so the schema is re-applied after the server -- and its atlas_schema_revisions history -- is wiped. Empty (the default) disables that behavior."
+  description = "Opaque value that changes whenever the target database server is (re)created, so the schema is re-applied to the wiped server. Empty (the default) disables that behavior."
   type        = string
   default     = ""
 }

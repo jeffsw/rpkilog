@@ -7,10 +7,7 @@ if TYPE_CHECKING:
     from types_boto3_s3.service_resource import Bucket, ObjectSummary
 
 # Above this many days, list_s3_summary_files_within_range switches from one S3 list request per
-# day in the range to a single listing of the whole prefix (~1 request per 1000 objects),
-# filtered client-side.  Per-day requests win for narrow ranges within a large archive; a whole-
-# prefix listing wins for wide ranges — e.g. reconcile's default 2000 ... 2099 range would
-# otherwise issue ~36,500 per-day requests.
+# day to a single listing of the whole prefix, filtered client-side.
 LIST_PER_DAY_MAX_DAYS = 366
 
 

@@ -42,9 +42,8 @@ class SnapshotSummaryFile(DataFileSuper):
     def datetimestamp_from_json(cls, json_data: dict) -> datetime:
         """
         Extract the buildtime datetime from rpkiclient metadata; the result is always tz-aware
-        UTC.  A buildtime with no timezone indicator is assumed to be UTC; one carrying an offset
-        is converted to UTC.  This guarantee lets consumers (e.g. db_insert()) use
-        observation_datetime without timezone normalization of their own.
+        UTC.  A buildtime with no timezone indicator is assumed UTC; one carrying an offset is
+        converted.
         """
         dt = dateutil.parser.parse(json_data['metadata']['buildtime'])
         if dt.tzinfo is None:
@@ -56,22 +55,12 @@ class SnapshotSummaryFile(DataFileSuper):
     @classmethod
     def from_s3_object_summary(cls, obj: 'ObjectSummary') -> 'SnapshotSummaryFile':
         """
-        Instantiate from an S3 ObjectSummary, e.g. one listed by util.list_s3_summary_files_within_range().
+        Instantiate from an S3 ObjectSummary: UNCACHED, with s3_url pointing at the listed object
+        and datetimestamp taken from the object key.
 
-        The returned object is UNCACHED, with s3_url pointing at the listed object and
-        datetimestamp taken from the object key.  observation_datetime is NOT populated here: the
-        key's timestamp may differ from the authoritative JSON metadata.buildtime by a few
-        seconds, and we prefer a missing observation_datetime to an incorrect one.  Use the
-        observation_datetime property, which reads the JSON content (downloading it first when
-        needed).
-
-        obj.last_modified is retained as s3_last_modified, planned for use as
-        data_file.summary_stored_datetime at db_insert() time.
-
-        self.source remains unknown (None): a bare S3 listing doesn't identify the source.
-        Callers resolve it later — buildmachine + observation_datetime through the config
-        mappings to DataFileSource.get_by_name() — and assign it before any operation needing it
-        (e.g. db_insert()).
+        source is left None (a bare listing doesn't identify it), and observation_datetime is not
+        populated: the key's timestamp may differ from the authoritative JSON metadata.buildtime
+        by a few seconds, and the observation_datetime property reads the latter.
         """
         datetimestamp = cls.infer_datetimestamp_from_path(Path(obj.key))
         retval = cls(
@@ -86,9 +75,8 @@ class SnapshotSummaryFile(DataFileSuper):
     @property
     def buildmachine(self) -> str:
         """
-        The metadata.buildmachine hostname read from the JSON content (downloads from S3 first
-        when uncached, via json_data_cache).  Matched against BuildMachineToSourceMapping regexes
-        to identify this file's `source`.
+        The metadata.buildmachine hostname read from the JSON content; matched against
+        BuildMachineToSourceMapping regexes to identify this file's `source`.
         """
         retstr = self.json_data_cache['metadata']['buildmachine']
         return retstr
@@ -104,8 +92,7 @@ class SnapshotSummaryFile(DataFileSuper):
     @property
     def source_id(self) -> int | None:
         """
-        The data_file.source_id FK value, read from self.source; None while the source is
-        unknown.  Hydrate self.source via DataFileSource.get_by_name().
+        The data_file.source_id FK value, read from self.source; None while the source is unknown.
         """
         if self.source is not None:
             retval = self.source.id
@@ -117,11 +104,9 @@ class SnapshotSummaryFile(DataFileSuper):
         """
         Return True if the data_file table already has a row for this file.
 
-        When self.s3_url is known (e.g. instantiated from an S3 listing), check for a row whose
-        summary_s3_url matches — cheap, and avoids downloading the file on every reconcile run.
-        Otherwise check by primary key (self.source_id, self.observation_datetime); accessing
-        observation_datetime downloads the file from S3 when uncached, to read its
-        metadata.buildtime.
+        A known self.s3_url is checked against summary_s3_url — cheap, no download needed.
+        Otherwise check by primary key (source_id, observation_datetime); accessing
+        observation_datetime downloads the file from S3 when uncached.
         """
         cursor = db.cursor()
         try:

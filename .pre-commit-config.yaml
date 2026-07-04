@@ -12,9 +12,8 @@ repos:
       - id: no-commit-to-branch
   - repo: local
     hooks:
-      # Re-hash atlas migration dirs so an edited *.sql can't be committed with a stale atlas.sum
-      # (which would only fail later, at `atlas migrate apply`). Auto-fixes like end-of-file-fixer:
-      # if it rewrites atlas.sum, prek reports the change and aborts the commit until it's staged.
+      # Re-hash atlas migration dirs so an edited *.sql can't be committed with a stale atlas.sum.
+      # Auto-fixes like end-of-file-fixer: a rewritten atlas.sum aborts the commit until staged.
       # pass_filenames is off because migrate-hash scans the migrations dirs itself.
       - id: atlas-migrate-hash
         name: atlas migration checksums (mise run migrate-hash)

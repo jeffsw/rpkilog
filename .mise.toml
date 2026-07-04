@@ -1,9 +1,8 @@
 [env]
 # Activate the project venv so mise tasks can use Python and project CLI tools
 _.python.venv = "python/rpkilog/.venv"
-# Shared terraform provider plugin cache. One declaration covers local dev and CI.
-# Note: this may not speed up `tf-lock`, whose cross-platform `providers lock`
-# downloads might bypass the plugin cache.
+# Shared terraform provider plugin cache for local dev and CI. May not speed up `tf-lock`,
+# whose cross-platform `providers lock` downloads can bypass the plugin cache.
 TF_PLUGIN_CACHE_DIR = "{{config_root}}/.terraform.d/plugin-cache"
 
 [tools]

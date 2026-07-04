@@ -23,17 +23,12 @@ class ReconcileConfig(pydantic.BaseModel):
 
     def get_source_name(self, buildmachine: str, observation_datetime: datetime.datetime) -> str:
         """
-        Return the `source` name for a data file, using the ordered buildmachine_to_source list:
-        the first mapping whose matches() returns True wins.
-
-        Raises KeyError when no mapping matches — such a file can't be keyed in data_file; the
-        caller decides skip-and-warn (the reconciler counts it UNATTRIBUTABLE) vs abort.
+        Return the `source` name for a data file: the first matching buildmachine_to_source
+        mapping wins.  Raises KeyError when no mapping matches.
 
         TOTEST:
-        - test_get_source_name_first_match_wins: with two mappings matching the same
-          buildmachine, the earlier mapping's name is returned
-        - test_get_source_name_respects_datetime_range: a buildmachine-matching mapping is
-          skipped when observation_datetime falls outside its datetime range
+        - test_get_source_name_first_match_wins
+        - test_get_source_name_respects_datetime_range
         - test_get_source_name_no_match_raises_keyerror
         """
         for mapping in self.buildmachine_to_source:

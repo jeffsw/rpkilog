@@ -30,9 +30,8 @@ jobs:
           python-version: "3.13"
       - name: Set up mise (pinned terraform, atlas)
         uses: jdx/mise-action@v2
-      # Persist the terraform provider plugin cache (TF_PLUGIN_CACHE_DIR, set in .mise.toml) across
-      # runs so providers aren't re-downloaded every CI run. Within a run the cache already dedups
-      # the repeated `terraform init` calls. Keyed on the lock files: a provider change busts it.
+      # Persist the terraform provider plugin cache (TF_PLUGIN_CACHE_DIR, set in .mise.toml)
+      # across runs; keyed on the lock files, so a provider change busts it.
       - name: Cache terraform providers
         uses: actions/cache@v4
         with:

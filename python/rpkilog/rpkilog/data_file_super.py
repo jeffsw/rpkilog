@@ -125,12 +125,11 @@ class DataFileSuper(ABC):
         self.cleanup_policy.  CLEANUP_ALWAYS always cleans up, CLEANUP_NEVER never does, and
         CLEANUP_IF_IN_S3 cleans up only once the file is stored in S3.
 
-        When the classvar file_cache_enable is True, never clean up, regardless of
-        cleanup_policy: the local file IS the cache s3_download() consults on future runs.
+        file_cache_enable overrides cleanup_policy: the local file IS the cache s3_download()
+        consults on future runs.
 
         TOTEST:
-        - test_should_cleanup_false_when_file_cache_enabled: file_cache_enable True returns False
-          even under CLEANUP_ALWAYS
+        - test_should_cleanup_false_when_file_cache_enabled
         """
         if self.file_cache_enable:
             retval = False
@@ -279,11 +278,8 @@ class DataFileSuper(ABC):
     def json_data_cache(self):
         """
         Deserialized JSON content of the file, read via open_for_read() (which may download from
-        S3).  The parsed data is retained on the instance unless the classvar
-        _json_data_cache_enable is False: processes instantiating many objects at once (e.g. the
-        reconciler) set it False on the relevant subclass, so each access returns the data without
-        keeping a multi-megabyte structure alive per instance — at the cost of re-reading the
-        local file on every access.
+        S3).  Processes instantiating many objects at once (e.g. the reconciler) set the classvar
+        _json_data_cache_enable False so the multi-megabyte parsed data isn't retained per instance.
         """
         if self._json_data_cache:
             retval = self._json_data_cache
@@ -333,15 +329,11 @@ class DataFileSuper(ABC):
     @classmethod
     def _auto_temp_storage_dir(cls) -> Path:
         """
-        Create (once per subclass) and return a process-lifetime temp directory, used when
-        neither local_storage_dir nor default_local_storage_dir is set.  Each subclass gets its
-        own directory, named with the lower-case subclass name, e.g.
-        rpkilog_snapshotsummaryfile_XXXX.  The TemporaryDirectory object is retained on the
-        subclass so the directory survives until interpreter exit, then is removed.
+        Create (once per subclass) and return a temp directory that survives until interpreter
+        exit; used when neither local_storage_dir nor default_local_storage_dir is set.
 
         TOTEST:
-        - test_auto_temp_storage_dir_per_subclass: two subclasses get distinct dirs, each named
-          for its own class; repeated calls on one subclass return the same dir
+        - test_auto_temp_storage_dir_per_subclass
         """
         if '_auto_temp_dir' not in cls.__dict__:
             cls._auto_temp_dir = tempfile.TemporaryDirectory(prefix=f'rpkilog_{cls.__name__.lower()}_')
@@ -372,8 +364,7 @@ class DataFileSuper(ABC):
     def _iter_uncompressed_chunks(self, chunk_size: int = 256 * 1024):
         """
         Yield the UNCOMPRESSED file content in chunks of bytes, decompressing a bz2 cache on the
-        fly rather than loading the whole file into memory.  Downloads from S3 first when
-        UNCACHED (via open_for_read()).
+        fly; downloads from S3 first when UNCACHED.
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
@@ -391,8 +382,7 @@ class DataFileSuper(ABC):
     def size_bytes_uncompressed(self) -> int:
         """
         Return the byte count of the UNCOMPRESSED file content, even when the local cache is
-        bzip2-compressed.  A bz2 cache is stream-decompressed and counted in chunks, not loaded
-        into memory.  Downloads from S3 first when UNCACHED.
+        bzip2-compressed.
         """
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
@@ -406,8 +396,7 @@ class DataFileSuper(ABC):
     def sha256_digest(self) -> bytes:
         """
         Return the sha256 digest of the UNCOMPRESSED file content as 32 raw bytes, matching the
-        BINARY(32) SQL columns (e.g. data_file.summary_sha256).  Streams in chunks; downloads
-        from S3 first when UNCACHED.
+        BINARY(32) SQL columns.
         """
         hasher = hashlib.sha256()
         for chunk in self._iter_uncompressed_chunks():
@@ -437,15 +426,12 @@ class DataFileSuper(ABC):
 
     def s3_download(self):
         """
-        Download the S3 object to self.local_filepath_bz2.  When the classvar file_cache_enable
-        is True and that file already exists (e.g. left by a previous run), skip the download and
-        use the existing file as-is.
+        Download the S3 object to self.local_filepath_bz2, unless file_cache_enable is True and
+        that file already exists.
 
         TOTEST:
-        - test_s3_download_cache_hit_skips_download: file_cache_enable True + pre-existing
-          local_filepath_bz2 sets local_storage_type BZIP2 without any boto3 call
-        - test_s3_download_cache_disabled_downloads: file_cache_enable False downloads even when
-          the local file exists
+        - test_s3_download_cache_hit_skips_download
+        - test_s3_download_cache_disabled_downloads
         """
         self._ensure_s3_url()
         if self.file_cache_enable and self.local_filepath_bz2.exists():
