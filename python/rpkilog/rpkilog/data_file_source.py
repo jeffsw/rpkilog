@@ -33,7 +33,7 @@ class DataFileSource:
     uploaders (base_url NULL) or a crawled archive site.  Rows are seeded by the initial schema
     migration; see tmp/plan/gh-81-sqldb.md for design rationale.
     """
-    default_db_connection: 'mariadb.Connection' = None
+    default_db_connection: 'mariadb.SyncConnection' = None
     _cache_by_id: dict[int, 'DataFileSource'] = {}
     _cache_by_name: dict[str, 'DataFileSource'] = {}
 
@@ -81,7 +81,7 @@ class DataFileSource:
         return retval
 
     @classmethod
-    def get_by_name(cls, name: str, db: 'mariadb.Connection' = None) -> 'DataFileSource':
+    def get_by_name(cls, name: str, db: 'mariadb.SyncConnection' = None) -> 'DataFileSource':
         """
         Return the DataFileSource with the given source.name (e.g. 'josephine.sobornost.net').
         This is the canonical way to hydrate a DataFileSource, e.g. for assignment to
@@ -102,7 +102,7 @@ class DataFileSource:
         return retval
 
     @classmethod
-    def get_by_id(cls, id: int, db: 'mariadb.Connection' = None) -> 'DataFileSource':
+    def get_by_id(cls, id: int, db: 'mariadb.SyncConnection' = None) -> 'DataFileSource':
         """
         Return the DataFileSource with the given source.id.  See get_by_name() for the caching
         behavior, which is shared.
@@ -117,7 +117,7 @@ class DataFileSource:
         return retval
 
     @classmethod
-    def _refresh_caches(cls, db: 'mariadb.Connection' = None):
+    def _refresh_caches(cls, db: 'mariadb.SyncConnection' = None):
         """
         Load every row of the source table and merge them into the class caches, keyed by id and
         by name.  Loading the whole table on any cache miss may seem counter-intuitive, but the

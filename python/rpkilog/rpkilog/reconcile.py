@@ -3,14 +3,14 @@ import datetime
 import dateutil.parser
 import importlib.resources
 import logging
-from typing import TYPE_CHECKING
+import os
 
+import mariadb
+
+from rpkilog.data_file_source import DataFileSource
 from rpkilog.data_file_type import DataFileType
 from rpkilog.reconcile_config import ReconcileConfig
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
-
-if TYPE_CHECKING:
-    import mariadb
 
 
 def load_reconcile_config() -> ReconcileConfig:
@@ -75,26 +75,35 @@ def cli_entry_point():
         reconcile_from_s3_summary(args=args, config=config)
 
 
-def db_connect(args: argparse.Namespace) -> 'mariadb.Connection':
+def db_connect(args: argparse.Namespace) -> mariadb.SyncConnection:
     """
     Connect to MariaDB using args.db_* and make the connection available to the SQL-row classes.
 
-    Planned implementation:
-    1. password from args.db_password, falling back to env RPKILOG_DB_PASSWORD
-    2. connect with MariaDB Connector/Python in pure-Python mode (see the driver decision in
-       gh-81-sqldb.md), with autocommit=True — db_insert() and friends rely on it
+    The password comes from args.db_password, falling back to env RPKILOG_DB_PASSWORD.
 
-    3. set DataFileSource.default_db_connection and DataFileType.default_db_connection to the new
-       connection (the dependency-injection default used by their get_by_name() constructors)
-    4. return the connection
-
-    TODO: implement
-    TODO: add `mariadb` to pyproject.toml dependencies (2.0 is a release candidate: plain
-      `pip install mariadb` yields 1.1, which always builds the C extension; needs a
-      pre-release pin)
     TODO: prod will use RDS IAM auth tokens instead of a static password
+
+    TOTEST:
+    - test_db_connect_password_falls_back_to_env: args.db_password unset + RPKILOG_DB_PASSWORD
+      set connects using the env value (mariadb.connect monkeypatched)
+    - test_db_connect_cli_password_beats_env: an explicit --db-password wins over the env var
+    - test_db_connect_sets_default_db_connections: DataFileSource.default_db_connection and
+      DataFileType.default_db_connection are the returned connection afterward
     """
-    pass
+    password = args.db_password
+    if password is None:
+        password = os.environ.get('RPKILOG_DB_PASSWORD')
+    retval = mariadb.connect(
+        host=args.db_host,
+        port=args.db_port,
+        user=args.db_user,
+        password=password,
+        database=args.db_name,
+        autocommit=True,
+    )
+    DataFileSource.default_db_connection = retval
+    DataFileType.default_db_connection = retval
+    return retval
 
 
 def reconcile_from_s3_summary(
@@ -141,7 +150,7 @@ def summary_files_from_s3(
 
 
 def reconcile_summary_file(
-        db: 'mariadb.Connection',
+        db: mariadb.SyncConnection,
         config: ReconcileConfig,
         summary_file: SnapshotSummaryFile,
         summary_file_type: DataFileType,

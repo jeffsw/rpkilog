@@ -113,7 +113,7 @@ class SnapshotSummaryFile(DataFileSuper):
             retval = None
         return retval
 
-    def db_row_exists(self, db: 'mariadb.Connection') -> bool:
+    def db_row_exists(self, db: 'mariadb.SyncConnection') -> bool:
         """
         Return True if the data_file table already has a row for this file.
 
@@ -144,7 +144,7 @@ class SnapshotSummaryFile(DataFileSuper):
         retval = row is not None
         return retval
 
-    def db_insert(self, db: 'mariadb.Connection', summary_file_type: DataFileType):
+    def db_insert(self, db: 'mariadb.SyncConnection', summary_file_type: DataFileType):
         """
         INSERT a data_file row for this summary file, populating the summary_* columns.
         self.source must be known; raise ValueError when it is None.
