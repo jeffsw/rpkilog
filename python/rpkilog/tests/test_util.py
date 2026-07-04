@@ -1,20 +1,23 @@
 """
-End-to-end tests for util.py S3 functions.
+Tests for util.py S3 functions.
 
-Requires live AWS credentials.  The bucket name is taken from the environment variable
-RPKILOG_TEST_S3_BUCKET.  If that variable is not set, the default is computed at runtime as
-'rpkilog-test-<account_id>-<region>-an' using the account-regional namespace introduced by AWS.
-The bucket is created if it does not exist.
+The list_s3_object_previous tests are end-to-end and require live AWS credentials.  The bucket
+name is taken from the environment variable RPKILOG_TEST_S3_BUCKET.  If that variable is not set,
+the default is computed at runtime as 'rpkilog-test-<account_id>-<region>-an' using the
+account-regional namespace introduced by AWS.  The bucket is created if it does not exist.
 Test objects are uploaded idempotently; pre-existing objects with the same keys do not cause failures.
+
+The list_s3_summary_files_within_range tests use a fake bucket and need no AWS credentials.
 """
 import os
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
 
-from rpkilog.util import list_s3_object_previous
+from rpkilog.util import list_s3_object_previous, list_s3_summary_files_within_range
 PREFIX_FSTR = 'test_list_s3_object_previous_{datetime_prefix}'
 FILE_CONTENT = b'The quick brown fox jumps over the lazy dog'
 
@@ -133,3 +136,82 @@ def test_valueerror_missing_datetime_prefix(s3_bucket):
     subject = datetime(1990, 1, 1, tzinfo=timezone.utc)
     with pytest.raises(ValueError):
         list_s3_object_previous(s3_bucket, subject, prefix_fstr='no-placeholder-here')
+
+
+# --- list_s3_summary_files_within_range: fake-bucket unit tests, no AWS credentials needed ---
+
+class FakeObjectSummary:
+    """
+    ObjectSummary stand-in; hashable (unlike SimpleNamespace) because results go into a set.
+    """
+    def __init__(self, key: str):
+        self.key = key
+
+
+def make_fake_bucket(keys: list[str]) -> SimpleNamespace:
+    """
+    A minimal stand-in for a boto3 Bucket: objects.filter(Prefix=...) returns a FakeObjectSummary
+    for each matching key, and every Prefix passed is recorded in bucket.filter_prefixes.
+    """
+    filter_prefixes = []
+
+    def fake_filter(Prefix=''):
+        filter_prefixes.append(Prefix)
+        found = []
+        for key in keys:
+            if key.startswith(Prefix):
+                found.append(FakeObjectSummary(key=key))
+        return found
+
+    retval = SimpleNamespace(
+        objects=SimpleNamespace(filter=fake_filter),
+        filter_prefixes=filter_prefixes,
+    )
+    return retval
+
+
+def test_summary_range_narrow_uses_per_day_requests():
+    bucket = make_fake_bucket([
+        'summaries/20250719T220000Z.json.bz2',
+        'summaries/20250720T100145Z.json.bz2',
+        'summaries/20250722T100145Z.json.bz2',
+    ])
+    found = list_s3_summary_files_within_range(
+        bucket=bucket,
+        start_datetime=datetime(2025, 7, 19, tzinfo=timezone.utc),
+        end_datetime=datetime(2025, 7, 20, 23, 59, tzinfo=timezone.utc),
+        prefix='summaries/',
+    )
+    assert bucket.filter_prefixes == ['summaries/20250719T', 'summaries/20250720T']
+    found_keys = set()
+    for obj in found:
+        found_keys.add(obj.key)
+    assert found_keys == {
+        'summaries/20250719T220000Z.json.bz2',
+        'summaries/20250720T100145Z.json.bz2',
+    }
+
+
+def test_summary_range_wide_uses_single_listing():
+    bucket = make_fake_bucket([
+        'summaries/19991231T235900Z.json.bz2',   # before range
+        'summaries/20250720T100145Z.json.bz2',
+        'summaries/20991231T000000Z.json.bz2',
+        'summaries/21000101T000000Z.json.bz2',   # after range
+        'summaries/readme.txt',                  # not a datetime-named summary file
+        'summaries/2025-notes.txt',              # digits but not a YYYYMMDDT key
+    ])
+    found = list_s3_summary_files_within_range(
+        bucket=bucket,
+        start_datetime=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        end_datetime=datetime(2099, 12, 31, tzinfo=timezone.utc),
+        prefix='summaries/',
+    )
+    assert bucket.filter_prefixes == ['summaries/']
+    found_keys = set()
+    for obj in found:
+        found_keys.add(obj.key)
+    assert found_keys == {
+        'summaries/20250720T100145Z.json.bz2',
+        'summaries/20991231T000000Z.json.bz2',
+    }

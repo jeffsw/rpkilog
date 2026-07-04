@@ -1,9 +1,14 @@
 from __future__ import annotations
+import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from types_boto3_s3.service_resource import Bucket, ObjectSummary
+
+# Above this many days, list_s3_summary_files_within_range switches from one S3 list request per
+# day to a single listing of the whole prefix, filtered client-side.
+LIST_PER_DAY_MAX_DAYS = 366
 
 
 def list_s3_object_previous(
@@ -107,18 +112,46 @@ def list_s3_summary_files_within_range(
         bucket: Bucket,
         start_datetime: datetime,
         end_datetime: datetime,
+        prefix: str = '',
 ) -> set[ObjectSummary]:
     """
     Returns the S3 object summaries for summary files within the given start_datetime ... end_datetime range.
 
     The given range is approximate; we query the S3 API by day, e.g. prefix: `20260501T`.
+    If a `prefix` is given, it is prepended to that per-day date prefix.
+
+    Ranges spanning more than LIST_PER_DAY_MAX_DAYS days are handled with a single listing of the
+    whole `prefix` instead of one list request per day; the results are filtered client-side to
+    the same per-day granularity, so both paths return the same objects.
+
+    Example, listing files under an --s3-summary-prefix like s3://rpkilog-snapshot-summary/summaries/
+    for a --datetime-min ... --datetime-max range, as in reconcile.py:
+
+        bucket = boto3.resource('s3').Bucket('rpkilog-snapshot-summary')
+        summary_objects = list_s3_summary_files_within_range(
+            bucket=bucket,
+            start_datetime=args.datetime_min,
+            end_datetime=args.datetime_max,
+            prefix='summaries/',
+        )
     """
     retval = set()
     time_range = end_datetime - start_datetime
-    for day_offset in range(time_range.days + 1):
-        day = start_datetime + timedelta(days=day_offset)
-        prefix = day.strftime('%Y%m%dT')
-        objects = bucket.objects.filter(Prefix=prefix)
-        for obj in objects:
-            retval.add(obj)
+    if time_range.days + 1 > LIST_PER_DAY_MAX_DAYS:
+        first_day_str = start_datetime.strftime('%Y%m%dT')
+        last_day_str = end_datetime.strftime('%Y%m%dT')
+        for obj in bucket.objects.filter(Prefix=prefix):
+            # equivalent to the per-day path: key must continue with an in-range YYYYMMDDT
+            day_part = obj.key[len(prefix):len(prefix) + 9]
+            if not re.fullmatch(r'\d{8}T', day_part):
+                continue
+            if first_day_str <= day_part <= last_day_str:
+                retval.add(obj)
+    else:
+        for day_offset in range(time_range.days + 1):
+            day = start_datetime + timedelta(days=day_offset)
+            composite_prefix = prefix + day.strftime('%Y%m%dT')
+            objects = bucket.objects.filter(Prefix=composite_prefix)
+            for obj in objects:
+                retval.add(obj)
     return retval

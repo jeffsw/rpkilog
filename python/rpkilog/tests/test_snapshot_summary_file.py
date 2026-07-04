@@ -3,6 +3,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -52,9 +53,31 @@ def test_infer_datetimestamp_rejects_diff_filename():
         SnapshotSummaryFile.infer_datetimestamp_from_path(p)
 
 
+def test_from_s3_object_summary():
+    obj = SimpleNamespace(
+        bucket_name='example-bucket',
+        key='prefix/20250720T100145Z.json.bz2',
+        last_modified=datetime(2025, 7, 20, 10, 2, 0, tzinfo=timezone.utc),
+    )
+    f = SnapshotSummaryFile.from_s3_object_summary(obj)
+    assert f.datetimestamp == GOLDEN_DT
+    assert f.s3_url == 's3://example-bucket/prefix/20250720T100145Z.json.bz2'
+    assert f.s3_stored is True
+    assert f.local_storage_type == LocalStorageType.UNCACHED
+    assert f.s3_last_modified == obj.last_modified
+
+
 def test_datetimestamp_from_json_naive_buildtime_becomes_utc():
     # buildtime with no timezone indicator must come back tz-aware in UTC
     json_data = {'metadata': {'buildtime': '2025-07-20 10:01:45'}}
+    dt = SnapshotSummaryFile.datetimestamp_from_json(json_data)
+    assert dt.tzinfo == timezone.utc
+    assert dt == GOLDEN_DT
+
+
+def test_datetimestamp_from_json_offset_buildtime_converted_to_utc():
+    # buildtime carrying a non-UTC offset must be converted to UTC, not relabeled
+    json_data = {'metadata': {'buildtime': '2025-07-20T12:01:45+02:00'}}
     dt = SnapshotSummaryFile.datetimestamp_from_json(json_data)
     assert dt.tzinfo == timezone.utc
     assert dt == GOLDEN_DT
@@ -109,6 +132,20 @@ def test_write_json_roundtrip(tmp_path):
     with f.open_for_read() as fh:
         loaded = json.load(fh)
     assert loaded == sample_data
+
+
+def test_observation_datetime_and_buildmachine_read_from_json(tmp_path):
+    # buildtime deliberately differs from the filename-derived datetimestamp: observation_datetime
+    # must reflect the JSON metadata, never the filename
+    sample_data = {
+        'metadata': {'buildtime': '2025-07-20T10:01:43Z', 'buildmachine': 'josephine'},
+        'roas': [],
+    }
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT, local_storage_dir=tmp_path)
+    f.write_json(sample_data)
+    assert f.observation_datetime == datetime(2025, 7, 20, 10, 1, 43, tzinfo=timezone.utc)
+    assert f.observation_datetime != f.datetimestamp
+    assert f.buildmachine == 'josephine'
 
 
 def test_bzip2_compress_changes_state(tmp_path):
@@ -171,6 +208,16 @@ def test_datetimestamp_from_json():
     assert dt.year == GOLDEN_DT.year
     assert dt.month == GOLDEN_DT.month
     assert dt.day == GOLDEN_DT.day
+
+
+@pytest.mark.slow
+def test_observation_datetime_golden_differs_from_filename():
+    # the golden file's internal buildtime (100143Z) is two seconds earlier than its filename
+    # timestamp (100145Z); observation_datetime must report the buildtime
+    f = SnapshotSummaryFile(datetimestamp=GOLDEN_DT)
+    f.infer_local_storage_type(GOLDEN_SUMMARY)
+    assert f.observation_datetime == datetime(2025, 7, 20, 10, 1, 43, tzinfo=timezone.utc)
+    assert f.buildmachine == 'josephine'
 
 
 @pytest.mark.slow

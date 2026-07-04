@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="re-hash atlas migration directories (writes migrations/atlas.sum)"
+set -euo pipefail
+cd "$MISE_PROJECT_ROOT"
+
+# `atlas migrate hash` recomputes atlas.sum from each migrations dir; it needs no database and is
+# idempotent. Also runs as the atlas-migrate-hash prek auto-fix hook.
+while IFS= read -r dir; do
+    echo "==> hash ${dir}"
+    # relative file:// URL resolves from the project root (cwd)
+    atlas migrate hash --dir "file://${dir#./}"
+done < <(find terraform -type d -name migrations -not -path '*/.terraform/*' | sort -u)

@@ -1,0 +1,15 @@
+# default mapping of rpkilog-snapshot-summary metadata to source names
+---
+buildmachine_to_source:
+  - datetime_start: 2021-09-01T00:00:00Z
+    datetime_end: 2099-01-01T00:00:00Z
+    regex:
+      - ^josephine.*$
+    name: josephine.sobornost.net
+  - datetime_start: 2025-01-01T00:00:00Z
+    datetime_end: 2099-01-01T00:00:00Z
+    comment: docker containers with random 12-character hex hostnames; may eventually be fixed retroactively
+    regex:
+      - ^[0-9a-f]{12}$
+    name: rpkiclient.rpkilog.com
+...

@@ -1,8 +1,10 @@
 import os
 import shutil
+import tempfile
 from abc import ABC
 import bz2
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -42,6 +44,8 @@ class DataFileSuper(ABC):
     # solely on the stored URL.
     _default_s3_base_url: str = None
     default_local_storage_dir: Path = None
+    file_cache_enable: bool = False
+    _json_data_cache_enable: bool = True
     # warning deduplication so log won't get spammy about minor issues
     warned_compress_invoked_on_already_compressed_snapshot = 0
     warned_file_already_does_not_exist = 0
@@ -120,7 +124,16 @@ class DataFileSuper(ABC):
         Decide whether the locally-cached file should be unlinked on destroy/exit, per
         self.cleanup_policy.  CLEANUP_ALWAYS always cleans up, CLEANUP_NEVER never does, and
         CLEANUP_IF_IN_S3 cleans up only once the file is stored in S3.
+
+        file_cache_enable overrides cleanup_policy: the local file IS the cache s3_download()
+        consults on future runs.
+
+        TOTEST:
+        - test_should_cleanup_false_when_file_cache_enabled
         """
+        if self.file_cache_enable:
+            retval = False
+            return retval
         match self.cleanup_policy:
             case CleanupPolicy.CLEANUP_ALWAYS:
                 retval = True
@@ -263,10 +276,19 @@ class DataFileSuper(ABC):
 
     @property
     def json_data_cache(self):
-        if not self._json_data_cache:
+        """
+        Deserialized JSON content of the file, read via open_for_read() (which may download from
+        S3).  Processes instantiating many objects at once (e.g. the reconciler) set the classvar
+        _json_data_cache_enable False so the multi-megabyte parsed data isn't retained per instance.
+        """
+        if self._json_data_cache:
+            retval = self._json_data_cache
+        else:
             with self.open_for_read() as fh:
-                self._json_data_cache = json.load(fh)
-        return self._json_data_cache
+                retval = json.load(fh)
+            if self._json_data_cache_enable:
+                self._json_data_cache = retval
+        return retval
 
     @property
     def local_filepath_bz2(self) -> Path:
@@ -292,11 +314,31 @@ class DataFileSuper(ABC):
 
     @property
     def local_storage_dir(self) -> Path:
+        """
+        Directory holding this object's local file(s): the per-instance value if set, else the
+        subclass's default_local_storage_dir, else an automatically-created temp dir (see
+        _auto_temp_storage_dir()).
+        """
         if self._local_storage_dir:
             return self._local_storage_dir
         if self.default_local_storage_dir:
             return self.default_local_storage_dir
-        raise ValueError(f'local_storage_dir or default_local_storage_dir MUST be set: {self}')
+        retval = self._auto_temp_storage_dir()
+        return retval
+
+    @classmethod
+    def _auto_temp_storage_dir(cls) -> Path:
+        """
+        Create (once per subclass) and return a temp directory that survives until interpreter
+        exit; used when neither local_storage_dir nor default_local_storage_dir is set.
+
+        TOTEST:
+        - test_auto_temp_storage_dir_per_subclass
+        """
+        if '_auto_temp_dir' not in cls.__dict__:
+            cls._auto_temp_dir = tempfile.TemporaryDirectory(prefix=f'rpkilog_{cls.__name__.lower()}_')
+        retval = Path(cls._auto_temp_dir.name)
+        return retval
 
     @local_storage_dir.setter
     def local_storage_dir(self, value: Path):
@@ -319,6 +361,49 @@ class DataFileSuper(ABC):
                 raise ValueError(f'unexpected value of local_storage_type: {self}')
         return retfh
 
+    def _iter_uncompressed_chunks(self, chunk_size: int = 256 * 1024):
+        """
+        Yield the UNCOMPRESSED file content in chunks of bytes, decompressing a bz2 cache on the
+        fly; downloads from S3 first when UNCACHED.
+        """
+        match self.local_storage_type:
+            case LocalStorageType.UNCOMPRESSED:
+                # open_for_read() would open text-mode here; chunk consumers need bytes
+                fh = open(self.local_filepath_uncompressed, 'rb')
+            case _:
+                fh = self.open_for_read()
+        with fh:
+            while True:
+                chunk = fh.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+    def size_bytes_uncompressed(self) -> int:
+        """
+        Return the byte count of the UNCOMPRESSED file content, even when the local cache is
+        bzip2-compressed.
+        """
+        match self.local_storage_type:
+            case LocalStorageType.UNCOMPRESSED:
+                retval = self.local_filepath_uncompressed.stat().st_size
+            case _:
+                retval = 0
+                for chunk in self._iter_uncompressed_chunks():
+                    retval += len(chunk)
+        return retval
+
+    def sha256_digest(self) -> bytes:
+        """
+        Return the sha256 digest of the UNCOMPRESSED file content as 32 raw bytes, matching the
+        BINARY(32) SQL columns.
+        """
+        hasher = hashlib.sha256()
+        for chunk in self._iter_uncompressed_chunks():
+            hasher.update(chunk)
+        retval = hasher.digest()
+        return retval
+
     @property
     def s3_bucket(self) -> str:
         if self.s3_url is None:
@@ -340,7 +425,19 @@ class DataFileSuper(ABC):
             self.s3_url_set_to_default()
 
     def s3_download(self):
+        """
+        Download the S3 object to self.local_filepath_bz2, unless file_cache_enable is True and
+        that file already exists.
+
+        TOTEST:
+        - test_s3_download_cache_hit_skips_download
+        - test_s3_download_cache_disabled_downloads
+        """
         self._ensure_s3_url()
+        if self.file_cache_enable and self.local_filepath_bz2.exists():
+            logger.debug(f'file cache hit, skipping download: {self.local_filepath_bz2}')
+            self.local_storage_type = LocalStorageType.BZIP2
+            return
         bucket = boto3.resource('s3').Bucket(self.s3_bucket)
         bucket.download_file(
             Key=self.s3_path,

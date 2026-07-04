@@ -25,3 +25,9 @@ variable "db_schema" {
   type        = string
   default     = "rpkilog"
 }
+
+variable "db_server_token" {
+  description = "Opaque value that changes whenever the target database server is (re)created, so the schema is re-applied to the wiped server. Empty (the default) disables that behavior."
+  type        = string
+  default     = ""
+}

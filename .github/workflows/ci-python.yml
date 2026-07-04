@@ -30,6 +30,15 @@ jobs:
           python-version: "3.13"
       - name: Set up mise (pinned terraform, atlas)
         uses: jdx/mise-action@v2
+      # Persist the terraform provider plugin cache (TF_PLUGIN_CACHE_DIR, set in .mise.toml)
+      # across runs; keyed on the lock files, so a provider change busts it.
+      - name: Cache terraform providers
+        uses: actions/cache@v4
+        with:
+          path: .terraform.d/plugin-cache
+          key: terraform-plugins-${{ runner.os }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-plugins-${{ runner.os }}-
       - name: Install lint/hook deps
         run: |
           python -m pip install --upgrade pip

@@ -10,9 +10,12 @@ dependencies = [
     "boto3",
     "boto3-stubs~=1.43.14",
     "botocore>=1.43.14",
+    # 2.0 (pure-Python mode) is still a release candidate; the rc in the specifier opts in to pre-releases
+    'mariadb >= 2.0.0rc0',
     'netaddr',
     'opensearch-py',
     'psutil',
+    'pydantic',
     'python-dateutil',
     'pyyaml',
     'requests',
@@ -68,12 +71,16 @@ rpkilog-diff-import-from-sqs = 'rpkilog:VrpDiff.cli_entry_point_diff_import_from
 rpkilog-hapi = 'rpkilog.hapi:cli_entry_point'
 rpkilog-ingest-tar = 'rpkilog:IngestTar.cli_entry_point'
 rpkilog-process-snapshot-summary-queue = 'rpkilog.process_snapshot_summary_queue:cli_entry_point'
+rpkilog-reconcile = 'rpkilog.reconcile:cli_entry_point'
 rpkilog-routinator-vrp-fetcher = 'rpkilog.routinator_vrp_fetcher:cli_entry_point'
 rpkilog-rpkiclient-uploader = 'rpkilog.rpkiclient_uploader:cli_entry_point'
 rpkilog-vrp-cache-differ = 'rpkilog:VrpDiff.cli_entry_point'
 
 [tool.black]
 line-length = 120
+
+[tool.setuptools.package-data]
+rpkilog = ['reconcile_config.yml']
 
 [tool.lambda_zip]
 upload_s3_url = 's3://rpkilog-artifact/lambda_rpkilog.zip'

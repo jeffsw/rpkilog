@@ -1,0 +1,3 @@
+# TF_PLUGIN_CACHE_DIR (see .mise.toml). Committed so the cache directory always exists --
+# terraform will not create a missing plugin cache dir, it just silently skips caching.
+# Contents are gitignored.
