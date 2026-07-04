@@ -90,7 +90,7 @@ def cli_entry_point():
     subparsers = ap1.add_subparsers(dest='subparser_name', required=True)
 
     subparsers.add_parser(
-        'from_s3_summary',
+        'from-s3-summary',
         description='Read from given --s3-summary-prefix and update SQL database'
     )
 
@@ -104,10 +104,11 @@ def cli_entry_point():
         SnapshotSummaryFile.file_cache_enable = True
 
     config = load_reconcile_config()
-    if args.subparser_name == 'from_s3_summary':
-        if args.s3_summary_prefix is None:
-            ap1.error('--s3-summary-prefix is required for the from_s3_summary subcommand')
-        reconcile_from_s3_summary(args=args, config=config)
+    match args.subparser_name:
+        case 'from-s3-summary':
+            if args.s3_summary_prefix is None:
+                ap1.error('--s3-summary-prefix is required for the from-s3-summary subcommand')
+            reconcile_from_s3_summary(args=args, config=config)
 
 
 def db_connect(args: argparse.Namespace) -> mariadb.SyncConnection:
