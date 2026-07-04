@@ -3,6 +3,7 @@ import shutil
 from abc import ABC
 import bz2
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -42,6 +43,7 @@ class DataFileSuper(ABC):
     # solely on the stored URL.
     _default_s3_base_url: str = None
     default_local_storage_dir: Path = None
+    _json_data_cache_enable: bool = True
     # warning deduplication so log won't get spammy about minor issues
     warned_compress_invoked_on_already_compressed_snapshot = 0
     warned_file_already_does_not_exist = 0
@@ -263,10 +265,22 @@ class DataFileSuper(ABC):
 
     @property
     def json_data_cache(self):
-        if not self._json_data_cache:
+        """
+        Deserialized JSON content of the file, read via open_for_read() (which may download from
+        S3).  The parsed data is retained on the instance unless the classvar
+        _json_data_cache_enable is False: processes instantiating many objects at once (e.g. the
+        reconciler) set it False on the relevant subclass, so each access returns the data without
+        keeping a multi-megabyte structure alive per instance — at the cost of re-reading the
+        local file on every access.
+        """
+        if self._json_data_cache:
+            retval = self._json_data_cache
+        else:
             with self.open_for_read() as fh:
-                self._json_data_cache = json.load(fh)
-        return self._json_data_cache
+                retval = json.load(fh)
+            if self._json_data_cache_enable:
+                self._json_data_cache = retval
+        return retval
 
     @property
     def local_filepath_bz2(self) -> Path:
@@ -318,6 +332,52 @@ class DataFileSuper(ABC):
             case _:
                 raise ValueError(f'unexpected value of local_storage_type: {self}')
         return retfh
+
+    def _iter_uncompressed_chunks(self, chunk_size: int = 256 * 1024):
+        """
+        Yield the UNCOMPRESSED file content in chunks of bytes, decompressing a bz2 cache on the
+        fly rather than loading the whole file into memory.  Downloads from S3 first when
+        UNCACHED (via open_for_read()).
+        """
+        match self.local_storage_type:
+            case LocalStorageType.UNCOMPRESSED:
+                # open_for_read() would open text-mode here; chunk consumers need bytes
+                fh = open(self.local_filepath_uncompressed, 'rb')
+            case _:
+                fh = self.open_for_read()
+        with fh:
+            while True:
+                chunk = fh.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+    def size_bytes_uncompressed(self) -> int:
+        """
+        Return the byte count of the UNCOMPRESSED file content, even when the local cache is
+        bzip2-compressed.  A bz2 cache is stream-decompressed and counted in chunks, not loaded
+        into memory.  Downloads from S3 first when UNCACHED.
+        """
+        match self.local_storage_type:
+            case LocalStorageType.UNCOMPRESSED:
+                retval = self.local_filepath_uncompressed.stat().st_size
+            case _:
+                retval = 0
+                for chunk in self._iter_uncompressed_chunks():
+                    retval += len(chunk)
+        return retval
+
+    def sha256_digest(self) -> bytes:
+        """
+        Return the sha256 digest of the UNCOMPRESSED file content as 32 raw bytes, matching the
+        BINARY(32) SQL columns (e.g. data_file.summary_sha256).  Streams in chunks; downloads
+        from S3 first when UNCACHED.
+        """
+        hasher = hashlib.sha256()
+        for chunk in self._iter_uncompressed_chunks():
+            hasher.update(chunk)
+        retval = hasher.digest()
+        return retval
 
     @property
     def s3_bucket(self) -> str:

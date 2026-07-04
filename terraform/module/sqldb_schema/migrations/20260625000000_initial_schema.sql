@@ -46,6 +46,8 @@ CREATE TABLE data_file (
     diff_previous_source_id            INT UNSIGNED NULL COMMENT 'source_id of the "previous" data_file this diff was computed against; with diff_previous_observation_datetime identifies that row; NULL until known',
     diff_previous_observation_datetime DATETIME     NULL COMMENT 'observation_datetime (authoritative buildtime) of the "previous" data_file; see diff_previous_source_id',
     PRIMARY KEY (source_id, observation_datetime),
+    UNIQUE KEY uk_summary_s3_url (summary_s3_url),
+    UNIQUE KEY uk_diff_s3_url (diff_s3_url),
     KEY k_observation_datetime (observation_datetime),
     CONSTRAINT fk_data_file_source FOREIGN KEY (source_id) REFERENCES source (id),
     CONSTRAINT fk_data_file_summary_file_type FOREIGN KEY (summary_file_type_id) REFERENCES file_type (id),

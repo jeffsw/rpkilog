@@ -107,18 +107,31 @@ def list_s3_summary_files_within_range(
         bucket: Bucket,
         start_datetime: datetime,
         end_datetime: datetime,
+        prefix: str = '',
 ) -> set[ObjectSummary]:
     """
     Returns the S3 object summaries for summary files within the given start_datetime ... end_datetime range.
 
     The given range is approximate; we query the S3 API by day, e.g. prefix: `20260501T`.
+    If a `prefix` is given, it is prepended to that per-day date prefix.
+
+    Example, listing files under an --s3-summary-prefix like s3://rpkilog-snapshot-summary/summaries/
+    for a --datetime-min ... --datetime-max range, as in reconcile.py:
+
+        bucket = boto3.resource('s3').Bucket('rpkilog-snapshot-summary')
+        summary_objects = list_s3_summary_files_within_range(
+            bucket=bucket,
+            start_datetime=args.datetime_min,
+            end_datetime=args.datetime_max,
+            prefix='summaries/',
+        )
     """
     retval = set()
     time_range = end_datetime - start_datetime
     for day_offset in range(time_range.days + 1):
         day = start_datetime + timedelta(days=day_offset)
-        prefix = day.strftime('%Y%m%dT')
-        objects = bucket.objects.filter(Prefix=prefix)
+        composite_prefix = prefix + day.strftime('%Y%m%dT')
+        objects = bucket.objects.filter(Prefix=composite_prefix)
         for obj in objects:
             retval.add(obj)
     return retval

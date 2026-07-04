@@ -13,6 +13,7 @@ dependencies = [
     'netaddr',
     'opensearch-py',
     'psutil',
+    'pydantic',
     'python-dateutil',
     'pyyaml',
     'requests',
@@ -74,6 +75,9 @@ rpkilog-vrp-cache-differ = 'rpkilog:VrpDiff.cli_entry_point'
 
 [tool.black]
 line-length = 120
+
+[tool.setuptools.package-data]
+rpkilog = ['reconcile_config.yml']
 
 [tool.lambda_zip]
 upload_s3_url = 's3://rpkilog-artifact/lambda_rpkilog.zip'
