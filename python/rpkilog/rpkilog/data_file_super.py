@@ -1,5 +1,6 @@
 import os
 import shutil
+import tempfile
 from abc import ABC
 import bz2
 from datetime import datetime, timezone
@@ -43,6 +44,7 @@ class DataFileSuper(ABC):
     # solely on the stored URL.
     _default_s3_base_url: str = None
     default_local_storage_dir: Path = None
+    file_cache_enable: bool = False
     _json_data_cache_enable: bool = True
     # warning deduplication so log won't get spammy about minor issues
     warned_compress_invoked_on_already_compressed_snapshot = 0
@@ -122,7 +124,17 @@ class DataFileSuper(ABC):
         Decide whether the locally-cached file should be unlinked on destroy/exit, per
         self.cleanup_policy.  CLEANUP_ALWAYS always cleans up, CLEANUP_NEVER never does, and
         CLEANUP_IF_IN_S3 cleans up only once the file is stored in S3.
+
+        When the classvar file_cache_enable is True, never clean up, regardless of
+        cleanup_policy: the local file IS the cache s3_download() consults on future runs.
+
+        TOTEST:
+        - test_should_cleanup_false_when_file_cache_enabled: file_cache_enable True returns False
+          even under CLEANUP_ALWAYS
         """
+        if self.file_cache_enable:
+            retval = False
+            return retval
         match self.cleanup_policy:
             case CleanupPolicy.CLEANUP_ALWAYS:
                 retval = True
@@ -306,11 +318,35 @@ class DataFileSuper(ABC):
 
     @property
     def local_storage_dir(self) -> Path:
+        """
+        Directory holding this object's local file(s): the per-instance value if set, else the
+        subclass's default_local_storage_dir, else an automatically-created temp dir (see
+        _auto_temp_storage_dir()).
+        """
         if self._local_storage_dir:
             return self._local_storage_dir
         if self.default_local_storage_dir:
             return self.default_local_storage_dir
-        raise ValueError(f'local_storage_dir or default_local_storage_dir MUST be set: {self}')
+        retval = self._auto_temp_storage_dir()
+        return retval
+
+    @classmethod
+    def _auto_temp_storage_dir(cls) -> Path:
+        """
+        Create (once per subclass) and return a process-lifetime temp directory, used when
+        neither local_storage_dir nor default_local_storage_dir is set.  Each subclass gets its
+        own directory, named with the lower-case subclass name, e.g.
+        rpkilog_snapshotsummaryfile_XXXX.  The TemporaryDirectory object is retained on the
+        subclass so the directory survives until interpreter exit, then is removed.
+
+        TOTEST:
+        - test_auto_temp_storage_dir_per_subclass: two subclasses get distinct dirs, each named
+          for its own class; repeated calls on one subclass return the same dir
+        """
+        if '_auto_temp_dir' not in cls.__dict__:
+            cls._auto_temp_dir = tempfile.TemporaryDirectory(prefix=f'rpkilog_{cls.__name__.lower()}_')
+        retval = Path(cls._auto_temp_dir.name)
+        return retval
 
     @local_storage_dir.setter
     def local_storage_dir(self, value: Path):
@@ -400,7 +436,22 @@ class DataFileSuper(ABC):
             self.s3_url_set_to_default()
 
     def s3_download(self):
+        """
+        Download the S3 object to self.local_filepath_bz2.  When the classvar file_cache_enable
+        is True and that file already exists (e.g. left by a previous run), skip the download and
+        use the existing file as-is.
+
+        TOTEST:
+        - test_s3_download_cache_hit_skips_download: file_cache_enable True + pre-existing
+          local_filepath_bz2 sets local_storage_type BZIP2 without any boto3 call
+        - test_s3_download_cache_disabled_downloads: file_cache_enable False downloads even when
+          the local file exists
+        """
         self._ensure_s3_url()
+        if self.file_cache_enable and self.local_filepath_bz2.exists():
+            logger.debug(f'file cache hit, skipping download: {self.local_filepath_bz2}')
+            self.local_storage_type = LocalStorageType.BZIP2
+            return
         bucket = boto3.resource('s3').Bucket(self.s3_bucket)
         bucket.download_file(
             Key=self.s3_path,

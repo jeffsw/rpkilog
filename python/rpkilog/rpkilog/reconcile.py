@@ -1,16 +1,39 @@
 import argparse
 import datetime
 import dateutil.parser
+import enum
 import importlib.resources
 import logging
 import os
+import urllib.parse
+from pathlib import Path
+from typing import TYPE_CHECKING
 
+import boto3
 import mariadb
 
 from rpkilog.data_file_source import DataFileSource
 from rpkilog.data_file_type import DataFileType
 from rpkilog.reconcile_config import ReconcileConfig
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
+from rpkilog.util import list_s3_summary_files_within_range
+
+if TYPE_CHECKING:
+    from types_boto3_s3.service_resource import S3ServiceResource
+
+logger = logging.getLogger(__name__)
+
+
+class ReconcileOutcome(enum.Enum):
+    """
+    Per-file result of reconcile_summary_file(), tallied by reconcile_from_s3_summary().
+    """
+    ALREADY_RECORDED = 'already_recorded'
+    """The data_file table already had a row for the file; nothing to do."""
+    INSERTED = 'inserted'
+    """A data_file row was inserted — or would have been, under --dry-run."""
+    UNATTRIBUTABLE = 'unattributable'
+    """No buildmachine_to_source mapping matched, so the file cannot be keyed in data_file."""
 
 
 def load_reconcile_config() -> ReconcileConfig:
@@ -25,13 +48,27 @@ def load_reconcile_config() -> ReconcileConfig:
 
 def cli_entry_point():
     """
-    TODO: implement
+    Parse CLI arguments and dispatch to the requested reconcile subcommand.
     """
     logging.basicConfig(
         datefmt='%Y-%m-%dT%H:%M:%S',
         format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
+        level=logging.INFO,
     )
     ap1 = argparse.ArgumentParser()
+    # datetime range
+    ap1.add_argument(
+        '--datetime-min',
+        type=dateutil.parser.parse,
+        default=datetime.datetime.fromisoformat('2000-01-01T00:00:00Z'),
+        help='minimum datetimestamp of data files to reconcile into SQL DB',
+    )
+    ap1.add_argument(
+        '--datetime-max',
+        type=dateutil.parser.parse,
+        default=datetime.datetime.fromisoformat('2099-12-31T00:00:00Z'),
+        help='maximum datetimestamp of data files to reconcile into SQL DB',
+    )
     # db
     ap1.add_argument('--db-host', type=str, help='MariaDB host')
     ap1.add_argument('--db-port', default=3306, type=int, help='MariaDB port (default: 3306)')
@@ -43,35 +80,34 @@ def cli_entry_point():
     # dry-run
     ap1.add_argument('--dry-run', action='store_true', help='Dry run')
     # s3
+    ap1.add_argument(
+        '--s3-summary-cache-dir',
+        type=Path,
+        help='local directory for caching downloaded summary files; reused across runs '
+             '(default: a temp dir discarded at exit)',
+    )
     ap1.add_argument('--s3-summary-prefix', help='s3://bucket-name/prefix for summary files')
 
     subparsers = ap1.add_subparsers(dest='subparser_name', required=True)
 
-    ap_from_s3_summary = subparsers.add_parser(
+    subparsers.add_parser(
         'from_s3_summary',
         description='Read from given --s3-summary-prefix and update SQL database'
-    )
-    ap_from_s3_summary.add_argument(
-        '--datetime-min',
-        type=dateutil.parser.parse,
-        default=datetime.datetime.fromisoformat('2000-01-01T00:00:00Z'),
-        help='minimum datetimestamp of summary files to reconcile into SQL DB',
-    )
-    ap_from_s3_summary.add_argument(
-        '--datetime-max',
-        type=dateutil.parser.parse,
-        default=datetime.datetime.fromisoformat('2099-12-31T00:00:00Z'),
-        help='maximum datetimestamp of summary files to reconcile into SQL DB',
     )
 
     args = ap1.parse_args()
     if args.debug:
         breakpoint()
 
-    print(args)
+    if args.s3_summary_cache_dir is not None:
+        args.s3_summary_cache_dir.mkdir(parents=True, exist_ok=True)
+        SnapshotSummaryFile.default_local_storage_dir = args.s3_summary_cache_dir
+        SnapshotSummaryFile.file_cache_enable = True
 
     config = load_reconcile_config()
     if args.subparser_name == 'from_s3_summary':
+        if args.s3_summary_prefix is None:
+            ap1.error('--s3-summary-prefix is required for the from_s3_summary subcommand')
         reconcile_from_s3_summary(args=args, config=config)
 
 
@@ -114,39 +150,98 @@ def reconcile_from_s3_summary(
     Reconcile summary files found under --s3-summary-prefix into the SQL data_file table.  Doubles
     as the initial backfill of that table (see "How reconciliation uses this" in gh-81-sqldb.md).
 
-    Planned implementation:
-    1. db = db_connect(args)
-    2. summary_file_type = DataFileType.get_by_name(SnapshotSummaryFile.sql_file_type_name),
-       resolved once per run
-    3. summary_files = summary_files_from_s3(args.s3_summary_prefix, args.datetime_min,
-       args.datetime_max)
-    4. reconcile_summary_file(...) for each, honoring args.dry_run
-    5. log summary counts: listed / already-recorded / inserted / unattributable-to-a-source
-
-    TODO: implement
+    With args.dry_run, no data_file rows are inserted; the per-file and summary logs show what
+    a real run would have done.
     """
     # thousands of instances may be alive at once; don't retain multi-MB parsed JSON on each
     SnapshotSummaryFile._json_data_cache_enable = False
+    db = db_connect(args)
+    summary_file_type = DataFileType.get_by_name(SnapshotSummaryFile.sql_file_type_name, db=db)
+    s3 = boto3.resource('s3')
+    summary_files = list_summary_files_from_s3(
+        s3=s3,
+        s3_summary_prefix=args.s3_summary_prefix,
+        datetime_min=args.datetime_min,
+        datetime_max=args.datetime_max,
+    )
+    logger.info(f'listed {len(summary_files)} summary files under {args.s3_summary_prefix}')
+    counts = {}
+    for outcome in ReconcileOutcome:
+        counts[outcome] = 0
+    for summary_file in summary_files:
+        # the context manager unlinks the file's local download (if any) on exit — unless
+        # file_cache_enable is set (--s3-summary-cache-dir), which preserves it for future runs
+        with summary_file:
+            outcome = reconcile_summary_file(
+                db=db,
+                config=config,
+                summary_file=summary_file,
+                summary_file_type=summary_file_type,
+                dry_run=args.dry_run,
+            )
+        counts[outcome] += 1
+    if args.dry_run:
+        run_mode = 'DRY-RUN '
+    else:
+        run_mode = ''
+    logger.info(
+        f'{run_mode}reconcile complete: listed={len(summary_files)} '
+        f'already_recorded={counts[ReconcileOutcome.ALREADY_RECORDED]} '
+        f'inserted={counts[ReconcileOutcome.INSERTED]} '
+        f'unattributable={counts[ReconcileOutcome.UNATTRIBUTABLE]}'
+    )
 
 
-def summary_files_from_s3(
+def list_summary_files_from_s3(
+        s3: 'S3ServiceResource',
         s3_summary_prefix: str,
         datetime_min: datetime.datetime,
         datetime_max: datetime.datetime,
 ) -> list[SnapshotSummaryFile]:
     """
     List summary files stored under the given s3://bucket-name/prefix within the datetime range
-    and return a SnapshotSummaryFile for each.
+    and return a SnapshotSummaryFile for each, sorted by datetimestamp for orderly progress
+    logging.
 
-    TODO: parse s3_summary_prefix into bucket name + key prefix (urllib.parse; require s3://
-      scheme)
-    TODO: bucket = boto3.resource('s3').Bucket(bucket_name), then
-      util.list_s3_summary_files_within_range(bucket=bucket, start_datetime=datetime_min,
-      end_datetime=datetime_max, prefix=key_prefix)
-    TODO: instantiate via SnapshotSummaryFile.from_s3_object_summary(obj); return sorted by
-      datetimestamp for orderly progress logging
+    The s3 service resource is caller-supplied (from boto3.resource('s3')) so one authenticated
+    session serves all AWS interactions in a reconcile run.
+
+    util.list_s3_summary_files_within_range queries S3 by per-day prefixes (or one whole-prefix
+    listing for ranges wider than util.LIST_PER_DAY_MAX_DAYS), so its results are approximate at
+    the range boundaries; files outside datetime_min ... datetime_max are filtered out here.
+    Naive datetime bounds are assumed UTC, matching SnapshotSummaryFile.datetimestamp.
+
+    TOTEST:
+    - test_list_summary_files_rejects_non_s3_url: an https:// or bare-path prefix raises
+      ValueError
+    - test_list_summary_files_sorted_and_filtered: with list_s3_summary_files_within_range
+      monkeypatched to return out-of-order ObjectSummaries including one outside the range,
+      the result is sorted by datetimestamp and excludes the out-of-range file
+    - test_list_summary_files_naive_bounds_assumed_utc: naive datetime_min/datetime_max do not
+      raise on comparison against tz-aware datetimestamps
     """
-    pass
+    parsed_prefix = urllib.parse.urlparse(s3_summary_prefix)
+    if parsed_prefix.scheme != 's3' or not parsed_prefix.netloc:
+        raise ValueError(f's3_summary_prefix must be an s3://bucket-name/prefix URL: {s3_summary_prefix}')
+    bucket = s3.Bucket(parsed_prefix.netloc)
+    key_prefix = parsed_prefix.path.lstrip('/')
+    if datetime_min.tzinfo is None:
+        datetime_min = datetime_min.replace(tzinfo=datetime.timezone.utc)
+    if datetime_max.tzinfo is None:
+        datetime_max = datetime_max.replace(tzinfo=datetime.timezone.utc)
+    object_summaries = list_s3_summary_files_within_range(
+        bucket=bucket,
+        start_datetime=datetime_min,
+        end_datetime=datetime_max,
+        prefix=key_prefix,
+    )
+    retlist = []
+    for obj in object_summaries:
+        summary_file = SnapshotSummaryFile.from_s3_object_summary(obj)
+        if datetime_min <= summary_file.datetimestamp <= datetime_max:
+            retlist.append(summary_file)
+    retlist.sort(key=lambda summary_file: summary_file.datetimestamp)
+    return retlist
 
 
 def reconcile_summary_file(
@@ -155,23 +250,61 @@ def reconcile_summary_file(
         summary_file: SnapshotSummaryFile,
         summary_file_type: DataFileType,
         dry_run: bool = False,
-):
+) -> ReconcileOutcome:
     """
     Ensure the SQL data_file table has a row for one summary file; insert one if missing.
+    Returns the outcome for the caller's summary counts.
 
-    Planned implementation:
-    1. if summary_file.db_row_exists(db=db): nothing to do.  The summary_s3_url branch makes this
-       check cheap for files instantiated from an S3 listing (no download needed)
-    2. source_name = config.get_source_name(buildmachine=summary_file.buildmachine,
-       observation_datetime=summary_file.observation_datetime) — both properties read the JSON
-       content, downloading from S3 when uncached
-    3. summary_file.source = DataFileSource.get_by_name(source_name)
-    4. summary_file.db_insert(db=db, summary_file_type=summary_file_type) — skipped when dry_run;
-       logged either way
+    The db_row_exists() check is cheap for files instantiated from an S3 listing: its
+    summary_s3_url branch needs no download.  Attributing a file to a source does download it
+    (buildmachine and observation_datetime read the JSON content).  A file matching no
+    buildmachine_to_source mapping is logged at WARNING and counted UNATTRIBUTABLE — it cannot be
+    keyed in data_file.  A mapping naming a source absent from the source table (KeyError from
+    DataFileSource.get_by_name) is config/schema drift and propagates.
 
-    TODO: implement
+    With dry_run, the INSERT is skipped and logged as would-insert; the outcome is INSERTED
+    either way.
+
+    TOTEST (fake db/config; SnapshotSummaryFile methods monkeypatched):
+    - test_reconcile_summary_file_already_recorded: db_row_exists True short-circuits before any
+      source lookup; returns ALREADY_RECORDED
+    - test_reconcile_summary_file_inserts: db_insert called with the given summary_file_type and
+      the source assigned from DataFileSource.get_by_name; returns INSERTED
+    - test_reconcile_summary_file_dry_run_skips_insert: dry_run=True returns INSERTED without
+      calling db_insert
+    - test_reconcile_summary_file_unattributable: get_source_name raising KeyError yields
+      UNATTRIBUTABLE and no db_insert
+    - test_reconcile_summary_file_unknown_source_propagates: DataFileSource.get_by_name KeyError
+      is not swallowed
     """
-    pass
+    if summary_file.db_row_exists(db=db):
+        logger.debug(f'already recorded: {summary_file.s3_url}')
+        retval = ReconcileOutcome.ALREADY_RECORDED
+        return retval
+    try:
+        source_name = config.get_source_name(
+            buildmachine=summary_file.buildmachine,
+            observation_datetime=summary_file.observation_datetime,
+        )
+    except KeyError as exc:
+        logger.warning(f'cannot attribute summary file to a source: {exc}')
+        retval = ReconcileOutcome.UNATTRIBUTABLE
+        return retval
+    summary_file.source = DataFileSource.get_by_name(source_name, db=db)
+    observation_datetime = summary_file.observation_datetime.isoformat()
+    if dry_run:
+        logger.info(
+            f'DRY-RUN would insert data_file row: source={source_name} '
+            f'observation_datetime={observation_datetime} file={summary_file.s3_url}'
+        )
+    else:
+        summary_file.db_insert(db=db, summary_file_type=summary_file_type)
+        logger.info(
+            f'inserted data_file row: source={source_name} '
+            f'observation_datetime={observation_datetime} file={summary_file.s3_url}'
+        )
+    retval = ReconcileOutcome.INSERTED
+    return retval
 
 
 if __name__ == '__main__':
