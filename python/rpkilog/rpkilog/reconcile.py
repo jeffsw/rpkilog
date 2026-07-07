@@ -166,8 +166,6 @@ def reconcile_from_s3_summary(
     for outcome in ReconcileOutcome:
         counts[outcome] = 0
     for summary_file in summary_files:
-        # the context manager unlinks the file's local download (if any) on exit — unless
-        # file_cache_enable is set (--s3-summary-cache-dir), which preserves it for future runs
         with summary_file:
             outcome = reconcile_summary_file(
                 db=db,
