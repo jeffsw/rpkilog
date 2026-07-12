@@ -50,6 +50,8 @@ def cli_entry_point():
     """
     Parse CLI arguments and dispatch to the requested reconcile subcommand.
     """
+    secret_arg_dests = set()
+
     logging.basicConfig(
         datefmt='%Y-%m-%dT%H:%M:%S',
         format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
@@ -72,7 +74,10 @@ def cli_entry_point():
     ap1.add_argument('--db-host', type=str, help='MariaDB host')
     ap1.add_argument('--db-port', default=3306, type=int, help='MariaDB port (default: 3306)')
     ap1.add_argument('--db-user', type=str, help='MariaDB user')
-    ap1.add_argument('--db-password', type=str, help='MariaDB password (or use env RPKILOG_DB_PASSWORD')
+    db_password_action = ap1.add_argument(
+        '--db-password', type=str, help='MariaDB password (or use env RPKILOG_DB_PASSWORD)',
+    )
+    secret_arg_dests.add(db_password_action.dest)
     ap1.add_argument('--db-name', type=str, help='MariaDB database name')
     # debug
     ap1.add_argument('--debug', action='store_true', help='Break to debugger after parsing arguments')
@@ -97,6 +102,7 @@ def cli_entry_point():
     args = ap1.parse_args()
     if args.debug:
         breakpoint()
+    log_startup_args(args=args, secret_dests=secret_arg_dests)
 
     if args.s3_summary_cache_dir is not None:
         args.s3_summary_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +115,21 @@ def cli_entry_point():
             if args.s3_summary_prefix is None:
                 ap1.error('--s3-summary-prefix is required for the from-s3-summary subcommand')
             reconcile_from_s3_summary(args=args, config=config)
+
+
+def log_startup_args(args: argparse.Namespace, secret_dests: set[str]):
+    """
+    Log the parsed CLI arguments at INFO except those in secret_dests
+    """
+    parts = []
+    for dest in sorted(vars(args)):
+        value = getattr(args, dest)
+        if dest in secret_dests and value is not None:
+            value_repr = "'<redacted>'"
+        else:
+            value_repr = repr(value)
+        parts.append(f'{dest}={value_repr}')
+    logger.info('invoked with args: ' + ' '.join(parts))
 
 
 def db_connect(args: argparse.Namespace) -> mariadb.SyncConnection:

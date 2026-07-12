@@ -52,6 +52,11 @@ write_files:
         # providers can reach MariaDB over the rpkilog.dev network.  This is a dev VM with
         # no RDS IAM auth, so access is username/password only.
         bind-address = 0.0.0.0
+
+        [mysql]
+        # Display BINARY/VARBINARY/BLOB results as 0x... hex literals so SELECT * on tables
+        # with sha256 columns prints cleanly.  MariaDB keeps this opt-in, unlike MySQL >= 8.
+        binary-as-hex
   - path: /var/lib/cloud/scripts/per-once/100_mariadb_bootstrap.sh
     permissions: "0755"
     content: |4
