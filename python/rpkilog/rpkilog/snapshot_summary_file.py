@@ -25,6 +25,10 @@ class SnapshotSummaryFile(DataFileSuper):
     # minimum uncompressed byte size of a valid rpkiclient output JSON
     MINIMUM_SIZE = 8_500_000
     sql_file_type_name = 'rpkiclient_snapshot_summary_v1'
+    json_read_cache_populate_methods = DataFileSuper.json_read_cache_populate_methods + [
+        '_cache_buildmachine',
+        '_cache_observation_datetime',
+    ]
     s3_last_modified: datetime = None
     source: DataFileSource = None
 
@@ -76,18 +80,34 @@ class SnapshotSummaryFile(DataFileSuper):
     def buildmachine(self) -> str:
         """
         The metadata.buildmachine hostname read from the JSON content; matched against
-        BuildMachineToSourceMapping regexes to identify this file's `source`.
+        BuildMachineToSourceMapping regexes to identify this file's `source`.  Cached under
+        _metadata_cache['buildmachine'] on first read via json_data_populate_cache() so later
+        accesses don't re-read the file.
         """
-        retstr = self.json_data_cache['metadata']['buildmachine']
+        if 'buildmachine' not in self._metadata_cache:
+            self.json_data_populate_cache()
+        retstr = self._metadata_cache['buildmachine']
         return retstr
+
+    def _cache_buildmachine(self, data: bytes, json_data: dict):
+        """Populate the buildmachine cache; invoked via json_read_cache_populate_methods."""
+        self._metadata_cache['buildmachine'] = json_data['metadata']['buildmachine']
 
     @property
     def observation_datetime(self) -> datetime:
         """
-        The authoritative buildtime read from the JSON metadata; always tz-aware UTC
+        The authoritative buildtime read from the JSON metadata; always tz-aware UTC.  Cached
+        under _metadata_cache['observation_datetime'] on first read via
+        json_data_populate_cache() so later accesses don't re-read the file.
         """
-        retval = self.datetimestamp_from_json(self.json_data_cache)
+        if 'observation_datetime' not in self._metadata_cache:
+            self.json_data_populate_cache()
+        retval = self._metadata_cache['observation_datetime']
         return retval
+
+    def _cache_observation_datetime(self, data: bytes, json_data: dict):
+        """Populate the observation_datetime cache; invoked via json_read_cache_populate_methods."""
+        self._metadata_cache['observation_datetime'] = self.datetimestamp_from_json(json_data)
 
     @property
     def source_id(self) -> int | None:

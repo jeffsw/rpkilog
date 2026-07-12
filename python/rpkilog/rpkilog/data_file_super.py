@@ -46,6 +46,22 @@ class DataFileSuper(ABC):
     default_local_storage_dir: Path = None
     file_cache_enable: bool = False
     _json_data_cache_enable: bool = True
+    # Names of methods json_data_populate_cache() invokes after each full read of the file, so
+    # small metadata values (sha256, size, ...) get cached under _metadata_cache in one pass and
+    # later accesses don't re-read/re-decompress the file.  Each named method is called with
+    # keyword arguments data (raw uncompressed bytes) and json_data (parsed) and stores its value
+    # under a _metadata_cache key.  Subclasses caching additional values extend this list, e.g.:
+    #
+    #     json_read_cache_populate_methods = DataFileSuper.json_read_cache_populate_methods + [
+    #         '_cache_buildmachine',
+    #     ]
+    #
+    # Invalidation (_read_caches_invalidate) simply empties _metadata_cache, so subclasses need
+    # no invalidation override.
+    json_read_cache_populate_methods: list[str] = [
+        '_cache_size_bytes_uncompressed',
+        '_cache_sha256_digest',
+    ]
     # warning deduplication so log won't get spammy about minor issues
     warned_compress_invoked_on_already_compressed_snapshot = 0
     warned_file_already_does_not_exist = 0
@@ -84,6 +100,7 @@ class DataFileSuper(ABC):
         self.s3_stored = s3_stored
         self.s3_url = s3_url
         self._json_data_cache = None
+        self._metadata_cache = {}
 
     def __del__(self):
         """
@@ -277,18 +294,61 @@ class DataFileSuper(ABC):
     @property
     def json_data_cache(self):
         """
-        Deserialized JSON content of the file, read via open_for_read() (which may download from
-        S3).  Processes instantiating many objects at once (e.g. the reconciler) set the classvar
-        _json_data_cache_enable False so the multi-megabyte parsed data isn't retained per instance.
+        Deserialized JSON content of the file, read via json_data_populate_cache() (which may
+        download from S3).  Processes instantiating many objects at once (e.g. the reconciler) set
+        the classvar _json_data_cache_enable False so the multi-megabyte parsed data isn't retained
+        per instance; the small _metadata_cache values populated by json_data_populate_cache() are
+        retained either way.
         """
         if self._json_data_cache:
             retval = self._json_data_cache
         else:
-            with self.open_for_read() as fh:
-                retval = json.load(fh)
-            if self._json_data_cache_enable:
-                self._json_data_cache = retval
+            retval = self.json_data_populate_cache()
         return retval
+
+    def json_data_populate_cache(self) -> dict | list:
+        """
+        Read the file once (downloading from S3 when UNCACHED), parse the JSON, and invoke every
+        method named in the json_read_cache_populate_methods classvar with the raw uncompressed
+        bytes and the parsed data, so small metadata values (sha256, size, subclass fields like
+        buildmachine) are cached under self._metadata_cache in a single pass.  Returns the parsed
+        data, retaining it on self only when _json_data_cache_enable is true.
+
+        TOTEST:
+        - test_json_data_populate_cache_single_read: after one populate, sha256_digest(),
+          size_bytes_uncompressed(), buildmachine, and observation_datetime cause no further
+          reads (_iter_uncompressed_chunks monkeypatched with a call counter)
+        - test_json_data_populate_cache_respects_json_data_cache_enable: _json_data_cache stays
+          None when the classvar is False, is retained when True
+        """
+        data = b''.join(self._iter_uncompressed_chunks())
+        retval = json.loads(data)
+        for method_name in self.json_read_cache_populate_methods:
+            method = getattr(self, method_name)
+            method(data=data, json_data=retval)
+        if self._json_data_cache_enable:
+            self._json_data_cache = retval
+        return retval
+
+    def _cache_sha256_digest(self, data: bytes, json_data):
+        """Populate the sha256_digest() cache; invoked via json_read_cache_populate_methods."""
+        self._metadata_cache['sha256_digest'] = hashlib.sha256(data).digest()
+
+    def _cache_size_bytes_uncompressed(self, data: bytes, json_data):
+        """Populate the size_bytes_uncompressed() cache; invoked via json_read_cache_populate_methods."""
+        self._metadata_cache['size_bytes_uncompressed'] = len(data)
+
+    def _read_caches_invalidate(self):
+        """
+        Clear every cached value derived from the file content: the parsed-JSON payload cache and
+        all _metadata_cache entries, including subclass keys — so subclasses need no override.
+        Called by write_json() so a rewrite cannot leave stale metadata behind.
+
+        TOTEST:
+        - test_write_json_invalidates_read_caches
+        """
+        self._json_data_cache = None
+        self._metadata_cache = {}
 
     @property
     def local_filepath_bz2(self) -> Path:
@@ -382,8 +442,12 @@ class DataFileSuper(ABC):
     def size_bytes_uncompressed(self) -> int:
         """
         Return the byte count of the UNCOMPRESSED file content, even when the local cache is
-        bzip2-compressed.
+        bzip2-compressed.  The result is cached under _metadata_cache['size_bytes_uncompressed'];
+        json_data_populate_cache() also populates it.
         """
+        if 'size_bytes_uncompressed' in self._metadata_cache:
+            retval = self._metadata_cache['size_bytes_uncompressed']
+            return retval
         match self.local_storage_type:
             case LocalStorageType.UNCOMPRESSED:
                 retval = self.local_filepath_uncompressed.stat().st_size
@@ -391,17 +455,23 @@ class DataFileSuper(ABC):
                 retval = 0
                 for chunk in self._iter_uncompressed_chunks():
                     retval += len(chunk)
+        self._metadata_cache['size_bytes_uncompressed'] = retval
         return retval
 
     def sha256_digest(self) -> bytes:
         """
         Return the sha256 digest of the UNCOMPRESSED file content as 32 raw bytes, matching the
-        BINARY(32) SQL columns.
+        BINARY(32) SQL columns.  The result is cached under _metadata_cache['sha256_digest'];
+        json_data_populate_cache() also populates it.
         """
+        if 'sha256_digest' in self._metadata_cache:
+            retval = self._metadata_cache['sha256_digest']
+            return retval
         hasher = hashlib.sha256()
         for chunk in self._iter_uncompressed_chunks():
             hasher.update(chunk)
         retval = hasher.digest()
+        self._metadata_cache['sha256_digest'] = retval
         return retval
 
     @property
@@ -520,10 +590,14 @@ class DataFileSuper(ABC):
         return retstr
 
     def write_json(self, data: dict | list):
-        """Write data as JSON to self.local_filepath_uncompressed and update local_storage_type."""
+        """
+        Write data as JSON to self.local_filepath_uncompressed and update local_storage_type.
+        Invalidates the read caches: any previously-cached metadata described the old content.
+        """
         with open(self.local_filepath_uncompressed, 'wt') as fh:
             json.dump(data, fh)
         self.local_storage_type = LocalStorageType.UNCOMPRESSED
+        self._read_caches_invalidate()
 
     def write_to_path(self, dest: Path):
         """Copy the locally-cached file to dest, downloading from S3 first if UNCACHED."""
