@@ -1,10 +1,12 @@
 import argparse
+import concurrent.futures
 import datetime
 import dateutil.parser
 import enum
 import importlib.resources
 import logging
 import os
+import threading
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,6 +24,10 @@ if TYPE_CHECKING:
     from types_boto3_s3.service_resource import S3ServiceResource
 
 logger = logging.getLogger(__name__)
+
+# per-worker-thread state; reconcile_from_s3_summary_thread_init() stores each worker's own DB
+# connection here because a mariadb connection is not safe for concurrent use
+_thread_local = threading.local()
 
 
 class ReconcileOutcome(enum.Enum):
@@ -91,6 +97,8 @@ def cli_entry_point():
              '(default: a temp dir discarded at exit)',
     )
     ap1.add_argument('--s3-summary-prefix', help='s3://bucket-name/prefix for summary files')
+    # threads
+    ap1.add_argument('--threads', type=int, default=1, help='number of worker threads (default: 1)')
 
     subparsers = ap1.add_subparsers(dest='subparser_name', required=True)
 
@@ -170,6 +178,10 @@ def reconcile_from_s3_summary(
     """
     Reconcile summary files found under --s3-summary-prefix into the SQL data_file table.  Doubles
     as the initial backfill of that table.
+
+    Per-file work runs on a ThreadPoolExecutor sized by --threads.  Each worker thread gets its
+    own DB connection (created by reconcile_from_s3_summary_thread_init); outcomes are tallied
+    here on the main thread.
     """
     # thousands of instances may be alive at once; don't retain multi-MB parsed JSON on each
     SnapshotSummaryFile._json_data_cache_enable = False
@@ -186,16 +198,30 @@ def reconcile_from_s3_summary(
     counts = {}
     for outcome in ReconcileOutcome:
         counts[outcome] = 0
-    for summary_file in summary_files:
-        with summary_file:
-            outcome = reconcile_summary_file(
-                db=db,
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.threads,
+        thread_name_prefix='reconcile',
+        initializer=reconcile_from_s3_summary_thread_init,
+        initargs=(args,),
+    )
+    try:
+        futures = []
+        for summary_file in summary_files:
+            future = executor.submit(
+                reconcile_from_s3_summary_thread_work,
                 config=config,
                 summary_file=summary_file,
                 summary_file_type=summary_file_type,
                 dry_run=args.dry_run,
             )
-        counts[outcome] += 1
+            futures.append(future)
+        for future in futures:
+            outcome = future.result()
+            counts[outcome] += 1
+    finally:
+        # cancel_futures so a raising work unit (e.g. config/schema drift KeyError) surfaces
+        # without first grinding through every queued file, approximating serial behavior
+        executor.shutdown(wait=True, cancel_futures=True)
     if args.dry_run:
         run_mode = 'DRY-RUN '
     else:
@@ -206,6 +232,36 @@ def reconcile_from_s3_summary(
         f'inserted={counts[ReconcileOutcome.INSERTED]} '
         f'unattributable={counts[ReconcileOutcome.UNATTRIBUTABLE]}'
     )
+
+
+def reconcile_from_s3_summary_thread_init(args: argparse.Namespace):
+    """
+    ThreadPoolExecutor initializer: create this worker thread's own DB connection in
+    _thread_local.  db_connect() re-assigns the default_db_connection classvars on every call;
+    that repeat is harmless here because the reconcile code passes db= explicitly throughout.
+    """
+    _thread_local.db = db_connect(args)
+
+
+def reconcile_from_s3_summary_thread_work(
+        config: ReconcileConfig,
+        summary_file: SnapshotSummaryFile,
+        summary_file_type: DataFileType,
+        dry_run: bool,
+) -> ReconcileOutcome:
+    """
+    Per-file work unit submitted to the executor: reconcile one summary file using this worker
+    thread's DB connection, returning the ReconcileOutcome for main-thread tallying.
+    """
+    with summary_file:
+        retval = reconcile_summary_file(
+            db=_thread_local.db,
+            config=config,
+            summary_file=summary_file,
+            summary_file_type=summary_file_type,
+            dry_run=dry_run,
+        )
+    return retval
 
 
 def list_summary_files_from_s3(

@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import threading
 from abc import ABC
 import bz2
 from datetime import datetime, timezone
@@ -20,6 +21,11 @@ from rpkilog.cleanup_policy import CleanupPolicy
 from rpkilog.local_storage_type import LocalStorageType
 
 logger = logging.getLogger(__name__)
+
+# guards per-subclass _auto_temp_dir creation in _auto_temp_storage_dir(); without it, worker
+# threads racing the check-then-set could each create a TemporaryDirectory, and the loser's
+# would be deleted at garbage collection while still in use
+_auto_temp_dir_lock = threading.Lock()
 
 
 class DataFileSuper(ABC):
@@ -395,8 +401,9 @@ class DataFileSuper(ABC):
         TOTEST:
         - test_auto_temp_storage_dir_per_subclass
         """
-        if '_auto_temp_dir' not in cls.__dict__:
-            cls._auto_temp_dir = tempfile.TemporaryDirectory(prefix=f'rpkilog_{cls.__name__.lower()}_')
+        with _auto_temp_dir_lock:
+            if '_auto_temp_dir' not in cls.__dict__:
+                cls._auto_temp_dir = tempfile.TemporaryDirectory(prefix=f'rpkilog_{cls.__name__.lower()}_')
         retval = Path(cls._auto_temp_dir.name)
         return retval
 
