@@ -168,11 +168,9 @@ resource "aws_route53_record" "opensearch_1_A" {
 # allowing the opensearch provider resources below to run.  The VM boots and
 # runs cloud-init (package upgrades, Docker pull, container start) before
 # OpenSearch is reachable, so a simple depends_on the instance is not enough.
+# Replaced only by the replace-opensearch-1 mise task (VM rebuilds); in-place
+# instance updates (e.g. user-data) do not re-run the poll.
 resource "terraform_data" "opensearch_1_ready" {
-  lifecycle {
-    replace_triggered_by = [incus_instance.opensearch_1]
-  }
-
   provisioner "local-exec" {
     environment = {
       OS_PASSWORD = random_password.opensearch_1_admin.result
