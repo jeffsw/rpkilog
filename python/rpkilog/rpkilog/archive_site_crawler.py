@@ -6,6 +6,9 @@ For each discovered RPKI archive TAR we don't already have, download it, validat
 rpki-client summary JSON, and upload the TAR to the snapshot bucket and the summary to the summary
 bucket.  The file/storage/S3 concerns are delegated to SnapshotFile and SnapshotSummaryFile; this
 module owns acquisition (crawling, downloading, retry) and orchestration.
+--skip-s3-snapshot-upload skips the TAR upload (the summary is what downstream processing
+consumes); the summary upload and DB bookkeeping still happen, with the our_* stored-copy
+columns left NULL.
 
 --discover-only skips all downloading/uploading: the crawl's discovery phase upserts archive_file
 rows instead (dedup on the (source_id, source_url) PK), inventorying what the archive publishes so
@@ -167,6 +170,7 @@ class ArchiveSiteCrawler():
         db: 'mariadb.SyncConnection' = None,
         source: DataFileSource = None,
         summarize: bool = True,
+        upload_snapshot: bool = True,
     ) -> str | None:
         '''
         Download one archive TAR, validate it, extract its summary, and upload both the TAR (to the
@@ -181,13 +185,20 @@ class ArchiveSiteCrawler():
         db_update_ingested() stamps observation_datetime from the summary's authoritative
         metadata.buildtime.  With summarize=False (--no-summarize-after-download) the summary is
         not extracted or uploaded and observation_datetime stays NULL, so the row remains in the
-        backlog for a later summarizing run (which re-downloads the TAR).
+        backlog for a later summarizing run (which re-downloads the TAR).  With
+        upload_snapshot=False (--skip-s3-snapshot-upload) the TAR is still downloaded and
+        validated (it is the summary's source), but it is not uploaded and db_update_our_copy()
+        is skipped so the our_* columns stay NULL — we store no copy.  At least one of summarize
+        / upload_snapshot must be True.
 
-        Returns the snapshot's S3 key on success, or None when the TAR failed validation and was
-        skipped (a later run re-downloads it).  Raises on download or upload failure (so the job
-        aborts rather than silently skipping a file).  All local temp files live under a
-        TemporaryDirectory that is removed on return.
+        Returns the snapshot's S3 key on success (the summary's S3 key when upload_snapshot is
+        False), or None when the TAR failed validation and was skipped (a later run re-downloads
+        it).  Raises on download or upload failure (so the job aborts rather than silently
+        skipping a file).  All local temp files live under a TemporaryDirectory that is removed
+        on return.
         '''
+        if not summarize and not upload_snapshot:
+            raise ValueError('at least one of summarize / upload_snapshot must be True')
         with tempfile.TemporaryDirectory() as work_dir_str:
             work_dir = Path(work_dir_str)
             snapshot = SnapshotFile(
@@ -206,18 +217,23 @@ class ArchiveSiteCrawler():
             if summarize:
                 summary = snapshot.extract_summary_file(output_dir=work_dir)
                 summary.cleanup_policy = CleanupPolicy.CLEANUP_NEVER
-            logger.info(f'UPLOADING snapshot {snapshot.default_filename} to snapshot bucket')
-            snapshot.s3_upload()
+            if upload_snapshot:
+                logger.info(f'UPLOADING snapshot {snapshot.default_filename} to snapshot bucket')
+                snapshot.s3_upload()
             if summarize:
                 logger.info(f'UPLOADING summary {summary.default_filename} to summary bucket')
                 summary.s3_upload()
             if db is not None:
-                snapshot.db_update_our_copy(db=db)
+                if upload_snapshot:
+                    snapshot.db_update_our_copy(db=db)
                 if summarize:
                     snapshot.db_update_ingested(
                         db=db, observation_datetime=summary.observation_datetime,
                     )
-            retstr = snapshot.s3_path
+            if upload_snapshot:
+                retstr = snapshot.s3_path
+            else:
+                retstr = summary.s3_path
         return retstr
 
     @classmethod
@@ -379,6 +395,10 @@ class ArchiveSiteCrawler():
                         help='S3 bucket containing JSON summary files (required unless --discover-only)')
         ap.add_argument('--site-root',
                         help='Root of web archive site (alternative: --source-name)')
+        ap.add_argument('--skip-s3-snapshot-upload', action='store_true',
+                        help='Do not upload downloaded TARs to the snapshot bucket (and leave '
+                             'the archive_file our_* columns NULL); the summary is still '
+                             'extracted and uploaded')
         ap.add_argument('--sleep-between-downloads', type=parse_interval,
                         help='With --download-backlog: pause between downloads to pace the '
                              'archive site, e.g. 30s, 5m, or 1h (each sleep is logged)')
@@ -405,6 +425,9 @@ class ArchiveSiteCrawler():
         if args.download_backlog and args.source_name is None:
             ap.error('--download-backlog requires --source-name (its work queue is that '
                      'source\'s archive_file rows)')
+        if args.skip_s3_snapshot_upload and args.no_summarize_after_download:
+            ap.error('--skip-s3-snapshot-upload with --no-summarize-after-download would '
+                     'upload nothing')
         if not args.discover_only and (
                 args.s3_snapshot_bucket_name is None or args.s3_snapshot_summary_bucket_name is None):
             ap.error('--s3-snapshot-bucket-name and --s3-snapshot-summary-bucket-name are '
@@ -446,6 +469,7 @@ class ArchiveSiteCrawler():
                 job_max_downloads=args.job_max_downloads,
                 sleep_between_downloads=args.sleep_between_downloads,
                 summarize=not args.no_summarize_after_download,
+                upload_snapshot=not args.skip_s3_snapshot_upload,
                 dry_run=args.dry_run,
             )
         elif args.discover_only:
@@ -473,6 +497,7 @@ class ArchiveSiteCrawler():
                 maximum_crawl_age=args.maximum_crawl_age,
                 job_deadline=job_deadline,
                 job_max_downloads=args.job_max_downloads,
+                upload_snapshot=not args.skip_s3_snapshot_upload,
                 dry_run=args.dry_run,
             )
         print(json.dumps(wrapped_retval, indent=4))
@@ -502,6 +527,7 @@ class ArchiveSiteCrawler():
         maximum_crawl_age: float | None = None,
         job_deadline: datetime | None = None,
         job_max_downloads: int | None = None,
+        upload_snapshot: bool = True,
         dry_run: bool = False,
     ):
         '''
@@ -527,6 +553,8 @@ class ArchiveSiteCrawler():
         For each such TAR, process_tar_url() uploads the TAR to s3_snapshot_bucket_name and its
         extracted summary to s3_snapshot_summary_bucket_name (both via SnapshotFile /
         SnapshotSummaryFile, whose default S3 base URLs are set below from the bucket names).
+        With upload_snapshot=False (--skip-s3-snapshot-upload) the TAR upload is skipped and
+        only the summary is uploaded.
 
         Abort if a download fails, or if an upload fails, to avoid skipping any files.
         '''
@@ -582,6 +610,7 @@ class ArchiveSiteCrawler():
             minimum_file_age=minimum_file_age,
             job_deadline=job_deadline,
             job_max_downloads=job_max_downloads,
+            upload_snapshot=upload_snapshot,
             dry_run=dry_run,
         )
         return uploaded
@@ -643,6 +672,7 @@ class ArchiveSiteCrawler():
         minimum_file_age: timedelta = None,
         job_deadline: datetime = None,
         job_max_downloads: int = None,
+        upload_snapshot: bool = True,
         dry_run: bool = False,
     ) -> list:
         '''
@@ -692,7 +722,11 @@ class ArchiveSiteCrawler():
                 )
                 logger.info(f'DRY-RUN would download {available_tar_url} and upload {snapshot_key}')
             else:
-                snapshot_key = cls.process_tar_url(url=available_tar_url, datetimestamp=available_tar_datetime)
+                snapshot_key = cls.process_tar_url(
+                    url=available_tar_url,
+                    datetimestamp=available_tar_datetime,
+                    upload_snapshot=upload_snapshot,
+                )
                 if snapshot_key is None:
                     continue
             uploaded.append(snapshot_key)
@@ -805,6 +839,7 @@ class ArchiveSiteCrawler():
         job_max_downloads: int | None = None,
         sleep_between_downloads: timedelta | None = None,
         summarize: bool = True,
+        upload_snapshot: bool = True,
         dry_run: bool = False,
     ) -> dict:
         '''
@@ -815,7 +850,9 @@ class ArchiveSiteCrawler():
 
         Each row runs through process_tar_url() with db + source, which uploads the TAR (and,
         unless summarize is False, its summary) and updates the row: our_* stored-copy columns
-        plus the observation_datetime ingest marker.  A TAR failing validation is tallied and
+        plus the observation_datetime ingest marker.  With upload_snapshot=False
+        (--skip-s3-snapshot-upload) the TAR upload and the our_* columns are skipped; only the
+        summary is uploaded and observation_datetime stamped.  A TAR failing validation is tallied and
         left backlogged for a later run.  sleep_between_downloads paces the archive site --
         each pause is logged with its duration before sleeping.  job_deadline and
         job_max_downloads bound the run just like crawl mode.
@@ -872,6 +909,7 @@ class ArchiveSiteCrawler():
                 db=db,
                 source=source,
                 summarize=summarize,
+                upload_snapshot=upload_snapshot,
             )
             downloads_performed += 1
             if snapshot_key is None:
