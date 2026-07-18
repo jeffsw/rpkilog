@@ -13,7 +13,7 @@ datetime falls within the given bounds.  They may be used separately or together
 import argparse
 import boto3
 from datetime import datetime, timedelta, UTC
-import dateutil
+import dateutil.parser
 from html.parser import HTMLParser
 import json
 import logging
@@ -26,13 +26,24 @@ from urllib.parse import urlparse
 import tenacity
 
 from rpkilog.cleanup_policy import CleanupPolicy
+from rpkilog.data_file_source import DataFileSource
 from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.snapshot_file import SnapshotFile
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
+from rpkilog.sqldb import db_connect, log_startup_args
 from rpkilog.util import list_s3_snapshot_files_within_range, list_s3_summary_files_within_range
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
+
+
+def _utc_aware(dt: datetime) -> datetime:
+    """Return dt as tz-aware UTC; a naive input is assumed to already be UTC."""
+    if dt.tzinfo is None:
+        retval = dt.replace(tzinfo=UTC)
+    else:
+        retval = dt.astimezone(UTC)
+    return retval
 
 
 class MyHTMLParser(HTMLParser):
@@ -42,8 +53,8 @@ class MyHTMLParser(HTMLParser):
     parser = MyHTMLParser()
     parser.feed(page_blob)
     '''
-    def __init__(self, page_url:str):
-        super(MyHTMLParser, self).__init__()
+    def __init__(self, page_url: str):
+        super().__init__()
         self.href_urls = set()
         self.page_url = page_url
 
@@ -179,17 +190,25 @@ class ArchiveSiteCrawler():
         cls,
         site_root: str,
         start_date: datetime,
-        max_date: datetime = datetime.now(UTC)
+        max_date: datetime = None,
     ) -> set:
         '''
-        Crawl the specified RPKI archive site_root and get the URLs of TARs beginning with start_date.
-        Depends on the URL scheme for index pages being site_root/YYYY/MM/DD/
+        Discovery phase: crawl the specified RPKI archive site_root and get the URLs of TARs
+        between start_date and max_date (default: now; NOT an eager parameter default, which
+        would be evaluated once at import time and go stale in a long-lived process).
+        Depends on the URL scheme for index pages being site_root/YYYY/MM/DD/.  Naive datetimes
+        are assumed UTC.  Every UTC day from start_date through max_date inclusive is fetched;
+        a 404 on a day page is tolerated (e.g. today's page before the first snapshot).
 
         Return the URLs in a set.
         '''
-        start_date = start_date.replace(tzinfo=None)
+        start_date = _utc_aware(start_date)
+        if max_date is None:
+            max_date = datetime.now(UTC)
+        else:
+            max_date = _utc_aware(max_date)
         discovered_tar_urls = set()
-        for day_offset in range((max_date.replace(tzinfo=None) - start_date).days + 2):
+        for day_offset in range((max_date.date() - start_date.date()).days + 1):
             day = start_date + timedelta(days=day_offset)
             url_fragment = day.strftime('%Y/%m/%d/')  # e.g. 2026/05/01
             day_page_url = site_root + ('' if site_root.endswith('/') else '/') + url_fragment
@@ -207,7 +226,7 @@ class ArchiveSiteCrawler():
                     stop=tenacity.stop_after_attempt(15),
                     wait=tenacity.wait_random(min=1, max=3),
                     )
-    def fetch_tar_urls_from_day_page(cls, day_page_url:str, site_root:str, start_date:datetime) -> set:
+    def fetch_tar_urls_from_day_page(cls, day_page_url: str, site_root: str, start_date: datetime) -> set:
         '''
         Fetch the "day page," which contains a list of files for a given date.
         
@@ -216,7 +235,7 @@ class ArchiveSiteCrawler():
 
         Return a set containing the TAR URLs.
         '''
-        logger.info(F'FETCHING day page {day_page_url}')
+        logger.info(f'FETCHING day page {day_page_url}')
         urls_on_day_page = cls.fetch_page_href_urls(page_url=day_page_url)
         tar_file_urls = set()
         for url in sorted(urls_on_day_page):
@@ -227,14 +246,14 @@ class ArchiveSiteCrawler():
             except ValueError:
                 # not an 'rpki-...Z.tgz' link (parent-dir links, other files, etc.)
                 continue
-            if tar_datetime.replace(tzinfo=None) < start_date:
-                logger.debug(F'Not crawling into {url} because it is before {start_date.isoformat()}')
+            if tar_datetime < _utc_aware(start_date):
+                logger.debug(f'Not crawling into {url} because it is before {start_date.isoformat()}')
                 continue
             tar_file_urls.add(url)
-        return(tar_file_urls)
+        return tar_file_urls
 
     @classmethod
-    def fetch_page_href_urls(cls, page_url:str) -> set:
+    def fetch_page_href_urls(cls, page_url: str) -> set:
         'Fetch page_url, parse it, and return a set of all the a-tag href attributes found on the page.'
         try:
             res = requests.get(url=page_url, timeout=cls.fetch_index_page_timeout, headers=cls.fetch_headers)
@@ -251,69 +270,123 @@ class ArchiveSiteCrawler():
 
     @classmethod
     def cli_entry_point(cls):
-        realtime_initial = datetime.utcnow()
+        realtime_initial = datetime.now(UTC)
         logging.basicConfig(
             level='INFO',
             datefmt='%Y-%m-%dT%H:%M:%S',
             format='%(asctime)s.%(msecs)03d %(filename)s %(lineno)d %(funcName)s %(levelname)s %(message)s',
         )
-        ap = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
-        ap.add_argument('--debug', action='store_true', help='Break into pdb after parsing arguments')
-        ap.add_argument('--debug-save-urls', type=Path, help='Save the list of available tar file URLs to given file')
-        ap.add_argument('--fetch-snapshot-timeout', default=300,
+        secret_arg_dests = set()
+        ap = argparse.ArgumentParser()
+        ap.add_argument('--debug', action='store_true', help='Break to debugger after parsing arguments')
+        ap.add_argument('--debug-save-urls', type=Path,
+                        help='Save the list of available tar file URLs to given file')
+        ap.add_argument('--fetch-snapshot-timeout', default=300, type=float,
                         help='Timeout, in seconds, for fetching snapshot files (default: 300)')
         ap.add_argument('--maximum-crawl-age', type=float, default=14,
                         help='Crawl at most this many days (default: 14)')
-        ap.add_argument('--s3-snapshot-bucket-name', help='S3 bucket for uploading RPKI TAR files')
-        ap.add_argument('--s3-snapshot-summary-bucket-name', help='S3 bucket containing JSON summary files')
-        ap.add_argument('--site-root', help='Root of web archive site')
-        ap.add_argument('--start-date', type=dateutil.parser.parse, help='Do not download snapshots earlier than this date')
+        ap.add_argument('--minimum-file-age', type=float,
+                        help='Defer snapshots younger than this many minutes (default: 10); works '
+                             'around archives that write files into public dirs progressively')
+        # db (only needed with --source-name today; --discover-only will also require them)
+        ap.add_argument('--db-host', type=str, help='MariaDB host')
+        ap.add_argument('--db-port', default=3306, type=int, help='MariaDB port (default: 3306)')
+        ap.add_argument('--db-user', type=str, help='MariaDB user')
+        db_password_action = ap.add_argument(
+            '--db-password', type=str, help='MariaDB password (or use env RPKILOG_DB_PASSWORD)',
+        )
+        secret_arg_dests.add(db_password_action.dest)
+        ap.add_argument('--db-name', type=str, help='MariaDB database name')
+        ap.add_argument('--s3-snapshot-bucket-name', required=True,
+                        help='S3 bucket for uploading RPKI TAR files')
+        ap.add_argument('--s3-snapshot-summary-bucket-name', required=True,
+                        help='S3 bucket containing JSON summary files')
+        ap.add_argument('--site-root',
+                        help='Root of web archive site (alternative: --source-name)')
+        ap.add_argument('--source-name',
+                        help='Crawl the `source` DB row with this name, using its base_url as '
+                             'the site root -- guarantees discovered URLs match archive_file '
+                             'rows byte-for-byte (requires --db-* arguments)')
+        ap.add_argument('--start-date', type=dateutil.parser.parse,
+                        help='Do not download snapshots earlier than this date')
         ap.add_argument('--filename-datetime-min', type=dateutil.parser.parse,
                         help='Only process snapshots whose filename datetime is >= this (optional)')
         ap.add_argument('--filename-datetime-max', type=dateutil.parser.parse,
                         help='Only process snapshots whose filename datetime is <= this (optional)')
         ap.add_argument('--job-max-runtime', type=float, help='Max runtime in seconds (default: unlimited)')
-        ap.add_argument('--job-max-downloads', default=2, type=int, help='Max files to download before stopping (default: 2)')
-        args = vars(ap.parse_args())
-        if 'job_max_runtime' in args:
-            args['job_deadline'] = datetime.utcnow() + timedelta(seconds=args['job_max_runtime'])
-            args.pop('job_max_runtime')
-        if 'debug' in args:
-            args.pop('debug')
-            import pdb
-            pdb.set_trace()
+        ap.add_argument('--job-max-downloads', default=2, type=int,
+                        help='Max files to download before stopping (default: 2)')
+        args = ap.parse_args()
+        if (args.site_root is None) == (args.source_name is None):
+            ap.error('exactly one of --site-root or --source-name is required')
+        if args.debug:
+            breakpoint()
+        log_startup_args(args=args, secret_dests=secret_arg_dests)
+        if args.job_max_runtime is not None:
+            job_deadline = datetime.now(UTC) + timedelta(seconds=args.job_max_runtime)
+        else:
+            job_deadline = None
+        if args.minimum_file_age is not None:
+            minimum_file_age = timedelta(minutes=args.minimum_file_age)
+        else:
+            minimum_file_age = None
 
-        wrapped_retval = cls.wrapped_entry_point(**args)
+        # Resolve the site root: prefer the DB source row's base_url over a hand-typed URL, so
+        # discovered source_url values match derive_tar_url() inference byte-for-byte.
+        site_root = args.site_root
+        if args.source_name is not None:
+            db = db_connect(args)
+            source = DataFileSource.get_by_name(args.source_name, db=db)
+            if source.base_url is None:
+                ap.error(f'source {source.name!r} has no base_url; it is not a crawled archive')
+            site_root = source.base_url
+
+        wrapped_retval = cls.wrapped_entry_point(
+            s3_snapshot_bucket_name=args.s3_snapshot_bucket_name,
+            s3_snapshot_summary_bucket_name=args.s3_snapshot_summary_bucket_name,
+            site_root=site_root,
+            debug_save_urls=args.debug_save_urls,
+            fetch_snapshot_timeout=args.fetch_snapshot_timeout,
+            start_date=args.start_date,
+            filename_datetime_min=args.filename_datetime_min,
+            filename_datetime_max=args.filename_datetime_max,
+            minimum_file_age=minimum_file_age,
+            maximum_crawl_age=args.maximum_crawl_age,
+            job_deadline=job_deadline,
+            job_max_downloads=args.job_max_downloads,
+        )
         print(json.dumps(wrapped_retval, indent=4))
         times = os.times()
-        realtime_final = datetime.utcnow()
+        realtime_final = datetime.now(UTC)
         realtime_elapsed = realtime_final - realtime_initial
         try:
             import psutil
             memory_use_rss_mb = psutil.Process().memory_info().rss / 1048576
-            logger.info(F'RAM memory_use_rss_mb={memory_use_rss_mb:.0f}')
-        except:
-            logger.warning(F'Unable to invoke psutil.Process().memory_info() to get RAM use.')
-        logger.info(F'TIMES usr={times.user} sys={times.system} realtime={realtime_elapsed.total_seconds()}')
+            logger.info(f'RAM memory_use_rss_mb={memory_use_rss_mb:.0f}')
+        except Exception:
+            logger.warning('Unable to invoke psutil.Process().memory_info() to get RAM use.')
+        logger.info(f'TIMES usr={times.user} sys={times.system} realtime={realtime_elapsed.total_seconds()}')
 
     @classmethod
     def wrapped_entry_point(
         cls,
-        s3_snapshot_bucket_name:str,
-        s3_snapshot_summary_bucket_name:str,
-        site_root:str,
+        s3_snapshot_bucket_name: str,
+        s3_snapshot_summary_bucket_name: str,
+        site_root: str,
         debug_save_urls: Path | None = None,
-        fetch_snapshot_timeout: str = None,
-        start_date:datetime=None,
-        filename_datetime_min:datetime=None,
-        filename_datetime_max:datetime=None,
-        minimum_file_age:timedelta=None,
-        maximum_crawl_age:str=None,
-        job_deadline:datetime=None,
-        job_max_downloads:int=None,
+        fetch_snapshot_timeout: float | None = None,
+        start_date: datetime | None = None,
+        filename_datetime_min: datetime | None = None,
+        filename_datetime_max: datetime | None = None,
+        minimum_file_age: timedelta | None = None,
+        maximum_crawl_age: float | None = None,
+        job_deadline: datetime | None = None,
+        job_max_downloads: int | None = None,
     ):
         '''
-        Invoked by other entry points, e.g. cli_entry_point.
+        Invoked by other entry points, e.g. cli_entry_point.  Orchestrates the three phases:
+        already-have filter (s3_already_have_by_datetime), discovery
+        (fetch_tar_urls_from_archive_site), and acquisition (acquire_tar_urls).
 
         Web-crawl the given site_root and find relevant RPKI archive TAR URLs in the HTML a-tags.
         Crawling will try to avoid requesting pages that list only TAR files before start_date.
@@ -340,62 +413,37 @@ class ArchiveSiteCrawler():
         SnapshotSummaryFile.default_s3_base_url_set(f's3://{s3_snapshot_summary_bucket_name}/')
 
         if filename_datetime_min is not None:
-            filename_datetime_min = filename_datetime_min.replace(tzinfo=None)
+            filename_datetime_min = _utc_aware(filename_datetime_min)
         if filename_datetime_max is not None:
-            filename_datetime_max = filename_datetime_max.replace(tzinfo=None)
+            filename_datetime_max = _utc_aware(filename_datetime_max)
+        if job_deadline is not None:
+            job_deadline = _utc_aware(job_deadline)
 
         if maximum_crawl_age:
             maximum_crawl_age = timedelta(days=float(maximum_crawl_age))
         else:
             maximum_crawl_age = timedelta(days=14)
         if start_date is None:
-            start_date = datetime.now(UTC).replace(tzinfo=None) - maximum_crawl_age
+            start_date = datetime.now(UTC) - maximum_crawl_age
+        else:
+            start_date = _utc_aware(start_date)
         if minimum_file_age is None:
             minimum_file_age = timedelta(minutes=10)
         if fetch_snapshot_timeout:
             cls.fetch_snapshot_timeout = float(fetch_snapshot_timeout)
 
-        # list files in relevant s3 buckets
-        # figure out what snapshots we already have (in either S3 bucket) based on datetime-like filenames
-        logger.info('LISTING relevant s3 buckets')
-        already_have_by_datetime = dict()
-        uploaded = list()
-
-        snapshot_bucket = boto3.resource('s3').Bucket(s3_snapshot_bucket_name)
-        snapshots = list_s3_snapshot_files_within_range(
-            bucket=snapshot_bucket,
+        already_have_by_datetime = cls.s3_already_have_by_datetime(
+            s3_snapshot_bucket_name=s3_snapshot_bucket_name,
+            s3_snapshot_summary_bucket_name=s3_snapshot_summary_bucket_name,
             start_datetime=start_date - timedelta(days=1),
-            end_datetime=datetime.now(UTC).replace(tzinfo=None),
         )
-        for buckobj in snapshots:
-            try:
-                buckobj_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(buckobj.key))
-            except ValueError:
-                logger.warning(f'UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
-                continue
-            already_have_by_datetime[buckobj_datetime] = buckobj
 
-        summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
-        summaries = list_s3_summary_files_within_range(
-            bucket=summary_bucket,
-            start_datetime=start_date - timedelta(days=1),
-            end_datetime=datetime.now(UTC).replace(tzinfo=None),
-        )
-        for buckobj in summaries:
-            try:
-                buckobj_datetime = SnapshotSummaryFile.infer_datetimestamp_from_path(Path(buckobj.key))
-            except ValueError:
-                logger.warning(f'UNMATCHED key in summary bucket {summary_bucket} : {buckobj.key}')
-                continue
-            already_have_by_datetime[buckobj_datetime] = buckobj
-        logger.info(F'LISTED {len(snapshots)} snapshots and {len(summaries)} summaries in S3 buckets.')
-
-        # get the list of all rpki tar files, after start_date, from the specified rpki archive site
+        # discovery phase: all rpki tar file URLs, after start_date, on the archive site
         archive_site_available_tar_file_urls = cls.fetch_tar_urls_from_archive_site(
             site_root=site_root,
             start_date=start_date,
         )
-        logger.info(F'FETCHED {len(archive_site_available_tar_file_urls)} URLs after {start_date} from {site_root}')
+        logger.info(f'FETCHED {len(archive_site_available_tar_file_urls)} URLs after {start_date} from {site_root}')
         if debug_save_urls:
             with open(debug_save_urls, 'w') as save_url_fh:
                 json.dump(
@@ -405,25 +453,97 @@ class ArchiveSiteCrawler():
                     indent=4
                 )
 
-        # Iterate over available rpki tar files.
-        # Determine which ones we don't already have.  Download those from archive and re-upload to snapshot bucket.
-        # Stop if we're within 60s of job_deadline (lambda runtime might be exhausted because the downloads are slow.)
-        for available_tar_url in sorted(archive_site_available_tar_file_urls):
+        uploaded = cls.acquire_tar_urls(
+            available_tar_urls=archive_site_available_tar_file_urls,
+            already_have_by_datetime=already_have_by_datetime,
+            filename_datetime_min=filename_datetime_min,
+            filename_datetime_max=filename_datetime_max,
+            minimum_file_age=minimum_file_age,
+            job_deadline=job_deadline,
+            job_max_downloads=job_max_downloads,
+        )
+        return uploaded
+
+    @classmethod
+    def s3_already_have_by_datetime(
+        cls,
+        s3_snapshot_bucket_name: str,
+        s3_snapshot_summary_bucket_name: str,
+        start_datetime: datetime,
+    ) -> dict:
+        '''
+        Already-have filter phase: list the snapshot and summary buckets from start_datetime
+        onward and return {filename-derived datetime: ObjectSummary} covering files present in
+        EITHER bucket, e.g.:
+            snapshot_summary: 20211121T000709Z.json.bz2
+            snapshot: rpki-20211121T000709Z.tgz
+        '''
+        logger.info('LISTING relevant s3 buckets')
+        retval = dict()
+
+        snapshot_bucket = boto3.resource('s3').Bucket(s3_snapshot_bucket_name)
+        snapshots = list_s3_snapshot_files_within_range(
+            bucket=snapshot_bucket,
+            start_datetime=start_datetime,
+            end_datetime=datetime.now(UTC),
+        )
+        for buckobj in snapshots:
+            try:
+                buckobj_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(buckobj.key))
+            except ValueError:
+                logger.warning(f'UNMATCHED key in snapshot bucket {snapshot_bucket} : {buckobj.key}')
+                continue
+            retval[buckobj_datetime] = buckobj
+
+        summary_bucket = boto3.resource('s3').Bucket(s3_snapshot_summary_bucket_name)
+        summaries = list_s3_summary_files_within_range(
+            bucket=summary_bucket,
+            start_datetime=start_datetime,
+            end_datetime=datetime.now(UTC),
+        )
+        for buckobj in summaries:
+            try:
+                buckobj_datetime = SnapshotSummaryFile.infer_datetimestamp_from_path(Path(buckobj.key))
+            except ValueError:
+                logger.warning(f'UNMATCHED key in summary bucket {summary_bucket} : {buckobj.key}')
+                continue
+            retval[buckobj_datetime] = buckobj
+        logger.info(f'LISTED {len(snapshots)} snapshots and {len(summaries)} summaries in S3 buckets.')
+        return retval
+
+    @classmethod
+    def acquire_tar_urls(
+        cls,
+        available_tar_urls,
+        already_have_by_datetime: dict,
+        filename_datetime_min: datetime = None,
+        filename_datetime_max: datetime = None,
+        minimum_file_age: timedelta = None,
+        job_deadline: datetime = None,
+        job_max_downloads: int = None,
+    ) -> list:
+        '''
+        Acquisition phase: in ascending URL (= chronological) order, run process_tar_url()
+        (download/validate/extract/upload) for each TAR not in already_have_by_datetime and not
+        excluded by the optional filename bounds or minimum_file_age; stop at job_deadline or
+        job_max_downloads.  Returns the uploaded snapshot S3 keys.
+        '''
+        uploaded = list()
+        for available_tar_url in sorted(available_tar_urls):
             try:
                 available_tar_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(available_tar_url))
             except ValueError:
-                logger.warning(F'UNMATCHED available_tar_url {available_tar_url}')
+                logger.warning(f'UNMATCHED available_tar_url {available_tar_url}')
                 continue
             if available_tar_datetime in already_have_by_datetime:
                 # we've previously downloaded this tar from the archive site
                 continue
-            available_tar_datetime_naive = available_tar_datetime.replace(tzinfo=None)
-            if filename_datetime_min is not None and available_tar_datetime_naive < filename_datetime_min:
+            if filename_datetime_min is not None and available_tar_datetime < filename_datetime_min:
                 continue
-            if filename_datetime_max is not None and available_tar_datetime_naive > filename_datetime_max:
+            if filename_datetime_max is not None and available_tar_datetime > filename_datetime_max:
                 continue
-            available_tar_age = datetime.now(UTC).replace(tzinfo=None) - available_tar_datetime_naive
-            if available_tar_age < minimum_file_age:
+            available_tar_age = datetime.now(UTC) - available_tar_datetime
+            if minimum_file_age is not None and available_tar_age < minimum_file_age:
                 # file is too young; skip it.  A future iteration will download it.
                 # This is a workaround for some archive sites writing files into their public directories
                 # progressively as they're built, rather than moving files into it when complete.
@@ -431,12 +551,12 @@ class ArchiveSiteCrawler():
                 continue
 
             # new tar we need from archive site
-            if job_deadline!=None and job_deadline < datetime.utcnow():
+            if job_deadline is not None and job_deadline < datetime.now(UTC):
                 # We're past the deadline.  Could run out of lambda execution time.  Stop here.
-                logger.warning(F'JOB_DEADLINE reached.')
+                logger.warning(f'JOB_DEADLINE reached.')
                 break
-            if job_max_downloads!=None and job_max_downloads <= len(uploaded):
-                logger.warning(F'JOB_MAX_DOWNLOADS reached.')
+            if job_max_downloads is not None and job_max_downloads <= len(uploaded):
+                logger.warning(f'JOB_MAX_DOWNLOADS reached.')
                 break
 
             snapshot_key = cls.process_tar_url(url=available_tar_url, datetimestamp=available_tar_datetime)

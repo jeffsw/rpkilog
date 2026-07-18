@@ -5,8 +5,8 @@ import dateutil.parser
 import enum
 import importlib.resources
 import logging
-import os
 import threading
+import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +21,7 @@ from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.reconcile_config import ReconcileConfig
 from rpkilog.snapshot_file import SnapshotFile
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
+from rpkilog.sqldb import db_connect, log_startup_args
 from rpkilog.util import list_s3_snapshot_files_within_range, list_s3_summary_files_within_range
 
 if TYPE_CHECKING:
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 # per-worker-thread state; reconcile_from_s3_summary_thread_init() stores each worker's own DB
 # connection here because a mariadb connection is not safe for concurrent use
 _thread_local = threading.local()
+
+# seconds between periodic progress-summary log lines in long row-processing loops, so an
+# operator watching a run dominated by already-recorded rows still sees liveness
+PROGRESS_LOG_INTERVAL_SECONDS = 5
 
 
 class ReconcileOutcome(enum.Enum):
@@ -141,52 +146,6 @@ def cli_entry_point():
             reconcile_from_s3_summary(args=args, config=config)
         case 'sql-data-file-to-sql-archive-file':
             reconcile_sql_data_file_to_sql_archive_file(args=args)
-
-
-def log_startup_args(args: argparse.Namespace, secret_dests: set[str]):
-    """
-    Log the parsed CLI arguments at INFO except those in secret_dests
-    """
-    parts = []
-    for dest in sorted(vars(args)):
-        value = getattr(args, dest)
-        if dest in secret_dests and value is not None:
-            value_repr = "'<redacted>'"
-        else:
-            value_repr = repr(value)
-        parts.append(f'{dest}={value_repr}')
-    logger.info('invoked with args: ' + ' '.join(parts))
-
-
-def db_connect(args: argparse.Namespace) -> mariadb.SyncConnection:
-    """
-    Connect to MariaDB using args.db_* and make the connection available to the SQL-row classes.
-
-    The password comes from args.db_password, falling back to env RPKILOG_DB_PASSWORD.
-
-    TODO: prod will use RDS IAM auth tokens instead of a static password
-
-    TOTEST:
-    - test_db_connect_password_falls_back_to_env: args.db_password unset + RPKILOG_DB_PASSWORD
-      set connects using the env value (mariadb.connect monkeypatched)
-    - test_db_connect_cli_password_beats_env: an explicit --db-password wins over the env var
-    - test_db_connect_sets_default_db_connections: DataFileSource.default_db_connection and
-      DataFileType.default_db_connection are the returned connection afterward
-    """
-    password = args.db_password
-    if password is None:
-        password = os.environ.get('RPKILOG_DB_PASSWORD')
-    retval = mariadb.connect(
-        host=args.db_host,
-        port=args.db_port,
-        user=args.db_user,
-        password=password,
-        database=args.db_name,
-        autocommit=True,
-    )
-    DataFileSource.default_db_connection = retval
-    DataFileType.default_db_connection = retval
-    return retval
 
 
 def reconcile_from_s3_summary(
@@ -417,7 +376,8 @@ def reconcile_sql_data_file_to_sql_archive_file(args: argparse.Namespace):
             datetime_max=args.datetime_max,
         )
         logger.info(f'source {source.name}: {len(data_file_rows)} data_file rows in range')
-        for data_file_row in data_file_rows:
+        progress_printed_last_time = time.monotonic()
+        for row_number, data_file_row in enumerate(data_file_rows, start=1):
             outcome = synthesize_archive_file_row(
                 db=db,
                 source=source,
@@ -427,6 +387,14 @@ def reconcile_sql_data_file_to_sql_archive_file(args: argparse.Namespace):
                 dry_run=args.dry_run,
             )
             counts[outcome] += 1
+            if time.monotonic() - progress_printed_last_time >= PROGRESS_LOG_INTERVAL_SECONDS:
+                progress_printed_last_time = time.monotonic()
+                logger.info(
+                    f'progress: source={source.name} row={row_number}/{len(data_file_rows)} '
+                    f'already_recorded={counts[ReconcileOutcome.ALREADY_RECORDED]} '
+                    f'inserted={counts[ReconcileOutcome.INSERTED]} '
+                    f'no_summary_s3_url={counts[ReconcileOutcome.NO_SUMMARY_S3_URL]}'
+                )
     if args.dry_run:
         run_mode = 'DRY-RUN '
     else:
