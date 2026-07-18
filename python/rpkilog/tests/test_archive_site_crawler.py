@@ -8,7 +8,9 @@ covered in test_snapshot_file.py.
 """
 from datetime import datetime, timedelta, timezone
 
-from rpkilog.archive_site_crawler import ArchiveSiteCrawler, MyHTMLParser
+import pytest
+
+from rpkilog.archive_site_crawler import ArchiveSiteCrawler, MyHTMLParser, parse_interval
 
 JOSEPHINE_BASE = 'https://josephine.sobornost.net/rpkidata/'
 JOSEPHINE_TAR_URL = 'https://josephine.sobornost.net/rpkidata/2026/05/01/rpki-20260501T005438Z.tgz'
@@ -78,3 +80,22 @@ def test_derived_url_matches_crawler_discovery_byte_for_byte():
     discovered_url = parser.href_urls.pop()
     derived_url = ArchiveSiteCrawler.derive_tar_url(base_url=JOSEPHINE_BASE, datetimestamp=TAR_DT)
     assert derived_url == discovered_url
+
+
+# --- parse_interval ---
+
+def test_parse_interval_seconds():
+    assert parse_interval('30s') == timedelta(seconds=30)
+
+
+def test_parse_interval_minutes():
+    assert parse_interval('5m') == timedelta(minutes=5)
+
+
+def test_parse_interval_fractional_hours():
+    assert parse_interval('1.5h') == timedelta(minutes=90)
+
+
+def test_parse_interval_rejects_missing_unit():
+    with pytest.raises(ValueError):
+        parse_interval('30')
