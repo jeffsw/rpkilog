@@ -7,6 +7,10 @@ rpki-client summary JSON, and upload the TAR to the snapshot bucket and the summ
 bucket.  The file/storage/S3 concerns are delegated to SnapshotFile and SnapshotSummaryFile; this
 module owns acquisition (crawling, downloading, retry) and orchestration.
 
+--discover-only skips all downloading/uploading: the crawl's discovery phase upserts archive_file
+rows instead (dedup on the (source_id, source_url) PK), inventorying what the archive publishes so
+the backlog downloader can fetch missed snapshots later.  Requires --source-name and --db-*.
+
 --filename-datetime-min / --filename-datetime-max restrict processing to snapshots whose filename
 datetime falls within the given bounds.  They may be used separately or together.
 """
@@ -21,17 +25,22 @@ import os
 import requests
 from pathlib import Path
 import tempfile
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import tenacity
 
 from rpkilog.cleanup_policy import CleanupPolicy
 from rpkilog.data_file_source import DataFileSource
+from rpkilog.data_file_type import DataFileType
 from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.snapshot_file import SnapshotFile
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
 from rpkilog.sqldb import db_connect, log_startup_args
 from rpkilog.util import list_s3_snapshot_files_within_range, list_s3_summary_files_within_range
+
+if TYPE_CHECKING:
+    import mariadb
 
 
 logger = logging.getLogger(__name__)
@@ -281,6 +290,12 @@ class ArchiveSiteCrawler():
         ap.add_argument('--debug', action='store_true', help='Break to debugger after parsing arguments')
         ap.add_argument('--debug-save-urls', type=Path,
                         help='Save the list of available tar file URLs to given file')
+        ap.add_argument('--discover-only', action='store_true',
+                        help='Only inventory the archive site into SQL archive_file rows; '
+                             'download nothing (requires --source-name and --db-* arguments)')
+        ap.add_argument('--dry-run', action='store_true',
+                        help='Crawl and report what would be done -- archive_file inserts '
+                             '(--discover-only) or downloads/uploads -- without doing it')
         ap.add_argument('--fetch-snapshot-timeout', default=300, type=float,
                         help='Timeout, in seconds, for fetching snapshot files (default: 300)')
         ap.add_argument('--maximum-crawl-age', type=float, default=14,
@@ -297,10 +312,10 @@ class ArchiveSiteCrawler():
         )
         secret_arg_dests.add(db_password_action.dest)
         ap.add_argument('--db-name', type=str, help='MariaDB database name')
-        ap.add_argument('--s3-snapshot-bucket-name', required=True,
-                        help='S3 bucket for uploading RPKI TAR files')
-        ap.add_argument('--s3-snapshot-summary-bucket-name', required=True,
-                        help='S3 bucket containing JSON summary files')
+        ap.add_argument('--s3-snapshot-bucket-name',
+                        help='S3 bucket for uploading RPKI TAR files (required unless --discover-only)')
+        ap.add_argument('--s3-snapshot-summary-bucket-name',
+                        help='S3 bucket containing JSON summary files (required unless --discover-only)')
         ap.add_argument('--site-root',
                         help='Root of web archive site (alternative: --source-name)')
         ap.add_argument('--source-name',
@@ -319,6 +334,12 @@ class ArchiveSiteCrawler():
         args = ap.parse_args()
         if (args.site_root is None) == (args.source_name is None):
             ap.error('exactly one of --site-root or --source-name is required')
+        if args.discover_only and args.source_name is None:
+            ap.error('--discover-only requires --source-name (archive_file rows need a source_id)')
+        if not args.discover_only and (
+                args.s3_snapshot_bucket_name is None or args.s3_snapshot_summary_bucket_name is None):
+            ap.error('--s3-snapshot-bucket-name and --s3-snapshot-summary-bucket-name are '
+                     'required unless --discover-only')
         if args.debug:
             breakpoint()
         log_startup_args(args=args, secret_dests=secret_arg_dests)
@@ -334,6 +355,8 @@ class ArchiveSiteCrawler():
         # Resolve the site root: prefer the DB source row's base_url over a hand-typed URL, so
         # discovered source_url values match derive_tar_url() inference byte-for-byte.
         site_root = args.site_root
+        db = None
+        source = None
         if args.source_name is not None:
             db = db_connect(args)
             source = DataFileSource.get_by_name(args.source_name, db=db)
@@ -341,20 +364,33 @@ class ArchiveSiteCrawler():
                 ap.error(f'source {source.name!r} has no base_url; it is not a crawled archive')
             site_root = source.base_url
 
-        wrapped_retval = cls.wrapped_entry_point(
-            s3_snapshot_bucket_name=args.s3_snapshot_bucket_name,
-            s3_snapshot_summary_bucket_name=args.s3_snapshot_summary_bucket_name,
-            site_root=site_root,
-            debug_save_urls=args.debug_save_urls,
-            fetch_snapshot_timeout=args.fetch_snapshot_timeout,
-            start_date=args.start_date,
-            filename_datetime_min=args.filename_datetime_min,
-            filename_datetime_max=args.filename_datetime_max,
-            minimum_file_age=minimum_file_age,
-            maximum_crawl_age=args.maximum_crawl_age,
-            job_deadline=job_deadline,
-            job_max_downloads=args.job_max_downloads,
-        )
+        if args.discover_only:
+            wrapped_retval = cls.discover_only_entry_point(
+                db=db,
+                source=source,
+                site_root=site_root,
+                start_date=args.start_date,
+                maximum_crawl_age=args.maximum_crawl_age,
+                filename_datetime_min=args.filename_datetime_min,
+                filename_datetime_max=args.filename_datetime_max,
+                dry_run=args.dry_run,
+            )
+        else:
+            wrapped_retval = cls.wrapped_entry_point(
+                s3_snapshot_bucket_name=args.s3_snapshot_bucket_name,
+                s3_snapshot_summary_bucket_name=args.s3_snapshot_summary_bucket_name,
+                site_root=site_root,
+                debug_save_urls=args.debug_save_urls,
+                fetch_snapshot_timeout=args.fetch_snapshot_timeout,
+                start_date=args.start_date,
+                filename_datetime_min=args.filename_datetime_min,
+                filename_datetime_max=args.filename_datetime_max,
+                minimum_file_age=minimum_file_age,
+                maximum_crawl_age=args.maximum_crawl_age,
+                job_deadline=job_deadline,
+                job_max_downloads=args.job_max_downloads,
+                dry_run=args.dry_run,
+            )
         print(json.dumps(wrapped_retval, indent=4))
         times = os.times()
         realtime_final = datetime.now(UTC)
@@ -382,6 +418,7 @@ class ArchiveSiteCrawler():
         maximum_crawl_age: float | None = None,
         job_deadline: datetime | None = None,
         job_max_downloads: int | None = None,
+        dry_run: bool = False,
     ):
         '''
         Invoked by other entry points, e.g. cli_entry_point.  Orchestrates the three phases:
@@ -461,6 +498,7 @@ class ArchiveSiteCrawler():
             minimum_file_age=minimum_file_age,
             job_deadline=job_deadline,
             job_max_downloads=job_max_downloads,
+            dry_run=dry_run,
         )
         return uploaded
 
@@ -521,12 +559,17 @@ class ArchiveSiteCrawler():
         minimum_file_age: timedelta = None,
         job_deadline: datetime = None,
         job_max_downloads: int = None,
+        dry_run: bool = False,
     ) -> list:
         '''
         Acquisition phase: in ascending URL (= chronological) order, run process_tar_url()
         (download/validate/extract/upload) for each TAR not in already_have_by_datetime and not
         excluded by the optional filename bounds or minimum_file_age; stop at job_deadline or
         job_max_downloads.  Returns the uploaded snapshot S3 keys.
+
+        With dry_run, every filter (and the job_max_downloads limit) applies as usual, but
+        instead of downloading, each would-be acquisition is logged and its would-be snapshot
+        key is returned -- so the output mirrors what a real run would do.
         '''
         uploaded = list()
         for available_tar_url in sorted(available_tar_urls):
@@ -559,9 +602,107 @@ class ArchiveSiteCrawler():
                 logger.warning(f'JOB_MAX_DOWNLOADS reached.')
                 break
 
-            snapshot_key = cls.process_tar_url(url=available_tar_url, datetimestamp=available_tar_datetime)
-            if snapshot_key is None:
-                continue
+            if dry_run:
+                snapshot_key = available_tar_datetime.strftime(
+                    SnapshotFile.default_filename_strftime_expression
+                )
+                logger.info(f'DRY-RUN would download {available_tar_url} and upload {snapshot_key}')
+            else:
+                snapshot_key = cls.process_tar_url(url=available_tar_url, datetimestamp=available_tar_datetime)
+                if snapshot_key is None:
+                    continue
             uploaded.append(snapshot_key)
 
         return uploaded
+
+    @classmethod
+    def discover_only_entry_point(
+        cls,
+        db: 'mariadb.SyncConnection',
+        source: DataFileSource,
+        site_root: str,
+        start_date: datetime | None = None,
+        maximum_crawl_age: float | None = None,
+        filename_datetime_min: datetime | None = None,
+        filename_datetime_max: datetime | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        '''
+        Discover-only mode: crawl the archive site's index pages within the datetimestamp range
+        and upsert archive_file rows, downloading nothing.  Dedup is the (source_id, source_url)
+        PK via SnapshotFile.db_row_exists(); inserts via db_insert_discovered(), stamping
+        discovered_datetime, filename_derived_datetime, and file_type_id.  The resulting backlog
+        (observation_datetime IS NULL) is what the rate-limited backlog downloader will fetch.
+
+        With dry_run, the crawl and the db_row_exists() dedup check run normally (so tallies are
+        accurate), but the INSERT is skipped; a row is counted discovered either way.
+
+        The crawled day-page range runs from filename_datetime_min (else start_date, else
+        now - maximum_crawl_age [default 14 days]) through filename_datetime_max (else now).
+        Returns outcome tallies for the CLI's JSON output.
+        '''
+        if maximum_crawl_age:
+            maximum_crawl_age = timedelta(days=float(maximum_crawl_age))
+        else:
+            maximum_crawl_age = timedelta(days=14)
+        if filename_datetime_min is not None:
+            filename_datetime_min = _utc_aware(filename_datetime_min)
+        if filename_datetime_max is not None:
+            filename_datetime_max = _utc_aware(filename_datetime_max)
+        if filename_datetime_min is not None:
+            crawl_start = filename_datetime_min
+        elif start_date is not None:
+            crawl_start = _utc_aware(start_date)
+        else:
+            crawl_start = datetime.now(UTC) - maximum_crawl_age
+
+        file_type = DataFileType.get_by_name(SnapshotFile.sql_file_type_name, db=db)
+        available_tar_urls = cls.fetch_tar_urls_from_archive_site(
+            site_root=site_root,
+            start_date=crawl_start,
+            max_date=filename_datetime_max,
+        )
+        logger.info(f'FETCHED {len(available_tar_urls)} URLs from {site_root}')
+        counts = {
+            'discovered': 0,
+            'already_recorded': 0,
+            'out_of_range': 0,
+        }
+        for available_tar_url in sorted(available_tar_urls):
+            try:
+                datetimestamp = SnapshotFile.infer_datetimestamp_from_path(Path(available_tar_url))
+            except ValueError:
+                logger.warning(f'UNMATCHED available_tar_url {available_tar_url}')
+                continue
+            if filename_datetime_min is not None and datetimestamp < filename_datetime_min:
+                counts['out_of_range'] += 1
+                continue
+            if filename_datetime_max is not None and datetimestamp > filename_datetime_max:
+                counts['out_of_range'] += 1
+                continue
+            snapshot = SnapshotFile(
+                datetimestamp=datetimestamp,
+                local_storage_type=LocalStorageType.UNCACHED,
+                source_url=available_tar_url,
+            )
+            snapshot.source = source
+            if snapshot.db_row_exists(db=db):
+                logger.debug(f'already recorded: {available_tar_url}')
+                counts['already_recorded'] += 1
+                continue
+            if dry_run:
+                logger.info(f'DRY-RUN would insert archive_file row: {available_tar_url}')
+            else:
+                snapshot.db_insert_discovered(db=db, file_type=file_type)
+                logger.info(f'DISCOVERED inserted archive_file row: {available_tar_url}')
+            counts['discovered'] += 1
+        if dry_run:
+            run_mode = 'DRY-RUN '
+        else:
+            run_mode = ''
+        logger.info(
+            f"{run_mode}discover-only complete: discovered={counts['discovered']} "
+            f"already_recorded={counts['already_recorded']} out_of_range={counts['out_of_range']}"
+        )
+        retval = counts
+        return retval
