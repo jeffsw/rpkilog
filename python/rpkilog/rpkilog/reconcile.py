@@ -14,11 +14,14 @@ from typing import TYPE_CHECKING
 import boto3
 import mariadb
 
+from rpkilog.archive_site_crawler import ArchiveSiteCrawler
 from rpkilog.data_file_source import DataFileSource
 from rpkilog.data_file_type import DataFileType
+from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.reconcile_config import ReconcileConfig
+from rpkilog.snapshot_file import SnapshotFile
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
-from rpkilog.util import list_s3_summary_files_within_range
+from rpkilog.util import list_s3_snapshot_files_within_range, list_s3_summary_files_within_range
 
 if TYPE_CHECKING:
     from types_boto3_s3.service_resource import S3ServiceResource
@@ -40,6 +43,9 @@ class ReconcileOutcome(enum.Enum):
     """A data_file row was inserted — or would have been, under --dry-run."""
     UNATTRIBUTABLE = 'unattributable'
     """No buildmachine_to_source mapping matched, so the file cannot be keyed in data_file."""
+    NO_SUMMARY_S3_URL = 'no_summary_s3_url'
+    """data_file row has a NULL summary_s3_url, so the archive filename timestamp cannot be
+    inferred; sql-data-file-to-sql-archive-file skips the row."""
 
 
 def load_reconcile_config() -> ReconcileConfig:
@@ -97,6 +103,11 @@ def cli_entry_point():
              '(default: a temp dir discarded at exit)',
     )
     ap1.add_argument('--s3-summary-prefix', help='s3://bucket-name/prefix for summary files')
+    ap1.add_argument(
+        '--s3-snapshot-prefix',
+        help='s3://bucket-name/prefix for archived snapshot TARs; when given, '
+             'sql-data-file-to-sql-archive-file records our_* columns for TARs still stored there',
+    )
     # threads
     ap1.add_argument('--threads', type=int, default=1, help='number of worker threads (default: 1)')
 
@@ -105,6 +116,11 @@ def cli_entry_point():
     subparsers.add_parser(
         'from-s3-summary',
         description='Read from given --s3-summary-prefix and update SQL database'
+    )
+
+    subparsers.add_parser(
+        'sql-data-file-to-sql-archive-file',
+        description='Synthesize archive_file rows from data_file rows of crawled sources (sql -> sql)',
     )
 
     args = ap1.parse_args()
@@ -123,6 +139,8 @@ def cli_entry_point():
             if args.s3_summary_prefix is None:
                 ap1.error('--s3-summary-prefix is required for the from-s3-summary subcommand')
             reconcile_from_s3_summary(args=args, config=config)
+        case 'sql-data-file-to-sql-archive-file':
+            reconcile_sql_data_file_to_sql_archive_file(args=args)
 
 
 def log_startup_args(args: argparse.Namespace, secret_dests: set[str]):
@@ -353,6 +371,208 @@ def reconcile_summary_file(
             f'inserted data_file row: source={source_name} '
             f'observation_datetime={observation_datetime} file={summary_file.s3_url}'
         )
+    retval = ReconcileOutcome.INSERTED
+    return retval
+
+
+def reconcile_sql_data_file_to_sql_archive_file(args: argparse.Namespace):
+    """
+    Synthesize archive_file rows from data_file rows of crawled sources (sql -> sql):
+    rpki_snapshots we previously downloaded from an archive site and processed — possibly
+    deleting our TAR copy since — get their archive_file discovery/ingest history inferred, so a
+    later crawler discovery pass over the same site finds only genuinely new files.
+
+    The archive filename timestamp is inferred from summary_s3_url (the crawler names the
+    extracted summary after the TAR filename), NOT from observation_datetime: the two differ by
+    a few seconds (metadata buildtime vs filename), and the derived source_url must match future
+    crawler-discovered URLs byte-for-byte.  With --s3-snapshot-prefix, TARs still stored in our
+    snapshot bucket are recorded in the our_* columns from the listing (sha256 stays NULL).
+    """
+    db = db_connect(args)
+    file_type = DataFileType.get_by_name(SnapshotFile.sql_file_type_name, db=db)
+    snapshot_objects_by_datetime = {}
+    if args.s3_snapshot_prefix is not None:
+        s3 = boto3.resource('s3')
+        snapshot_objects_by_datetime = list_snapshot_objects_from_s3(
+            s3=s3,
+            s3_snapshot_prefix=args.s3_snapshot_prefix,
+            datetime_min=args.datetime_min,
+            datetime_max=args.datetime_max,
+        )
+        logger.info(
+            f'listed {len(snapshot_objects_by_datetime)} snapshot TARs under {args.s3_snapshot_prefix}'
+        )
+    counts = {}
+    for outcome in ReconcileOutcome:
+        counts[outcome] = 0
+    sources = DataFileSource.get_all(db=db)
+    for source in sources:
+        if source.base_url is None:
+            # one of our own uploaders, not a crawled archive; no archive-site history to infer
+            continue
+        data_file_rows = list_data_file_rows_for_source(
+            db=db,
+            source=source,
+            datetime_min=args.datetime_min,
+            datetime_max=args.datetime_max,
+        )
+        logger.info(f'source {source.name}: {len(data_file_rows)} data_file rows in range')
+        for data_file_row in data_file_rows:
+            outcome = synthesize_archive_file_row(
+                db=db,
+                source=source,
+                data_file_row=data_file_row,
+                file_type=file_type,
+                snapshot_objects_by_datetime=snapshot_objects_by_datetime,
+                dry_run=args.dry_run,
+            )
+            counts[outcome] += 1
+    if args.dry_run:
+        run_mode = 'DRY-RUN '
+    else:
+        run_mode = ''
+    logger.info(
+        f'{run_mode}sql-data-file-to-sql-archive-file complete: '
+        f'already_recorded={counts[ReconcileOutcome.ALREADY_RECORDED]} '
+        f'inserted={counts[ReconcileOutcome.INSERTED]} '
+        f'no_summary_s3_url={counts[ReconcileOutcome.NO_SUMMARY_S3_URL]}'
+    )
+
+
+def list_snapshot_objects_from_s3(
+        s3: 'S3ServiceResource',
+        s3_snapshot_prefix: str,
+        datetime_min: datetime.datetime,
+        datetime_max: datetime.datetime,
+) -> dict[datetime.datetime, object]:
+    """
+    List archived snapshot TARs stored under the given s3://bucket-name/prefix within the
+    datetime range and return {filename-derived datetimestamp: ObjectSummary}.  Keys not
+    matching the rpki-<ts>.tgz filename pattern are skipped with a warning.
+    """
+    parsed_prefix = urllib.parse.urlparse(s3_snapshot_prefix)
+    if parsed_prefix.scheme != 's3' or not parsed_prefix.netloc:
+        raise ValueError(
+            f's3_snapshot_prefix must be an s3://bucket-name/prefix URL: {s3_snapshot_prefix}'
+        )
+    bucket = s3.Bucket(parsed_prefix.netloc)
+    key_prefix = parsed_prefix.path.lstrip('/')
+    object_summaries = list_s3_snapshot_files_within_range(
+        bucket=bucket,
+        start_datetime=datetime_min,
+        end_datetime=datetime_max,
+        prefix=key_prefix,
+    )
+    retdict = {}
+    for obj in object_summaries:
+        try:
+            obj_datetime = SnapshotFile.infer_datetimestamp_from_path(Path(obj.key))
+        except ValueError:
+            logger.warning(f'UNMATCHED key in snapshot bucket {bucket.name}: {obj.key}')
+            continue
+        retdict[obj_datetime] = obj
+    return retdict
+
+
+def list_data_file_rows_for_source(
+        db: mariadb.SyncConnection,
+        source: DataFileSource,
+        datetime_min: datetime.datetime,
+        datetime_max: datetime.datetime,
+):
+    """
+    Return (observation_datetime, summary_s3_url, summary_stored_datetime) named tuples for one
+    source's data_file rows within the datetime range, ordered by observation_datetime.  Naive
+    bounds are assumed UTC; the tz-less DATETIME columns store UTC.
+    """
+    if datetime_min.tzinfo is not None:
+        datetime_min = datetime_min.astimezone(datetime.timezone.utc)
+    if datetime_max.tzinfo is not None:
+        datetime_max = datetime_max.astimezone(datetime.timezone.utc)
+    cursor = db.cursor(named_tuple=True)
+    try:
+        cursor.execute(
+            'SELECT observation_datetime, summary_s3_url, summary_stored_datetime FROM data_file'
+            ' WHERE source_id = ? AND observation_datetime >= ? AND observation_datetime <= ?'
+            ' ORDER BY observation_datetime',
+            (source.id, datetime_min.replace(tzinfo=None), datetime_max.replace(tzinfo=None)),
+        )
+        rows = cursor.fetchall()
+    finally:
+        cursor.close()
+    return rows
+
+
+def synthesize_archive_file_row(
+        db: mariadb.SyncConnection,
+        source: DataFileSource,
+        data_file_row,
+        file_type: DataFileType,
+        snapshot_objects_by_datetime: dict,
+        dry_run: bool = False,
+) -> ReconcileOutcome:
+    """
+    Ensure archive_file has a row for one data_file row of a crawled source; INSERT an inferred
+    one if missing.
+
+    The inferred row is born ingested: observation_datetime copied from data_file (non-NULL =
+    the ingested marker), discovered_datetime backdated to summary_stored_datetime (else
+    observation_datetime), and filename_derived_datetime + the derived source_url from the
+    summary filename timestamp.  With dry_run, the INSERT is skipped but the outcome is INSERTED
+    either way.
+    """
+    if data_file_row.summary_s3_url is None:
+        logger.warning(
+            f'cannot infer archive filename timestamp without summary_s3_url: '
+            f'source={source.name} observation_datetime={data_file_row.observation_datetime}'
+        )
+        retval = ReconcileOutcome.NO_SUMMARY_S3_URL
+        return retval
+    summary_path = Path(urllib.parse.urlparse(data_file_row.summary_s3_url).path)
+    filename_datetimestamp = SnapshotSummaryFile.infer_datetimestamp_from_path(summary_path)
+    source_url = ArchiveSiteCrawler.derive_tar_url(
+        base_url=source.base_url,
+        datetimestamp=filename_datetimestamp,
+    )
+    snapshot = SnapshotFile(
+        datetimestamp=filename_datetimestamp,
+        local_storage_type=LocalStorageType.UNCACHED,
+        source_url=source_url,
+    )
+    snapshot.source = source
+    if snapshot.db_row_exists(db=db):
+        logger.debug(f'already recorded: {source_url}')
+        retval = ReconcileOutcome.ALREADY_RECORDED
+        return retval
+    observation_datetime = data_file_row.observation_datetime
+    if data_file_row.summary_stored_datetime is not None:
+        discovered_datetime = data_file_row.summary_stored_datetime
+    else:
+        discovered_datetime = observation_datetime
+    our_s3_url = None
+    our_size_bytes = None
+    our_stored_datetime = None
+    snapshot_object = snapshot_objects_by_datetime.get(filename_datetimestamp)
+    if snapshot_object is not None:
+        our_s3_url = f's3://{snapshot_object.bucket_name}/{snapshot_object.key}'
+        our_size_bytes = snapshot_object.size
+        our_stored_datetime = snapshot_object.last_modified
+    if dry_run:
+        logger.info(
+            f'DRY-RUN would insert archive_file row: source={source.name} '
+            f'source_url={source_url} our_s3_url={our_s3_url}'
+        )
+    else:
+        snapshot.db_insert_ingested(
+            db=db,
+            file_type=file_type,
+            discovered_datetime=discovered_datetime,
+            observation_datetime=observation_datetime,
+            our_s3_url=our_s3_url,
+            our_size_bytes=our_size_bytes,
+            our_stored_datetime=our_stored_datetime,
+        )
+        logger.info(f'inserted archive_file row: source={source.name} source_url={source_url}')
     retval = ReconcileOutcome.INSERTED
     return retval
 

@@ -90,4 +90,7 @@ addopts = ["--import-mode=importlib"]
 markers = [
     "slow: some end-to-end tests are slow and may be skipped in draft PR commits and pre-commit hooks"
 ]
+# tests on sys.path so test modules can import shared helpers (fake_db, test_util's fake bucket),
+# which --import-mode=importlib does not provide by itself
+pythonpath = ["tests"]
 testpaths = ["tests"]

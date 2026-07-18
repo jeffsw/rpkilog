@@ -8,6 +8,7 @@ TOTEST:
 - test_get_by_name_unknown_raises_keyerror
 - test_get_by_id_returns_cached_object_without_query
 - test_get_by_id_unknown_raises_keyerror
+- test_get_all_refreshes_and_sorts_by_id
 - test_refresh_caches_inserts_new_rows
 - test_refresh_caches_preserves_identity_of_unchanged_rows
 - test_refresh_caches_updates_changed_row_in_place
@@ -86,6 +87,18 @@ class DataFileSource:
             raise KeyError(f'no row in the source table has id={id!r}')
         retval = cls._cache_by_id[id]
         return retval
+
+    @classmethod
+    def get_all(cls, db: 'mariadb.SyncConnection' = None) -> list['DataFileSource']:
+        """
+        Return every row of the source table as DataFileSource objects, sorted by id.  Always
+        refreshes the caches first, so rows added since the last query are included.
+        """
+        cls._refresh_caches(db=db)
+        retlist = []
+        for id in sorted(cls._cache_by_id):
+            retlist.append(cls._cache_by_id[id])
+        return retlist
 
     @classmethod
     def _refresh_caches(cls, db: 'mariadb.SyncConnection' = None):

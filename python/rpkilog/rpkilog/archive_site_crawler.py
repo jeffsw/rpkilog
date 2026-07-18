@@ -149,6 +149,32 @@ class ArchiveSiteCrawler():
         return retstr
 
     @classmethod
+    def derive_tar_url(cls, base_url: str, datetimestamp: datetime) -> str:
+        '''
+        Map a source's base_url + a FILENAME-derived datetimestamp to the canonical archive TAR
+        URL, e.g. https://josephine.sobornost.net/rpkidata/ + 2026-05-01T00:54:38Z ->
+        https://josephine.sobornost.net/rpkidata/2026/05/01/rpki-20260501T005438Z.tgz
+
+        This is the inverse of the crawl: the day-page path (%Y/%m/%d/) matches
+        fetch_tar_urls_from_archive_site() and the filename matches
+        SnapshotFile.default_filename_strftime_expression, so a derived URL is byte-for-byte
+        identical to the same file's crawler-discovered URL.  That identity matters because
+        archive_file dedups on source_url: any mismatch would silently split rows.  Pass the
+        filename timestamp (e.g. from a summary S3 key), NOT the metadata buildtime, which
+        differs by a few seconds.  A naive datetimestamp is assumed UTC.
+        '''
+        if datetimestamp.tzinfo is not None:
+            datetimestamp = datetimestamp.astimezone(UTC)
+        if not base_url.endswith('/'):
+            base_url = base_url + '/'
+        retstr = (
+            base_url
+            + datetimestamp.strftime('%Y/%m/%d/')
+            + datetimestamp.strftime(SnapshotFile.default_filename_strftime_expression)
+        )
+        return retstr
+
+    @classmethod
     def fetch_tar_urls_from_archive_site(
         cls,
         site_root: str,

@@ -29,12 +29,12 @@ Design notes:
     raise; a snapshot has no uncompressed-JSON or bz2 form.  repr_attrs is redefined accordingly so
     __repr__ (used in error messages) does not trip those raises.
 
-TODO(sql-files-table): When the SQL files table lands, a SnapshotFile should map to a row recording
-  at least: datetimestamp, source_url (archive origin), s3_url, byte size, and a content hash; plus a
-  link to the SnapshotSummaryFile row extracted from it.  Construction from a SQL row should pass an
-  explicit s3_url so the instance never consults the process-global default base URL (DataFileSuper
-  already supports known-url instances).  Decide whether to_sql_row()/from_sql_row() belong here or
-  on DataFileSuper, shared by all file types.
+SQL: a SnapshotFile maps to one `archive_file` row, keyed by the (source_id, source_url) PK.  The
+  db_* methods below cover the row's lifecycle — insert at discovery, update when our S3 copy is
+  stored, update at ingest (observation_datetime, whose non-NULL state is the ingested marker) —
+  and from_db_row() / db_select_within_range() construct UNCACHED instances from rows with explicit
+  s3_url + source_url, so the process-global default S3 base URL is never consulted.  This mirrors
+  SnapshotSummaryFile's methods against `data_file`: row CRUD lives on each file class.
 """
 import logging
 import os
@@ -43,13 +43,20 @@ import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+from typing import TYPE_CHECKING
+import urllib.parse
 
 import boto3
 import dateutil.parser
 
+from rpkilog.data_file_source import DataFileSource
 from rpkilog.data_file_super import DataFileSuper
+from rpkilog.data_file_type import DataFileType
 from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
+
+if TYPE_CHECKING:
+    import mariadb
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +84,12 @@ class SnapshotFile(DataFileSuper):
     # Regex matching the rpki-client summary JSON member inside a snapshot TAR, e.g.
     # 'rpki-20211121T000709Z/output/rpki-client.json'.  Used by extract_summary_file().
     summary_member_re = r'^rpki-(\d{8}T\d{6}Z)/output/rpki-client\.json$'
+    sql_file_type_name = 'rpkiclient_snapshot_full_v1'
+    source: DataFileSource = None
+    # archive_file DATETIME column mirrors, hydrated (tz-aware UTC) by from_db_row(); None until
+    # loaded from, or recorded to, the database
+    discovered_datetime: datetime = None
+    observation_datetime: datetime = None
 
     def __init__(self, *args, source_url: str | None = None, local_filepath_tgz: Path | None = None,
                  **kwargs):
@@ -257,6 +270,30 @@ class SnapshotFile(DataFileSuper):
 
     # --- TAR-content operations (read the already-acquired local .tgz) ---------------------------
 
+    def _iter_uncompressed_chunks(self, chunk_size: int = 256 * 1024):
+        """
+        Yield the snapshot TAR content in chunks of bytes, downloading from S3 first when UNCACHED.
+
+        Override of DataFileSuper._iter_uncompressed_chunks(), whose UNCACHED path opens a bz2
+        handle.  A snapshot is stored byte-for-byte as its published '.tgz', so those bytes ARE the
+        canonical file content: the inherited sha256_digest() / size_bytes_uncompressed() (feeding
+        archive_file.our_sha256 / our_size_bytes) hash and measure the .tgz as published — NOT a
+        gunzipped TAR stream — keeping them comparable to upstream checksums.
+        """
+        match self.local_storage_type:
+            case LocalStorageType.SNAPSHOT_TGZ:
+                pass
+            case LocalStorageType.UNCACHED | LocalStorageType.UNSPECIFIED:
+                self.s3_download()
+            case _:
+                raise ValueError(f'unexpected value of local_storage_type: {self}')
+        with open(self.local_filepath_tgz, 'rb') as tgz_fh:
+            while True:
+                chunk = tgz_fh.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
     def validate_tar(self) -> bool:
         """
         Confirm the locally-cached TAR is complete and readable.
@@ -327,3 +364,290 @@ class SnapshotFile(DataFileSuper):
             summary_fh.write(summary_bytes)
         summary.local_storage_type = LocalStorageType.UNCOMPRESSED
         return summary
+
+    # --- archive_file SQL row lifecycle (see the module docstring) -------------------------------
+
+    @property
+    def source_id(self) -> int | None:
+        """
+        The archive_file.source_id FK value, read from self.source; None while the source is
+        unknown.
+        """
+        if self.source is not None:
+            retval = self.source.id
+        else:
+            retval = None
+        return retval
+
+    @staticmethod
+    def _utc_naive(dt: datetime) -> datetime:
+        """
+        Convert a datetime to naive UTC for the tz-less DATETIME columns (which store UTC by
+        convention).  A naive input is assumed to already be UTC.
+        """
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
+        retval = dt.replace(tzinfo=None)
+        return retval
+
+    def _ensure_db_identity(self):
+        """Raise ValueError unless the (source_id, source_url) archive_file PK is known."""
+        if self.source_id is None or self.source_url is None:
+            raise ValueError(f'archive_file operations need source and source_url: {self}')
+
+    def db_row_exists(self, db: 'mariadb.SyncConnection') -> bool:
+        """
+        Return True if the archive_file table already has a row for this snapshot, checked by the
+        (source_id, source_url) primary key.
+        """
+        self._ensure_db_identity()
+        cursor = db.cursor()
+        try:
+            cursor.execute(
+                'SELECT 1 FROM archive_file WHERE source_id = ? AND source_url = ?',
+                (self.source_id, self.source_url),
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+        retval = row is not None
+        return retval
+
+    def db_insert_discovered(
+            self,
+            db: 'mariadb.SyncConnection',
+            file_type: DataFileType | None = None,
+            discovered_datetime: datetime | None = None,
+    ):
+        """
+        INSERT the archive_file row recording this snapshot's discovery on the archive site.
+
+        Only discovery-time columns are populated: the (source_id, source_url) PK,
+        filename_derived_datetime (= self.datetimestamp, the timestamp INFERRED from the
+        filename), discovered_datetime (default: now), and file_type_id when file_type is given.
+        The our_* columns and observation_datetime stay NULL until db_update_our_copy() /
+        db_update_ingested().
+        """
+        self._ensure_db_identity()
+        if discovered_datetime is None:
+            discovered_datetime = datetime.now(timezone.utc)
+        self.discovered_datetime = discovered_datetime
+        if file_type is not None:
+            file_type_id = file_type.id
+        else:
+            file_type_id = None
+        cursor = db.cursor()
+        try:
+            cursor.execute(
+                'INSERT INTO archive_file (source_id, source_url, filename_derived_datetime,'
+                ' discovered_datetime, file_type_id) VALUES (?, ?, ?, ?, ?)',
+                (
+                    self.source_id,
+                    self.source_url,
+                    self._utc_naive(self.datetimestamp),
+                    self._utc_naive(discovered_datetime),
+                    file_type_id,
+                ),
+            )
+        finally:
+            cursor.close()
+
+    def db_insert_ingested(
+            self,
+            db: 'mariadb.SyncConnection',
+            file_type: DataFileType | None,
+            discovered_datetime: datetime,
+            observation_datetime: datetime,
+            our_s3_url: str | None = None,
+            our_size_bytes: int | None = None,
+            our_stored_datetime: datetime | None = None,
+    ):
+        """
+        INSERT a complete archive_file row for a snapshot whose discovery/ingest history is being
+        INFERRED after the fact (reconcile's sql-data-file-to-sql-archive-file subcommand),
+        rather than observed live by the crawler.
+
+        Unlike db_insert_discovered(), observation_datetime is already known — the row is born
+        ingested — and discovered_datetime is the caller's backdated estimate.  The our_* values,
+        when given, come from an S3 bucket listing rather than reading the file; our_sha256 is
+        left NULL, since populating it would require downloading every TAR.
+        """
+        self._ensure_db_identity()
+        self.discovered_datetime = discovered_datetime
+        self.observation_datetime = observation_datetime
+        if file_type is not None:
+            file_type_id = file_type.id
+        else:
+            file_type_id = None
+        if our_stored_datetime is not None:
+            our_stored_naive = self._utc_naive(our_stored_datetime)
+        else:
+            our_stored_naive = None
+        cursor = db.cursor()
+        try:
+            cursor.execute(
+                'INSERT INTO archive_file (source_id, source_url, filename_derived_datetime,'
+                ' discovered_datetime, file_type_id, observation_datetime, our_s3_url,'
+                ' our_size_bytes, our_stored_datetime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (
+                    self.source_id,
+                    self.source_url,
+                    self._utc_naive(self.datetimestamp),
+                    self._utc_naive(discovered_datetime),
+                    file_type_id,
+                    self._utc_naive(observation_datetime),
+                    our_s3_url,
+                    our_size_bytes,
+                    our_stored_naive,
+                ),
+            )
+        finally:
+            cursor.close()
+
+    def db_update_our_copy(
+            self,
+            db: 'mariadb.SyncConnection',
+            stored_datetime: datetime | None = None,
+    ):
+        """
+        UPDATE this snapshot's archive_file row with the our_* columns describing our stored S3
+        copy: our_s3_url, our_size_bytes, our_sha256, and our_stored_datetime (default: now; pass
+        the S3 object's LastModified when reconciling from a bucket listing).
+
+        Call after s3_upload() so s3_url is known; size and sha256 stream the cached .tgz,
+        re-downloading from S3 when the local cache was already cleaned up.
+        """
+        self._ensure_db_identity()
+        if self.s3_url is None:
+            raise ValueError(f'cannot record our stored copy without s3_url: {self}')
+        if stored_datetime is None:
+            stored_datetime = datetime.now(timezone.utc)
+        cursor = db.cursor()
+        try:
+            cursor.execute(
+                'UPDATE archive_file SET our_s3_url = ?, our_size_bytes = ?, our_sha256 = ?,'
+                ' our_stored_datetime = ? WHERE source_id = ? AND source_url = ?',
+                (
+                    self.s3_url,
+                    self.size_bytes_uncompressed(),
+                    self.sha256_digest(),
+                    self._utc_naive(stored_datetime),
+                    self.source_id,
+                    self.source_url,
+                ),
+            )
+        finally:
+            cursor.close()
+
+    def db_update_ingested(self, db: 'mariadb.SyncConnection', observation_datetime: datetime):
+        """
+        UPDATE this snapshot's archive_file row with observation_datetime, whose non-NULL state
+        doubles as the ingested marker (there is deliberately no ingested_datetime column).
+
+        observation_datetime is the authoritative metadata.buildtime read from the extracted
+        summary (SnapshotSummaryFile.observation_datetime), NOT this snapshot's filename-derived
+        datetimestamp — the caller has the summary in hand at ingest time and passes it in.
+        """
+        self._ensure_db_identity()
+        self.observation_datetime = observation_datetime
+        cursor = db.cursor()
+        try:
+            cursor.execute(
+                'UPDATE archive_file SET observation_datetime = ?'
+                ' WHERE source_id = ? AND source_url = ?',
+                (self._utc_naive(observation_datetime), self.source_id, self.source_url),
+            )
+        finally:
+            cursor.close()
+
+    @classmethod
+    def from_db_row(cls, row, db: 'mariadb.SyncConnection' = None) -> 'SnapshotFile':
+        """
+        Instantiate from an archive_file row (named tuple of the columns selected by
+        db_select_within_range): UNCACHED, with explicit s3_url (row.our_s3_url; None when we
+        have no stored copy) and source_url, so the process-global default S3 base URL is never
+        consulted.  datetimestamp comes from the filename_derived_datetime column, falling back
+        to parsing the rpki-<ts>.tgz filename inside source_url when NULL (raising ValueError
+        when that does not parse either).  DATETIME columns come back tz-aware UTC, and row
+        sha256/size seed the metadata cache so accessors need not re-read the file.
+        """
+        if row.filename_derived_datetime is not None:
+            datetimestamp = row.filename_derived_datetime.replace(tzinfo=timezone.utc)
+        else:
+            source_url_path = Path(urllib.parse.urlparse(row.source_url).path)
+            datetimestamp = cls.infer_datetimestamp_from_path(source_url_path)
+        retval = cls(
+            datetimestamp=datetimestamp,
+            local_storage_type=LocalStorageType.UNCACHED,
+            s3_url=row.our_s3_url,
+            s3_stored=row.our_s3_url is not None,
+            source_url=row.source_url,
+        )
+        retval.source = DataFileSource.get_by_id(row.source_id, db=db)
+        if row.discovered_datetime is not None:
+            retval.discovered_datetime = row.discovered_datetime.replace(tzinfo=timezone.utc)
+        if row.observation_datetime is not None:
+            retval.observation_datetime = row.observation_datetime.replace(tzinfo=timezone.utc)
+        if row.our_sha256 is not None:
+            retval._metadata_cache['sha256_digest'] = row.our_sha256
+        if row.our_size_bytes is not None:
+            retval._metadata_cache['size_bytes_uncompressed'] = row.our_size_bytes
+        return retval
+
+    @classmethod
+    def db_select_within_range(
+            cls,
+            db: 'mariadb.SyncConnection',
+            source: DataFileSource,
+            datetime_min: datetime | None = None,
+            datetime_max: datetime | None = None,
+            ingested: bool | None = None,
+    ) -> list['SnapshotFile']:
+        """
+        Return SnapshotFiles for one source's archive_file rows, sorted by datetimestamp.
+
+        ingested filters on the observation_datetime marker: True = ingested rows only, False =
+        the not-yet-ingested backlog, None = both.  The datetime bounds (naive values assumed
+        UTC) and the ordering are SQL-side on the indexed filename_derived_datetime column; note
+        a bound therefore excludes rows where that column is NULL (from_db_row's fallback of
+        parsing source_url only applies to boundless selects).  Rows yielding no timestamp at
+        all are skipped with a warning.
+        """
+        statement = (
+            'SELECT source_id, source_url, filename_derived_datetime, discovered_datetime,'
+            ' file_type_id, our_s3_url, our_size_bytes, our_sha256, our_stored_datetime,'
+            ' observation_datetime FROM archive_file WHERE source_id = ?'
+        )
+        params = [source.id]
+        if datetime_min is not None:
+            statement += ' AND filename_derived_datetime >= ?'
+            params.append(cls._utc_naive(datetime_min))
+        if datetime_max is not None:
+            statement += ' AND filename_derived_datetime <= ?'
+            params.append(cls._utc_naive(datetime_max))
+        match ingested:
+            case True:
+                statement += ' AND observation_datetime IS NOT NULL'
+            case False:
+                statement += ' AND observation_datetime IS NULL'
+            case None:
+                pass
+        statement += ' ORDER BY filename_derived_datetime'
+        cursor = db.cursor(named_tuple=True)
+        try:
+            cursor.execute(statement, tuple(params))
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+        retlist = []
+        for row in rows:
+            try:
+                snapshot = cls.from_db_row(row, db=db)
+            except ValueError:
+                logger.warning(f'skipping archive_file row with unparseable source_url: {row.source_url}')
+                continue
+            retlist.append(snapshot)
+        # SQL already orders by filename_derived_datetime; re-sort only to place any
+        # NULL-column rows (datetimestamp via the source_url fallback) correctly.
+        retlist.sort(key=lambda snapshot: snapshot.datetimestamp)
+        return retlist
