@@ -11,12 +11,13 @@ terraform {
 locals {
   migration_dir = "file://migrations"
   atlas_url = format(
-    "maria://%s:%s@%s:%d/%s",
+    "maria://%s:%s@%s:%d/%s%s",
     urlencode(var.db_user),
     urlencode(var.db_password),
     var.db_host,
     var.db_port,
     var.db_schema,
+    var.db_tls == "" ? "" : "?tls=${var.db_tls}",
   )
 
   # latest migration version in the directory: the filename prefix before the first underscore

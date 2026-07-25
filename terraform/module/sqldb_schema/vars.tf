@@ -26,6 +26,12 @@ variable "db_schema" {
   default     = "rpkilog"
 }
 
+variable "db_tls" {
+  description = "TLS mode appended to the Atlas URL as ?tls=... (Go MySQL driver values, e.g. skip-verify, preferred, true). Empty (the default, used in dev) omits the parameter. Prod RDS requires secure transport; skip-verify encrypts without chain verification, matching the petoju/mysql provider's prod setting."
+  type        = string
+  default     = ""
+}
+
 variable "db_server_token" {
   description = "Opaque value that changes whenever the target database server is (re)created, so the schema is re-applied to the wiped server. Empty (the default) disables that behavior."
   type        = string
