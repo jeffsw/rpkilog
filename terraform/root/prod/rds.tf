@@ -34,19 +34,45 @@ resource "aws_db_subnet_group" "mariadb1" {
   subnet_ids = data.aws_subnets.mariadb1.ids
 }
 
-# Rules live in standalone resources (not inline) so additional rules can be added and managed
-# outside Terraform without conflict.
-resource "aws_security_group" "mariadb_1" {
-  name        = "mariadb-1"
-  description = "rpkilog mariadb-1 RDS access"
+# Two Security Groups are attached to the instance, split by who manages the rules:
+#   - db_tf_managed: rules managed purely by Terraform (the standalone rule resources below)
+#   - db_cli_managed: created by Terraform, but its rules are managed exclusively by the
+#     rpkilog-database-security-group CLI, which selects it by its applies_to + cli_managed
+#     tags.  Terraform declares no rules for it, so the two never fight over a rule.
+moved {
+  from = aws_security_group.mariadb_1
+  to   = aws_security_group.db_tf_managed
+}
+
+resource "aws_security_group" "db_tf_managed" {
+  name        = "db_tf_managed"
+  description = "rpkilog database access; rules managed by Terraform"
   vpc_id      = data.aws_vpc.main.id
   tags = {
     applies_to = "internet_database"
   }
+  # Renaming a Security Group replaces it; create the new group first so the RDS instance can be
+  # moved over before the old group is destroyed.
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_security_group" "db_cli_managed" {
+  name        = "db_cli_managed"
+  description = "rpkilog database access; rules managed by rpkilog-database-security-group CLI"
+  vpc_id      = data.aws_vpc.main.id
+  tags = {
+    applies_to  = "internet_database"
+    cli_managed = "True"
+  }
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_vpc_security_group_ingress_rule" "mariadb1_from_vpc" {
-  security_group_id = aws_security_group.mariadb_1.id
+  security_group_id = aws_security_group.db_tf_managed.id
   description       = "from local vpc"
   cidr_ipv4         = data.aws_vpc.main.cidr_block
   ip_protocol       = "tcp"
@@ -55,7 +81,7 @@ resource "aws_vpc_security_group_ingress_rule" "mariadb1_from_vpc" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "mariadb1_from_rpkiclient" {
-  security_group_id = aws_security_group.mariadb_1.id
+  security_group_id = aws_security_group.db_tf_managed.id
   description       = "rpkiclient linode (rpkiclient.rpkilog.com)"
   cidr_ipv4         = "${one(linode_instance.rpkiclient.ipv4)}/32"
   ip_protocol       = "tcp"
@@ -112,7 +138,10 @@ resource "aws_db_instance" "mariadb1" {
   parameter_group_name                = aws_db_parameter_group.mariadb1.name
   publicly_accessible                 = true
   storage_type                        = "gp3"
-  vpc_security_group_ids              = [aws_security_group.mariadb_1.id]
+  vpc_security_group_ids = [
+    aws_security_group.db_tf_managed.id,
+    aws_security_group.db_cli_managed.id,
+  ]
 
   # rds_master password will be stored in Secrets Manager and automatically rotated
   username                    = "rds_master"

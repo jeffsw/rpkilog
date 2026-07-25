@@ -24,9 +24,13 @@ from rpkilog.data_file_type import DataFileType
 
 logger = logging.getLogger(__name__)
 
-# The Security Group(s) allowing internet clients to reach the RDS database are found by this tag
+# The Security Group(s) this tool manages are found by both tag pairs below.  Groups tagged
+# cli_managed=True contain exclusively CLI-managed rules; Terraform-managed rules live in a
+# sibling group without that tag, so the two toolchains never fight over a rule.
 SECURITY_GROUP_TAG_KEY = 'applies_to'
 SECURITY_GROUP_TAG_VALUE = 'internet_database'
+CLI_MANAGED_TAG_KEY = 'cli_managed'
+CLI_MANAGED_TAG_VALUE = 'True'
 # Each client's rules carry this tag so they can be replaced when the client's address changes
 RULE_CLIENT_TAG_KEY = 'client'
 CLIENT_TAG_VALUE_REGEX = r'[A-Za-z0-9_\-./]+'
@@ -141,17 +145,22 @@ def discover_client_cidrs(v4_subnet_length: int = 32, v6_subnet_length: int = 12
 
 def security_groups_find(ec2) -> list[dict]:
     """
-    Return the Security Group(s) tagged applies_to=internet_database; raise if none exist.
+    Return the Security Group(s) tagged applies_to=internet_database and cli_managed=True --
+    the groups whose rules this tool manages; raise if none exist.
     """
     retlist = []
     paginator = ec2.get_paginator('describe_security_groups')
-    filters = [{'Name': f'tag:{SECURITY_GROUP_TAG_KEY}', 'Values': [SECURITY_GROUP_TAG_VALUE]}]
+    filters = [
+        {'Name': f'tag:{SECURITY_GROUP_TAG_KEY}', 'Values': [SECURITY_GROUP_TAG_VALUE]},
+        {'Name': f'tag:{CLI_MANAGED_TAG_KEY}', 'Values': [CLI_MANAGED_TAG_VALUE]},
+    ]
     for page in paginator.paginate(Filters=filters):
         for group in page['SecurityGroups']:
             retlist.append(group)
     if len(retlist) == 0:
         raise RuntimeError(
-            f'no Security Groups found with tag {SECURITY_GROUP_TAG_KEY}={SECURITY_GROUP_TAG_VALUE}'
+            f'no Security Groups found with tags {SECURITY_GROUP_TAG_KEY}={SECURITY_GROUP_TAG_VALUE} '
+            f'and {CLI_MANAGED_TAG_KEY}={CLI_MANAGED_TAG_VALUE}'
         )
     return retlist
 
@@ -190,10 +199,12 @@ def security_group_update(
         ec2=None,
 ) -> dict:
     """
-    Ensure the internet_database Security Group(s) contain port-3306 ingress rules tagged
-    client=<client> for the given (or discovered) CIDRs, removing any stale rules carrying that
-    client tag.  Rules already matching a desired CIDR are left in place, so an unchanged client
-    address is a no-op -- safe to run from cron.
+    Ensure the CLI-managed Security Group(s) (tagged applies_to=internet_database and
+    cli_managed=True) contain port-3306 ingress rules tagged client=<client> for the given (or
+    discovered) CIDRs, removing any stale rules carrying that client tag.  Rules already matching
+    a desired CIDR are left in place, so an unchanged client address is a no-op -- safe to run
+    from cron.  Terraform-managed rules live in a sibling group without the cli_managed tag,
+    which this tool never touches.
 
     Programmatic callers (e.g. rpkiclient_uploader keeping its own DB access current) may pass a
     boto3 ec2 client; cidrs=None discovers this host's public addresses via ipify.
@@ -322,7 +333,7 @@ def format_table(headers: list[str], rows: list[list]) -> str:
 
 def security_group_show(ec2=None) -> str:
     """
-    Render a human-friendly table of all rules in the internet_database Security Group(s).
+    Render a human-friendly table of all rules in the CLI-managed Security Group(s).
     """
     if ec2 is None:
         ec2 = boto3.client('ec2')
@@ -371,9 +382,13 @@ def security_group_show(ec2=None) -> str:
 def security_group_iam_policy() -> dict:
     """
     IAM policy document covering the show/update functionality.  Single source of truth for the
-    `permissions` subcommand's JSON and HCL renderings.  Modify actions are conditioned on the
-    applies_to tag so the grantee can only touch the internet_database Security Group(s); the
-    CreateTags grant is what lets authorize_security_group_ingress tag the new rules.
+    `permissions` subcommand's JSON and HCL renderings.  Modify actions are split across two
+    statements because aws:ResourceTag is evaluated against each resource in the request: the
+    security-group statement carries the cli_managed=True condition (so the grantee can only
+    touch CLI-managed Security Groups, not the Terraform-managed sibling), while the
+    security-group-rule statement is unconditioned -- rules only carry client=<name> tags, and
+    rule ARNs are only ever authorized alongside their parent group, which the tag condition
+    gates.  The CreateTags grant is what lets authorize_security_group_ingress tag the new rules.
     """
     retdict = {
         'Version': '2012-10-17',
@@ -395,12 +410,22 @@ def security_group_iam_policy() -> dict:
                     'ec2:RevokeSecurityGroupEgress',
                     'ec2:RevokeSecurityGroupIngress',
                 ],
-                'Resource': '*',
+                'Resource': 'arn:aws:ec2:*:*:security-group/*',
                 'Condition': {
                     'StringEquals': {
-                        f'aws:ResourceTag/{SECURITY_GROUP_TAG_KEY}': SECURITY_GROUP_TAG_VALUE,
+                        f'aws:ResourceTag/{CLI_MANAGED_TAG_KEY}': CLI_MANAGED_TAG_VALUE,
                     },
                 },
+            },
+            {
+                'Sid': 'ModifyRulesInTaggedSecurityGroups',
+                'Effect': 'Allow',
+                'Action': [
+                    'ec2:AuthorizeSecurityGroupIngress',
+                    'ec2:RevokeSecurityGroupEgress',
+                    'ec2:RevokeSecurityGroupIngress',
+                ],
+                'Resource': 'arn:aws:ec2:*:*:security-group-rule/*',
             },
             {
                 'Sid': 'TagRulesOnCreate',
@@ -475,12 +500,17 @@ def database_security_group_cli_entry_point():
     )
     ap1 = argparse.ArgumentParser(
         description='Maintain rules in the Security Group(s) tagged '
-                    f'{SECURITY_GROUP_TAG_KEY}={SECURITY_GROUP_TAG_VALUE} which allow clients to '
+                    f'{SECURITY_GROUP_TAG_KEY}={SECURITY_GROUP_TAG_VALUE} and '
+                    f'{CLI_MANAGED_TAG_KEY}={CLI_MANAGED_TAG_VALUE} which allow clients to '
                     'reach the RDS database',
     )
     ap1.add_argument('--debug', action='store_true', help='Break to debugger after parsing arguments')
     subparsers = ap1.add_subparsers(dest='subparser_name', required=True)
-    subparsers.add_parser('show', description='List rules in the matching Security Group(s)')
+    subparsers.add_parser(
+        'show',
+        description='List rules in all internet_database Security Groups, including the '
+                    'Terraform-managed one',
+    )
     ap_update = subparsers.add_parser(
         'update',
         description="Replace this client's rules with its current (or given) addresses",
