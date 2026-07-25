@@ -18,6 +18,9 @@ import re
 import boto3
 import mariadb
 import requests
+from mariadb.impl.plugin.authentication_plugin import AuthenticationPlugin
+from mariadb.impl.plugin.authentication_plugin_factory import AuthenticationPluginFactory
+from mariadb.impl.plugin.authentication_plugin_loader import AuthenticationPluginLoader
 
 from rpkilog.data_file_source import DataFileSource
 from rpkilog.data_file_type import DataFileType
@@ -42,13 +45,76 @@ IP_DISCOVERY_URLS = {
 }
 
 
+class ClearPasswordAuthPlugin(AuthenticationPlugin):
+    """
+    mysql_clear_password authentication for the pure-Python mariadb driver, which does not ship
+    that plugin.  RDS IAM auth needs it: the client sends the auth token as a cleartext password
+    so the server can validate its SigV4 signature; TLS keeps it confidential on the wire.
+
+    TOTEST:
+    - test_clear_password_auth_plugin_payload: auth_switch_payload() is 4 reserved header bytes
+      + the UTF-8 password + a NUL terminator; None password yields header + NUL only
+    """
+
+    def __init__(self, authentication_data: str | None):
+        self.authentication_data = authentication_data
+
+    def auth_switch_payload(self) -> bytearray:
+        # The driver's write_payload() framing reserves the first 4 bytes for the packet header
+        retval = bytearray(b'\x00\x00\x00\x00')
+        retval.extend((self.authentication_data or '').encode('utf-8'))
+        retval.extend(b'\x00')
+        return retval
+
+    def processSync(self, read_payload_func, write_payload_func, context):
+        write_payload_func(self.auth_switch_payload(), 'CLEAR_PASSWORD', False)
+        return read_payload_func()
+
+    async def processAsync(self, read_payload_func, write_payload_func, context):
+        await write_payload_func(self.auth_switch_payload(), 'CLEAR_PASSWORD', False)
+        return await read_payload_func()
+
+    def is_mitm_proof(self) -> bool:
+        return False
+
+    def hash(self, conf) -> bytes | None:
+        return None
+
+
+class ClearPasswordAuthPluginFactory(AuthenticationPluginFactory):
+    def type(self) -> str:
+        return 'mysql_clear_password'
+
+    def initialize(self, authentication_data, seed, conf, host_address) -> AuthenticationPlugin:
+        return ClearPasswordAuthPlugin(authentication_data)
+
+    def require_ssl(self) -> bool:
+        return True
+
+
+AuthenticationPluginLoader.register_plugin(ClearPasswordAuthPluginFactory)
+
+
 def db_connect(args: argparse.Namespace) -> mariadb.SyncConnection:
     """
     Connect to MariaDB using args.db_* and make the connection available to the SQL-row classes.
 
-    The password comes from args.db_password, falling back to env RPKILOG_DB_PASSWORD.
+    Password auth (dev): the password comes from args.db_password, falling back to env
+    RPKILOG_DB_PASSWORD.
 
-    TODO: prod will use RDS IAM auth tokens instead of a static password
+    IAM auth (prod RDS): when args.db_iam_auth is true, a short-lived RDS auth token is minted
+    with the caller's AWS credentials (region from the AWS environment) and sent via the
+    mysql_clear_password plugin registered above; TLS is enabled implicitly.  args.db_host must
+    be the instance's own RDS endpoint hostname -- the token is signed for that exact host, so
+    a CNAME like mariadb-1.rpkilog.com will not authenticate.
+
+    TLS: with args.db_ssl_ca (path to a CA bundle, e.g.
+    https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem) the server chain is
+    verified -- verify-CA; the driver does not check the hostname.  IAM auth without db_ssl_ca
+    still encrypts, but without chain verification.
+
+    The IAM/TLS attributes are read with getattr defaults so Namespaces from CLIs that predate
+    those options keep working unchanged.
 
     TOTEST:
     - test_db_connect_password_falls_back_to_env: args.db_password unset + RPKILOG_DB_PASSWORD
@@ -56,18 +122,36 @@ def db_connect(args: argparse.Namespace) -> mariadb.SyncConnection:
     - test_db_connect_cli_password_beats_env: an explicit --db-password wins over the env var
     - test_db_connect_sets_default_db_connections: DataFileSource.default_db_connection and
       DataFileType.default_db_connection are the returned connection afterward
+    - test_db_connect_iam_auth: db_iam_auth=True passes generate_db_auth_token()'s value as the
+      password and sets ssl=True (boto3 + mariadb.connect monkeypatched)
+    - test_db_connect_ssl_ca: db_ssl_ca set adds ssl=True, ssl_ca, and ssl_verify_cert=True
     """
-    password = args.db_password
-    if password is None:
-        password = os.environ.get('RPKILOG_DB_PASSWORD')
-    retval = mariadb.connect(
-        host=args.db_host,
-        port=args.db_port,
-        user=args.db_user,
-        password=password,
-        database=args.db_name,
-        autocommit=True,
-    )
+    connect_kwargs = {
+        'host': args.db_host,
+        'port': args.db_port,
+        'user': args.db_user,
+        'database': args.db_name,
+        'autocommit': True,
+    }
+    if getattr(args, 'db_iam_auth', False):
+        rds = boto3.client('rds')
+        connect_kwargs['password'] = rds.generate_db_auth_token(
+            DBHostname=args.db_host,
+            Port=args.db_port,
+            DBUsername=args.db_user,
+        )
+        connect_kwargs['ssl'] = True
+    else:
+        password = args.db_password
+        if password is None:
+            password = os.environ.get('RPKILOG_DB_PASSWORD')
+        connect_kwargs['password'] = password
+    db_ssl_ca = getattr(args, 'db_ssl_ca', None)
+    if db_ssl_ca is not None:
+        connect_kwargs['ssl'] = True
+        connect_kwargs['ssl_ca'] = db_ssl_ca
+        connect_kwargs['ssl_verify_cert'] = True
+    retval = mariadb.connect(**connect_kwargs)
     DataFileSource.default_db_connection = retval
     DataFileType.default_db_connection = retval
     return retval
@@ -300,6 +384,50 @@ def security_group_update(
                 f'created rules for {created_cidrs}'
             )
         retdict[group_id] = {'created': created_cidrs, 'removed': removed_rule_ids}
+    return retdict
+
+
+def security_group_remove(client: str, ec2=None) -> dict:
+    """
+    Remove all rules tagged client=<client> from the CLI-managed Security Group(s) -- e.g. a CI
+    run cleaning up the transient runner IP it allowed via security_group_update().
+
+    Returns {group_id: {'removed': [rule_id, ...]}}.
+
+    TOTEST (ec2 stubbed via the DI param):
+    - test_security_group_remove: revokes the tagged ingress rule, leaves other clients' rules
+      untouched
+    - test_security_group_remove_noop: no rules carry the client tag -> no revoke calls
+    """
+    client = client_tag_value(client)
+    if ec2 is None:
+        ec2 = boto3.client('ec2')
+    retdict = {}
+    for group in security_groups_find(ec2=ec2):
+        group_id = group['GroupId']
+        ingress_rule_ids = []
+        egress_rule_ids = []
+        for rule in security_group_rules_list(ec2=ec2, group_id=group_id):
+            tags = rule_tags_as_dict(rule)
+            if tags.get(RULE_CLIENT_TAG_KEY) != client:
+                continue
+            if rule['IsEgress']:
+                egress_rule_ids.append(rule['SecurityGroupRuleId'])
+            else:
+                ingress_rule_ids.append(rule['SecurityGroupRuleId'])
+        if len(ingress_rule_ids) > 0:
+            ec2.revoke_security_group_ingress(
+                GroupId=group_id,
+                SecurityGroupRuleIds=ingress_rule_ids,
+            )
+        if len(egress_rule_ids) > 0:
+            ec2.revoke_security_group_egress(
+                GroupId=group_id,
+                SecurityGroupRuleIds=egress_rule_ids,
+            )
+        removed_rule_ids = ingress_rule_ids + egress_rule_ids
+        logger.info(f'{group_id} client={client}: removed {len(removed_rule_ids)} rule(s)')
+        retdict[group_id] = {'removed': removed_rule_ids}
     return retdict
 
 
@@ -538,6 +666,14 @@ def database_security_group_cli_entry_point():
         help='widen the discovered IPv6 address to this prefix length, e.g. 56 for a SOHO '
              'delegation (default: 128)',
     )
+    ap_remove = subparsers.add_parser(
+        'remove',
+        description="Remove all of a client's rules from the matching Security Group(s)",
+    )
+    ap_remove.add_argument(
+        '--client', required=True, type=client_tag_value,
+        help='client name whose rules (tagged client=<value>) are removed',
+    )
     subparsers.add_parser(
         'permissions-hcl',
         description='Print the IAM policy needed by show/update as a Terraform aws_iam_policy',
@@ -568,6 +704,8 @@ def database_security_group_cli_entry_point():
                 v4_subnet_length=v4_subnet_length,
                 v6_subnet_length=v6_subnet_length,
             )
+        case 'remove':
+            security_group_remove(client=args.client)
         case 'permissions-hcl':
             print(security_group_permissions_hcl())
         case 'permissions-json':

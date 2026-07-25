@@ -223,6 +223,45 @@ resource "aws_iam_user_policy_attachment" "jsw_soho_router__database_security_gr
   policy_arn = aws_iam_policy.database_security_group.arn
 }
 
+# GitHub CI connects with an IAM auth token to prove the pure-Python mariadb driver and our
+# mysql_clear_password plugin still authenticate (see the db-connect job in ci-python.yml).
+# Deliberately no mysql_grant: USAGE-only means login proof, no schema access.
+resource "mysql_user" "mariadb1_github_ci" {
+  user        = "github_ci"
+  host        = "%"
+  auth_plugin = "AWSAuthenticationPlugin"
+}
+
+resource "aws_iam_policy" "github_ci_rds_connect" {
+  name = "github_ci_rds_connect_${terraform.workspace}"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = ["rds-db:connect"],
+        Resource = join("", [
+          "arn:aws:rds-db:us-east-1:${data.aws_caller_identity.main.account_id}:",
+          "dbuser:${aws_db_instance.mariadb1.resource_id}/${mysql_user.mariadb1_github_ci.user}",
+        ]),
+      }
+    ]
+  })
+}
+
+# The github_ci IAM user itself is defined in the repo-root legacy module (main.tf); it is
+# attached by name here so its RDS-related grants live beside the RDS instance.  It also gets
+# the database_security_group policy so CI can allow/remove its runner IP around the test.
+resource "aws_iam_user_policy_attachment" "github_ci_rds_connect" {
+  user       = "github_ci"
+  policy_arn = aws_iam_policy.github_ci_rds_connect.arn
+}
+
+resource "aws_iam_user_policy_attachment" "github_ci_database_security_group" {
+  user       = "github_ci"
+  policy_arn = aws_iam_policy.database_security_group.arn
+}
+
 output "mariadb1_endpoint" {
   description = "mariadb-1 RDS endpoint hostname (also aliased as mariadb-1.rpkilog.com)"
   type        = string
