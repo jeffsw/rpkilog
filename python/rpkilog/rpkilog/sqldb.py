@@ -473,19 +473,25 @@ def hcl_expression(value, indent: int = 0) -> str:
     return retstr
 
 
-def security_group_permissions_text() -> str:
+def security_group_permissions_json() -> str:
     """
-    Render the IAM permissions needed by show/update as JSON and as a Terraform aws_iam_policy.
+    Render the IAM policy needed by show/update as JSON, e.g. for `aws iam create-policy`.
+    """
+    retstr = json.dumps(security_group_iam_policy(), indent=2)
+    return retstr
+
+
+def security_group_permissions_hcl() -> str:
+    """
+    Render the IAM policy needed by show/update as a Terraform aws_iam_policy resource.
     """
     policy = security_group_iam_policy()
-    json_text = json.dumps(policy, indent=2)
-    hcl_text = (
+    retstr = (
         'resource "aws_iam_policy" "rpkilog_database_security_group" {\n'
         '  name   = "rpkilog_database_security_group"\n'
         f'  policy = jsonencode({hcl_expression(policy, indent=1)})\n'
         '}'
     )
-    retstr = f'# IAM policy (JSON)\n{json_text}\n\n# Terraform (HCL)\n{hcl_text}'
     return retstr
 
 
@@ -533,8 +539,12 @@ def database_security_group_cli_entry_point():
              'delegation (default: 128)',
     )
     subparsers.add_parser(
-        'permissions',
-        description='Print the IAM permissions needed by show/update, in JSON and Terraform HCL',
+        'permissions-hcl',
+        description='Print the IAM policy needed by show/update as a Terraform aws_iam_policy',
+    )
+    subparsers.add_parser(
+        'permissions-json',
+        description='Print the IAM policy needed by show/update as JSON',
     )
     args = ap1.parse_args()
     if args.debug:
@@ -558,5 +568,7 @@ def database_security_group_cli_entry_point():
                 v4_subnet_length=v4_subnet_length,
                 v6_subnet_length=v6_subnet_length,
             )
-        case 'permissions':
-            print(security_group_permissions_text())
+        case 'permissions-hcl':
+            print(security_group_permissions_hcl())
+        case 'permissions-json':
+            print(security_group_permissions_json())
