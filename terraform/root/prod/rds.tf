@@ -205,6 +205,24 @@ resource "mysql_grant" "mariadb1_developer" {
   grant      = true
 }
 
+# Reusable policy for any automation user/system that maintains rules in CLI managed Security Groups.
+# To update: rpkilog-database-security-group permissions-json > database_security_group_policy.json
+resource "aws_iam_policy" "database_security_group" {
+  name   = "database_security_group_${terraform.workspace}"
+  policy = file("${path.module}/database_security_group_policy.json")
+}
+
+# SOHO router cron job runs rpkilog-database-security-group update to keep its dynamic IP
+# allowed.  Access key is created manually, not by Terraform.
+resource "aws_iam_user" "jsw_soho_router" {
+  name = "jsw_soho_router"
+}
+
+resource "aws_iam_user_policy_attachment" "jsw_soho_router__database_security_group" {
+  user       = aws_iam_user.jsw_soho_router.name
+  policy_arn = aws_iam_policy.database_security_group.arn
+}
+
 output "mariadb1_endpoint" {
   description = "mariadb-1 RDS endpoint hostname (also aliased as mariadb-1.rpkilog.com)"
   type        = string
