@@ -103,10 +103,13 @@ resource "aws_db_parameter_group" "mariadb1" {
     value = "1"
   }
 
-  # require TLS for all clients, both password & IAM authenticated
+  # require TLS for all clients, both password & IAM authenticated.  "1" is also the mariadb11.8
+  # engine default, so RDS reports the parameter as source=engine-default with
+  # apply_method=pending-reboot; declaring apply_method to match avoids a perpetual plan diff.
   parameter {
-    name  = "require_secure_transport"
-    value = "1"
+    apply_method = "pending-reboot"
+    name         = "require_secure_transport"
+    value        = "1"
   }
 }
 
