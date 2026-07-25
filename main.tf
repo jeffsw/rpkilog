@@ -1,9 +1,9 @@
 terraform {
   backend "s3" {
-    bucket         = "rpkilog-terraform"
-    dynamodb_table = "rpkilog-terraform"
-    key            = "main"
-    region         = "us-east-1"
+    bucket       = "rpkilog-terraform"
+    key          = "main"
+    region       = "us-east-1"
+    use_lockfile = true
   }
   required_providers {
     aws = {
@@ -1593,8 +1593,8 @@ POLICY
   }
   ebs_options {
     ebs_enabled = true
-    volume_size = 400
-    volume_type = "gp3" # gp3 not supported by current version of aws_elasticsearch_domain
+    volume_size = 500
+    volume_type = "gp3"
   }
   encrypt_at_rest {
     enabled = true

@@ -16,6 +16,10 @@ terraform {
       source  = "linode/linode"
       version = "~> 3.12.0"
     }
+    mysql = {
+      source  = "petoju/mysql"
+      version = "~> 3.0.94"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.8.1"
@@ -80,6 +84,16 @@ provider "aws" {
     }
   }
   region = "us-east-1"
+}
+
+# Connects as the RDS-managed master user so it can manage the admin/developer users in rds.tf.
+# skip-verify still encrypts; the RDS CA is not in the system trust store, so full verification
+# is not available here (see the TLS note in rds.tf).
+provider "mysql" {
+  endpoint = aws_db_instance.mariadb1.endpoint
+  username = aws_db_instance.mariadb1.username
+  password = jsondecode(data.aws_secretsmanager_secret_version.mariadb1_master.secret_string)["password"]
+  tls      = "skip-verify"
 }
 
 provider "random" {}

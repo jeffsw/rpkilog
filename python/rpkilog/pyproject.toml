@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26062201'
+version = '0.26071901'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -66,6 +66,7 @@ dev = [
 
 [project.scripts]
 rpkilog-archive-site-crawler = 'rpkilog.archive_site_crawler:ArchiveSiteCrawler.cli_entry_point'
+rpkilog-database-security-group = 'rpkilog.sqldb:database_security_group_cli_entry_point'
 rpkilog-diff-import = 'rpkilog:VrpDiff.cli_entry_point_import'
 rpkilog-diff-import-from-sqs = 'rpkilog:VrpDiff.cli_entry_point_diff_import_from_sqs'
 rpkilog-hapi = 'rpkilog.hapi:cli_entry_point'
