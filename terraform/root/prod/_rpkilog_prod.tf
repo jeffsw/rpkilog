@@ -215,10 +215,16 @@ resource "linode_instance_disk" "rpkiclient_root" {
   root_pass = nonsensitive(random_password.rpkiclient.result)
 }
 
+# Get disk size of the specified instance-type
+data "linode_instance_type" "rpkiclient" {
+  id = linode_instance.rpkiclient.type
+}
+
 resource "linode_instance_disk" "rpkiclient_data" {
-  linode_id  = linode_instance.rpkiclient.id
-  label      = "data"
-  size       = linode_instance.rpkiclient.specs.0.disk - linode_instance_disk.rpkiclient_root.size
+  linode_id = linode_instance.rpkiclient.id
+  label     = "data"
+  # if linode updates the available disk space for the instance-type, this could cause a change
+  size       = data.linode_instance_type.rpkiclient.disk - linode_instance_disk.rpkiclient_root.size
   filesystem = "raw"
 }
 
