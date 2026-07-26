@@ -236,6 +236,9 @@ resource "opensearch_dashboard_object" "diff_index_pattern" {
     }
   ])
   depends_on = [terraform_data.opensearch_1_ready]
+  lifecycle {
+    ignore_changes = [body]
+  }
 }
 
 resource "opensearch_index_template" "diff" {

@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+#MISE description="preflight: mariadb + mariadb-dump on PATH, MariaDB >= 10.11 (no mise pin exists for the C client)"
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from sql_task_engine import client_check  # noqa: E402
+
+sys.exit(client_check())

@@ -46,6 +46,11 @@ output "mariadb_1_admin_password" {
   value       = nonsensitive(random_password.mariadb_1_admin.result)
 }
 
+output "mariadb_1_endpoint" {
+  description = "mariadb-1 dev MariaDB hostname (consumed by the sql-* mise tasks)"
+  value       = aws_route53_record.mariadb_1_A.fqdn
+}
+
 module "userdata_mariadb_1" {
   source                     = "../../module/mariadb_userdata"
   console_password_plaintext = nonsensitive(random_password.mariadb_1_console.result)

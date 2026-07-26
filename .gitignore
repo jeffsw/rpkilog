@@ -14,4 +14,5 @@ dist/
 /REVIEW.md
 .claude/settings.local.json
 test_data/*
+/tmp/
 __pycache__/

@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+#MISE description="restore a dump file into the prod rpkilog database (usage: mise run sql-load-prod-from-file <dump-file>)"
+#MISE depends=["sql-client-check"]
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from sql_task_engine import cli_load  # noqa: E402
+
+sys.exit(cli_load('prod', sys.argv[1:]))

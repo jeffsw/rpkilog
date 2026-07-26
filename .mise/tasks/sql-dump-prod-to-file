@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+#MISE description="dump the prod rpkilog database to a timestamped file under tmp/sql-dumps/"
+#MISE depends=["sql-client-check"]
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from sql_task_engine import cli_dump  # noqa: E402
+
+sys.exit(cli_dump('prod'))
