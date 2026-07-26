@@ -1,26 +1,179 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 #MISE description="terraform fmt -check + init -backend=false + validate for every root and module"
-set -euo pipefail
-cd "$MISE_PROJECT_ROOT"
+"""
+terraform fmt -check + init -backend=false + validate for every root and module (stdlib only).
 
-# Every directory that contains *.tf, discovered dynamically so new roots/modules are covered
-dirs=$(find . -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
+fmt is checked first, per-directory and non-recursive, so we never descend into a .terraform
+module cache; it is non-mutating (use `mise run fmt` to actually rewrite).
 
-# Non-mutating: check formatting (use `mise run fmt` to actually rewrite). Checked per-directory
-# (non-recursive) rather than `-recursive .` so we never descend into a .terraform module cache.
-while IFS= read -r d; do
-    terraform fmt -check "${d}"
-done <<< "${dirs}"
+Each directory is then init'd with -backend=false (no state/credentials) and validated.
 
-# Each directory is init'd with -backend=false (no state/credentials) then validated.
-#
-# -lockfile=readonly: never mutate the committed .terraform.lock.hcl. If a lock is missing the
-# running platform's hashes (e.g. CI is linux_amd64 but the lock was generated on macOS), init
-# fails with a clear, actionable error instead of silently editing a tracked file — which would
-# otherwise surface only as pre-commit's opaque "files were modified by this hook". To add a
-# missing platform's hashes, run `mise run tf-lock` and commit the result.
-while IFS= read -r d; do
-    echo "==> validate ${d}"
-    terraform -chdir="${d}" init -backend=false -input=false -lockfile=readonly -no-color
-    terraform -chdir="${d}" validate -no-color
-done <<< "${dirs}"
+-lockfile=readonly: never mutate the committed .terraform.lock.hcl.  If a lock is missing the
+running platform's hashes (e.g. CI is linux_amd64 but the lock was generated on macOS), init
+fails with a clear, actionable error instead of silently editing a tracked file -- which would
+otherwise surface only as pre-commit's opaque "files were modified by this hook".  To add a
+missing platform's hashes, run `mise run tf-lock` and commit the result.
+
+Parallelism: the per-directory init+validate jobs are independent, EXCEPT that init WRITES to
+the shared plugin cache (TF_PLUGIN_CACHE_DIR) when a needed (provider, version) is absent from
+both the cache and the directory's own .terraform/providers -- and terraform's plugin cache is
+not safe for concurrent writes.  So: "warm" directories (nothing to download; init only reads)
+run fully in parallel, while "cold" ones (fresh clone, provider version bump) run serially in
+one queue, warming the cache without racing.  The queue may overlap the parallel group safely:
+it only downloads cache entries that no warm directory references.  Worker threads just block
+on terraform subprocesses, so an ordinary GIL CPython parallelizes this fully.
+"""
+import concurrent.futures
+import os
+import platform
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class LockedProvider:
+    """One provider pin from a .terraform.lock.hcl: registry address and exact version."""
+    address: str  # e.g. registry.terraform.io/hashicorp/aws
+    version: str  # e.g. 6.56.0
+
+
+def find_tf_dirs() -> list[Path]:
+    """Every directory containing *.tf, discovered dynamically so new roots/modules are covered."""
+    found = set()
+    for tf_file in Path('.').rglob('*.tf'):
+        if '.terraform' in tf_file.parts:
+            continue
+        found.add(tf_file.parent)
+    retlist = sorted(found)
+    return retlist
+
+
+def terraform_platform() -> str:
+    """The os_arch subdirectory name terraform uses in provider install trees."""
+    machine_map = {
+        'aarch64': 'arm64',
+        'amd64': 'amd64',
+        'arm64': 'arm64',
+        'x86_64': 'amd64',
+    }
+    machine = platform.machine().lower()
+    retstr = platform.system().lower() + '_' + machine_map.get(machine, machine)
+    return retstr
+
+
+def lock_file_providers(lock_path: Path) -> list[LockedProvider]:
+    """The providers pinned by a .terraform.lock.hcl."""
+    retlist = []
+    address = None
+    for line in lock_path.read_text().splitlines():
+        match = re.match(r'^provider "([^"]+)"', line)
+        if match:
+            address = match.group(1)
+            continue
+        match = re.match(r'^\s+version\s+=\s+"([^"]+)"', line)
+        if match and address is not None:
+            retlist.append(LockedProvider(address=address, version=match.group(1)))
+    return retlist
+
+
+def dir_is_warm(directory: Path, cache_dir: str | None, tf_platform: str) -> bool:
+    """
+    True when every (provider, version) in the directory's lock file is already unpacked in the
+    plugin cache or in its own .terraform/providers, i.e. init has nothing to download.  No lock
+    file means no providers to install.
+    """
+    lock_path = directory / '.terraform.lock.hcl'
+    if not lock_path.is_file():
+        return True
+    for provider in lock_file_providers(lock_path):
+        install_subdir = Path(provider.address) / provider.version / tf_platform
+        if cache_dir is not None and (Path(cache_dir) / install_subdir).is_dir():
+            continue
+        if (directory / '.terraform' / 'providers' / install_subdir).is_dir():
+            continue
+        return False
+    return True
+
+
+def init_and_validate(directory: Path) -> tuple[int, str]:
+    """Run init then validate; return (exit code, combined output)."""
+    init = subprocess.run(
+        ['terraform', f'-chdir={directory}', 'init', '-backend=false', '-input=false',
+         '-lockfile=readonly', '-no-color'],
+        capture_output=True, text=True,
+    )
+    output = init.stdout + init.stderr
+    if init.returncode != 0:
+        return (init.returncode, output)
+    validate = subprocess.run(
+        ['terraform', f'-chdir={directory}', 'validate', '-no-color'],
+        capture_output=True, text=True,
+    )
+    retval = (validate.returncode, output + validate.stdout + validate.stderr)
+    return retval
+
+
+def main() -> int:
+    os.chdir(os.environ['MISE_PROJECT_ROOT'])
+    dirs = find_tf_dirs()
+
+    fmt_rc = 0
+    for d in dirs:
+        fmt = subprocess.run(['terraform', 'fmt', '-check', str(d)], capture_output=True, text=True)
+        if fmt.returncode != 0:
+            sys.stdout.write(fmt.stdout + fmt.stderr)
+            if fmt_rc == 0:
+                fmt_rc = fmt.returncode
+    if fmt_rc != 0:
+        return fmt_rc
+
+    # A missing cache dir makes terraform print CLI-configuration warnings (fresh clone)
+    cache_dir = os.environ.get('TF_PLUGIN_CACHE_DIR')
+    if cache_dir is not None:
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+
+    tf_platform = terraform_platform()
+    warm_dirs = []
+    cold_dirs = []
+    for d in dirs:
+        if dir_is_warm(d, cache_dir, tf_platform):
+            warm_dirs.append(d)
+        else:
+            cold_dirs.append(d)
+
+    def run_cold_queue() -> list[tuple[Path, tuple[int, str]]]:
+        retlist = []
+        for d in cold_dirs:
+            retlist.append((d, init_and_validate(d)))
+        return retlist
+
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(dirs) + 1) as pool:
+        warm_futures = {}
+        for d in warm_dirs:
+            warm_futures[d] = pool.submit(init_and_validate, d)
+        cold_future = None
+        if len(cold_dirs) > 0:
+            cold_future = pool.submit(run_cold_queue)
+        for d in warm_dirs:
+            results[d] = warm_futures[d].result()
+        if cold_future is not None:
+            for d, result in cold_future.result():
+                results[d] = result
+
+    # Report in directory order so output stays grouped and readable
+    retval = 0
+    for d in dirs:
+        returncode, output = results[d]
+        print(f'==> validate {d}')
+        sys.stdout.write(output)
+        if returncode != 0:
+            retval = 1
+    return retval
+
+
+if __name__ == '__main__':
+    sys.exit(main())
