@@ -35,6 +35,11 @@ SQL: a SnapshotFile maps to one `archive_file` row, keyed by the (source_id, sou
   and from_db_row() / db_select_within_range() construct UNCACHED instances from rows with explicit
   s3_url + source_url, so the process-global default S3 base URL is never consulted.  This mirrors
   SnapshotSummaryFile's methods against `data_file`: row CRUD lives on each file class.
+
+TODO: the upload path reads the full TAR (100MB-1GB) three times per snapshot: s3_upload() streams
+  it to S3, then db_update_our_copy() calls size_bytes_uncompressed() and sha256_digest(), each of
+  which makes its own complete pass via _iter_uncompressed_chunks() because the metadata cache is
+  empty at that point.  These reads could be consolidated.
 """
 import logging
 import os

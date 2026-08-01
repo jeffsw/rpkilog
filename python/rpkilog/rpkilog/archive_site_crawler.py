@@ -21,6 +21,10 @@ observation_datetime ingest marker.  Requires --source-name and --db-*.
 
 --filename-datetime-min / --filename-datetime-max restrict processing to snapshots whose filename
 datetime falls within the given bounds.  They may be used separately or together.
+
+TODO: the --minimum-file-age progressive-write guard only applies in normal crawl mode.  This avoids
+downloading incomplete/corrupt files which are still being written to the archive site.  It could be
+implemented for --discover-only operation as well.
 """
 import argparse
 import boto3
