@@ -86,9 +86,6 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# Connects as the RDS-managed master user so it can manage the admin/developer users in rds.tf.
-# skip-verify still encrypts; the RDS CA is not in the system trust store, so full verification
-# is not available here (see the TLS note in rds.tf).
 provider "mysql" {
   endpoint = aws_db_instance.mariadb1.endpoint
   username = aws_db_instance.mariadb1.username

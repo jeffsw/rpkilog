@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Replace opensearch-1 VM and its STS token (dev)"
+#MISE description="Replace opensearch-1 VM (dev)"
 #MISE dir="terraform/root/dev"
 set -euo pipefail
 

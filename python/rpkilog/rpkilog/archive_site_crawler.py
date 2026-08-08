@@ -6,21 +6,6 @@ For each discovered RPKI archive TAR we don't already have, download it, validat
 rpki-client summary JSON, and upload the TAR to the snapshot bucket and the summary to the summary
 bucket.  The file/storage/S3 concerns are delegated to SnapshotFile and SnapshotSummaryFile; this
 module owns acquisition (crawling, downloading, retry) and orchestration.
---skip-s3-snapshot-upload skips the TAR upload (the summary is what downstream processing
-consumes); the summary upload and DB bookkeeping still happen, with the our_* stored-copy
-columns left NULL.
-
---discover-only skips all downloading/uploading: the crawl's discovery phase upserts archive_file
-rows instead (dedup on the (source_id, source_url) PK), inventorying what the archive publishes so
-the backlog downloader can fetch missed snapshots later.  Requires --source-name and --db-*.
-
---download-backlog skips crawling entirely: the work queue is the source's archive_file rows where
-observation_datetime IS NULL, processed oldest-first (download order affects downstream diffing).
-Each download is paced by --sleep-between-downloads and updates the row's our_* columns plus the
-observation_datetime ingest marker.  Requires --source-name and --db-*.
-
---filename-datetime-min / --filename-datetime-max restrict processing to snapshots whose filename
-datetime falls within the given bounds.  They may be used separately or together.
 
 TODO: the --minimum-file-age progressive-write guard only applies in normal crawl mode.  This avoids
 downloading incomplete/corrupt files which are still being written to the archive site.  It could be
@@ -247,13 +232,7 @@ class ArchiveSiteCrawler():
         URL, e.g. https://josephine.sobornost.net/rpkidata/ + 2026-05-01T00:54:38Z ->
         https://josephine.sobornost.net/rpkidata/2026/05/01/rpki-20260501T005438Z.tgz
 
-        This is the inverse of the crawl: the day-page path (%Y/%m/%d/) matches
-        fetch_tar_urls_from_archive_site() and the filename matches
-        SnapshotFile.default_filename_strftime_expression, so a derived URL is byte-for-byte
-        identical to the same file's crawler-discovered URL.  That identity matters because
-        archive_file dedups on source_url: any mismatch would silently split rows.  Pass the
-        filename timestamp (e.g. from a summary S3 key), NOT the metadata buildtime, which
-        differs by a few seconds.  A naive datetimestamp is assumed UTC.
+        This is used to backfill SQL archive_file table from data_file.
         '''
         if datetimestamp.tzinfo is not None:
             datetimestamp = datetimestamp.astimezone(UTC)
@@ -274,12 +253,8 @@ class ArchiveSiteCrawler():
         max_date: datetime = None,
     ) -> set:
         '''
-        Discovery phase: crawl the specified RPKI archive site_root and get the URLs of TARs
-        between start_date and max_date (default: now; NOT an eager parameter default, which
-        would be evaluated once at import time and go stale in a long-lived process).
-        Depends on the URL scheme for index pages being site_root/YYYY/MM/DD/.  Naive datetimes
-        are assumed UTC.  Every UTC day from start_date through max_date inclusive is fetched;
-        a 404 on a day page is tolerated (e.g. today's page before the first snapshot).
+        crawl the specified RPKI archive site_root and get the URLs of TARs between start_date and max_date.
+        Depends on the URL scheme for index pages being site_root/YYYY/MM/DD/.  datetimes assumed UTC.
 
         Return the URLs in a set.
         '''

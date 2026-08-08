@@ -1,40 +1,12 @@
 """
 SnapshotFile: represents an RPKI archive snapshot TAR (rpki-YYYYMMDDTHHMMSSZ.tgz).
 
-A "snapshot" is the gzipped TAR published by an upstream RPKI archive site and re-hosted by rpkilog in
+A "snapshot" is the gzipped TAR published by an RPKI archive site and temporarily mirrored by rpkilog in
 the snapshot S3 bucket.  Each snapshot TAR contains, among other things, the rpki-client output JSON
-that we extract into a SnapshotSummaryFile.  This class is the planned home for the snapshot-TAR
-*file* concerns currently scattered through archive_site_crawler.py: filename/datetime derivation,
-validating the TAR, extracting the summary, and uploading the TAR to S3.
-
-STATUS: implemented.  A snapshot's cached bytes are an opaque gzipped TAR
-(LocalStorageType.SNAPSHOT_TGZ) held at local_filepath_tgz.  Operations that only make sense for a
-JSON document raise (see the type-invalid overrides below), the S3 round-trip moves the TAR
-byte-for-byte under its '.tgz' key, local-cache cleanup unlinks the TAR, validate_tar() checks the
-archive is readable, and extract_summary_file() pulls the rpki-client JSON out as a
-SnapshotSummaryFile.  archive_site_crawler is rebased onto this class.
-
-Design notes:
-  - SnapshotFile does NOT acquire bytes from, or parse the URLs of, the archive site.  Acquisition
-    (transport, auth, headers, timeouts, retry/backoff, mirror failover) varies per archive and is
-    owned by the crawler (and a possible future ArchiveSite abstraction), which downloads to a temp
-    path and then points a SnapshotFile at it (local_filepath_tgz + SNAPSHOT_TGZ).  This is why
-    s3_download() lives here (rehydrating from rpkilog's own canonical store, one transport) but no
-    archive-download method does.  source_url is kept purely as provenance metadata.
-  - Cache *state* is modeled by LocalStorageType; "operation invalid for this file *type*" is a
-    type-level override here.  The two are orthogonal: DataFileSuper's match statements all carry a
-    `case _: raise` default as a safety net for an unhandled state, while the JSON-only operations
-    below raise regardless of state because a snapshot TAR is simply not a JSON document.
-  - The inherited local_filepath_uncompressed / local_filepath_bz2 properties are overridden to
-    raise; a snapshot has no uncompressed-JSON or bz2 form.  repr_attrs is redefined accordingly so
-    __repr__ (used in error messages) does not trip those raises.
+that we extract into a SnapshotSummaryFile.
 
 SQL: a SnapshotFile maps to one `archive_file` row, keyed by the (source_id, source_url) PK.  The
-  db_* methods below cover the row's lifecycle — insert at discovery, update when our S3 copy is
-  stored, update at ingest (observation_datetime, whose non-NULL state is the ingested marker) —
-  and from_db_row() / db_select_within_range() construct UNCACHED instances from rows with explicit
-  s3_url + source_url, so the process-global default S3 base URL is never consulted.  This mirrors
-  SnapshotSummaryFile's methods against `data_file`: row CRUD lives on each file class.
+db_* methods below cover the row's lifecycle.
 
 TODO: the upload path reads the full TAR (100MB-1GB) three times per snapshot: s3_upload() streams
   it to S3, then db_update_our_copy() calls size_bytes_uncompressed() and sha256_digest(), each of
@@ -284,6 +256,8 @@ class SnapshotFile(DataFileSuper):
         canonical file content: the inherited sha256_digest() / size_bytes_uncompressed() (feeding
         archive_file.our_sha256 / our_size_bytes) hash and measure the .tgz as published — NOT a
         gunzipped TAR stream — keeping them comparable to upstream checksums.
+
+        TODO: investigate consolidating this functionality into superclass
         """
         match self.local_storage_type:
             case LocalStorageType.SNAPSHOT_TGZ:
@@ -304,10 +278,11 @@ class SnapshotFile(DataFileSuper):
         Confirm the locally-cached TAR is complete and readable.
 
         Opens the '.tgz' and reads every regular member in full; a truncated or corrupt archive
-        raises somewhere in tarfile, which we catch.  Contract: returns True when the whole archive
-        reads cleanly, and False (logging the cause) when it does not — it does NOT raise on a bad
-        TAR, so the crawler can simply skip-and-continue (a later run re-downloads it).  Raises only
-        when there is no local '.tgz' to validate.
+        raises somewhere in tarfile, which we catch.
+
+        returns True when the whole archive reads cleanly
+        False (logging the cause) when the '.tgz' exists but is corrupt or incomplete
+        raises when '.tgz' is missing
         """
         if self.local_storage_type != LocalStorageType.SNAPSHOT_TGZ:
             raise ValueError(f'cannot validate a snapshot without a local .tgz file: {self}')
@@ -332,9 +307,8 @@ class SnapshotFile(DataFileSuper):
 
         Exactly one member must match summary_member_re (raises KeyError if none, ValueError if more
         than one).  The summary is written under output_dir (default: this snapshot's
-        local_storage_dir) and left UNCOMPRESSED; SnapshotSummaryFile.s3_upload() bzip2-compresses on
-        upload.  The returned summary is named by THIS snapshot's datetimestamp (not the in-TAR member
-        path), tying summary identity to the snapshot it came from.
+        local_storage_dir) and left UNCOMPRESSED.  The returned summary is named by THIS snapshot's
+        datetimestamp (not the in-TAR member path), tying summary identity to the snapshot it came from.
         """
         if self.local_storage_type != LocalStorageType.SNAPSHOT_TGZ:
             raise ValueError(f'cannot extract a summary without a local .tgz file: {self}')
@@ -370,13 +344,10 @@ class SnapshotFile(DataFileSuper):
         summary.local_storage_type = LocalStorageType.UNCOMPRESSED
         return summary
 
-    # --- archive_file SQL row lifecycle (see the module docstring) -------------------------------
-
     @property
     def source_id(self) -> int | None:
         """
-        The archive_file.source_id FK value, read from self.source; None while the source is
-        unknown.
+        The archive_file.source_id FK value, read from self.source; None while the source is unknown.
         """
         if self.source is not None:
             retval = self.source.id
@@ -389,6 +360,8 @@ class SnapshotFile(DataFileSuper):
         """
         Convert a datetime to naive UTC for the tz-less DATETIME columns (which store UTC by
         convention).  A naive input is assumed to already be UTC.
+
+        TODO: consolidate duplicates into util.py
         """
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc)
@@ -402,8 +375,7 @@ class SnapshotFile(DataFileSuper):
 
     def db_row_exists(self, db: 'mariadb.SyncConnection') -> bool:
         """
-        Return True if the archive_file table already has a row for this snapshot, checked by the
-        (source_id, source_url) primary key.
+        Return True if the archive_file table already has a row for this snapshot.
         """
         self._ensure_db_identity()
         cursor = db.cursor()
@@ -427,11 +399,7 @@ class SnapshotFile(DataFileSuper):
         """
         INSERT the archive_file row recording this snapshot's discovery on the archive site.
 
-        Only discovery-time columns are populated: the (source_id, source_url) PK,
-        filename_derived_datetime (= self.datetimestamp, the timestamp INFERRED from the
-        filename), discovered_datetime (default: now), and file_type_id when file_type is given.
-        The our_* columns and observation_datetime stay NULL until db_update_our_copy() /
-        db_update_ingested().
+        Only discovery-time columns are populated.  our_* columns and observation_datetime stay NULL.
         """
         self._ensure_db_identity()
         if discovered_datetime is None:
@@ -473,9 +441,7 @@ class SnapshotFile(DataFileSuper):
         rather than observed live by the crawler.
 
         Unlike db_insert_discovered(), observation_datetime is already known — the row is born
-        ingested — and discovered_datetime is the caller's backdated estimate.  The our_* values,
-        when given, come from an S3 bucket listing rather than reading the file; our_sha256 is
-        left NULL, since populating it would require downloading every TAR.
+        ingested.  our_sha256 is left NULL, since populating it would require downloading every TAR.
         """
         self._ensure_db_identity()
         self.discovered_datetime = discovered_datetime
@@ -515,12 +481,9 @@ class SnapshotFile(DataFileSuper):
             stored_datetime: datetime | None = None,
     ):
         """
-        UPDATE this snapshot's archive_file row with the our_* columns describing our stored S3
-        copy: our_s3_url, our_size_bytes, our_sha256, and our_stored_datetime (default: now; pass
-        the S3 object's LastModified when reconciling from a bucket listing).
+        UPDATE this snapshot's archive_file row with the our_* columns.
 
-        Call after s3_upload() so s3_url is known; size and sha256 stream the cached .tgz,
-        re-downloading from S3 when the local cache was already cleaned up.
+        TODO: consolidate these db_update_* methods.
         """
         self._ensure_db_identity()
         if self.s3_url is None:

@@ -1,16 +1,7 @@
-# The database-layer resources reach MariaDB over a static DNS endpoint, so Terraform has no
-# automatic ordering against the VM. terraform_data.mariadb_1_ready is the single hinge: every DB
-# resource is ordered after it and replaced with it. The hinge itself is replaced only by the
-# replace-mariadb-1 mise task (alongside the VM), cascading a full, correctly ordered rebuild of
-# the database layer; in-place VM updates (user-data, limits.*) deliberately do not cascade.
 
-# Readiness gate. cloud-init starts mariadb-server -- opening port 3306 -- before its per-once
-# script creates the admin user, so a bare TCP probe would pass too early; polling with the atlas
-# CLI succeeds only once admin auth works. Server-level URL (no database) because the rpkilog
-# schema does not exist yet at gate time.
+# Readiness gate. Polling with the atlas CLI succeeds only once admin auth works. Server-level URL
+# (no database) because the rpkilog schema does not exist yet at gate time.
 resource "terraform_data" "mariadb_1_ready" {
-  # Ordered after the instance; replaced only via the replace-mariadb-1 mise task, so in-place
-  # instance updates never cascade a rebuild of the database layer (see the header comment).
   depends_on = [incus_instance.mariadb_1]
 
   provisioner "local-exec" {
