@@ -393,7 +393,8 @@ class ArchiveSiteCrawler():
                         help='Only process snapshots whose filename datetime is <= this (optional)')
         ap.add_argument('--job-max-runtime', type=float, help='Max runtime in seconds (default: unlimited)')
         ap.add_argument('--job-max-downloads', default=2, type=int,
-                        help='Max files to download before stopping (default: 2)')
+                        help='Max files to download before stopping (default: 2, sized for cron '
+                             'crawls; 0 = unlimited, e.g. for --download-backlog backfills)')
         args = ap.parse_args()
         if (args.site_root is None) == (args.source_name is None):
             ap.error('exactly one of --site-root or --source-name is required')
@@ -411,6 +412,10 @@ class ArchiveSiteCrawler():
                 args.s3_snapshot_bucket_name is None or args.s3_snapshot_summary_bucket_name is None):
             ap.error('--s3-snapshot-bucket-name and --s3-snapshot-summary-bucket-name are '
                      'required unless --discover-only')
+        if args.job_max_downloads < 0:
+            ap.error('--job-max-downloads must be >= 0 (0 = unlimited)')
+        if args.job_max_downloads == 0:
+            args.job_max_downloads = None
         if args.debug:
             breakpoint()
         log_startup_args(args=args, secret_dests=secret_arg_dests)
@@ -547,7 +552,7 @@ class ArchiveSiteCrawler():
         if job_deadline is not None:
             job_deadline = _utc_aware(job_deadline)
 
-        if maximum_crawl_age:
+        if maximum_crawl_age is not None:
             maximum_crawl_age = timedelta(days=float(maximum_crawl_age))
         else:
             maximum_crawl_age = timedelta(days=14)
@@ -557,7 +562,7 @@ class ArchiveSiteCrawler():
             start_date = _utc_aware(start_date)
         if minimum_file_age is None:
             minimum_file_age = timedelta(minutes=10)
-        if fetch_snapshot_timeout:
+        if fetch_snapshot_timeout is not None:
             cls.fetch_snapshot_timeout = float(fetch_snapshot_timeout)
 
         already_have_by_datetime = cls.s3_already_have_by_datetime(
@@ -738,7 +743,7 @@ class ArchiveSiteCrawler():
         now - maximum_crawl_age [default 14 days]) through filename_datetime_max (else now).
         Returns outcome tallies for the CLI's JSON output.
         '''
-        if maximum_crawl_age:
+        if maximum_crawl_age is not None:
             maximum_crawl_age = timedelta(days=float(maximum_crawl_age))
         else:
             maximum_crawl_age = timedelta(days=14)
@@ -842,7 +847,7 @@ class ArchiveSiteCrawler():
         '''
         SnapshotFile.default_s3_base_url_set(f's3://{s3_snapshot_bucket_name}/')
         SnapshotSummaryFile.default_s3_base_url_set(f's3://{s3_snapshot_summary_bucket_name}/')
-        if fetch_snapshot_timeout:
+        if fetch_snapshot_timeout is not None:
             cls.fetch_snapshot_timeout = float(fetch_snapshot_timeout)
         if job_deadline is not None:
             job_deadline = _utc_aware(job_deadline)

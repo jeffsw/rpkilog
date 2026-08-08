@@ -142,7 +142,11 @@ def connection(environment: str) -> dict:
     if config['tls']:
         ca_path = dump_dir() / RDS_CA_FILENAME
         if not ca_path.is_file():
-            urllib.request.urlretrieve(RDS_CA_URL, ca_path)
+            # download to a temp name then rename, so an interrupted fetch can't leave a
+            # truncated bundle that poisons every later TLS connection
+            tmp_path = ca_path.with_name(ca_path.name + '.tmp')
+            urllib.request.urlretrieve(RDS_CA_URL, tmp_path)
+            os.replace(tmp_path, ca_path)
         retdict['ssl_ca'] = ca_path
     return retdict
 

@@ -264,6 +264,10 @@ def list_summary_files_from_s3(
         raise ValueError(f's3_summary_prefix must be an s3://bucket-name/prefix URL: {s3_summary_prefix}')
     bucket = s3.Bucket(parsed_prefix.netloc)
     key_prefix = parsed_prefix.path.lstrip('/')
+    # the URL path names a "directory"; without the slash, s3://bucket/summaries would list
+    # the non-existent prefix summaries<date> and silently match nothing
+    if key_prefix and not key_prefix.endswith('/'):
+        key_prefix += '/'
     if datetime_min.tzinfo is None:
         datetime_min = datetime_min.replace(tzinfo=datetime.timezone.utc)
     if datetime_max.tzinfo is None:
@@ -425,6 +429,10 @@ def list_snapshot_objects_from_s3(
         )
     bucket = s3.Bucket(parsed_prefix.netloc)
     key_prefix = parsed_prefix.path.lstrip('/')
+    # the URL path names a "directory"; without the slash, s3://bucket/archive would list
+    # the non-existent prefix archiverpki- and silently match nothing
+    if key_prefix and not key_prefix.endswith('/'):
+        key_prefix += '/'
     object_summaries = list_s3_snapshot_files_within_range(
         bucket=bucket,
         start_datetime=datetime_min,

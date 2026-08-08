@@ -105,9 +105,12 @@ def list_s3_snapshot_files_within_range(
     list_s3_summary_files_within_range; both paths return the same objects.
     """
     retval = set()
-    time_range = end_datetime - start_datetime
     key_prefix = prefix + 'rpki-'
-    if time_range.days + 1 > LIST_PER_DAY_MAX_DAYS:
+    # count calendar days, not elapsed 24h periods: a fractional-day range can touch one more
+    # calendar day than timedelta.days + 1 reports
+    first_day = start_datetime.date()
+    day_count = (end_datetime.date() - first_day).days + 1
+    if day_count > LIST_PER_DAY_MAX_DAYS:
         first_day_str = start_datetime.strftime('%Y%m%dT')
         last_day_str = end_datetime.strftime('%Y%m%dT')
         for obj in bucket.objects.filter(Prefix=key_prefix):
@@ -118,8 +121,8 @@ def list_s3_snapshot_files_within_range(
             if first_day_str <= day_part <= last_day_str:
                 retval.add(obj)
     else:
-        for day_offset in range(time_range.days + 1):
-            day = start_datetime + timedelta(days=day_offset)
+        for day_offset in range(day_count):
+            day = first_day + timedelta(days=day_offset)
             composite_prefix = key_prefix + day.strftime('%Y%m%dT')
             objects = bucket.objects.filter(Prefix=composite_prefix)
             for obj in objects:
@@ -155,8 +158,11 @@ def list_s3_summary_files_within_range(
         )
     """
     retval = set()
-    time_range = end_datetime - start_datetime
-    if time_range.days + 1 > LIST_PER_DAY_MAX_DAYS:
+    # count calendar days, not elapsed 24h periods: a fractional-day range can touch one more
+    # calendar day than timedelta.days + 1 reports
+    first_day = start_datetime.date()
+    day_count = (end_datetime.date() - first_day).days + 1
+    if day_count > LIST_PER_DAY_MAX_DAYS:
         first_day_str = start_datetime.strftime('%Y%m%dT')
         last_day_str = end_datetime.strftime('%Y%m%dT')
         for obj in bucket.objects.filter(Prefix=prefix):
@@ -167,8 +173,8 @@ def list_s3_summary_files_within_range(
             if first_day_str <= day_part <= last_day_str:
                 retval.add(obj)
     else:
-        for day_offset in range(time_range.days + 1):
-            day = start_datetime + timedelta(days=day_offset)
+        for day_offset in range(day_count):
+            day = first_day + timedelta(days=day_offset)
             composite_prefix = prefix + day.strftime('%Y%m%dT')
             objects = bucket.objects.filter(Prefix=composite_prefix)
             for obj in objects:
