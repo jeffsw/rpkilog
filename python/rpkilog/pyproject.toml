@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'rpkilog'
-version = '0.26062201'
+version = '0.26080801'
 authors = [{ name = 'Jeff Wheeler', email = 'jeffsw6@gmail.com' }]
 dependencies = [
     "boto3",
@@ -66,6 +66,7 @@ dev = [
 
 [project.scripts]
 rpkilog-archive-site-crawler = 'rpkilog.archive_site_crawler:ArchiveSiteCrawler.cli_entry_point'
+rpkilog-database-security-group = 'rpkilog.sqldb:database_security_group_cli_entry_point'
 rpkilog-diff-import = 'rpkilog:VrpDiff.cli_entry_point_import'
 rpkilog-diff-import-from-sqs = 'rpkilog:VrpDiff.cli_entry_point_diff_import_from_sqs'
 rpkilog-hapi = 'rpkilog.hapi:cli_entry_point'
@@ -90,4 +91,7 @@ addopts = ["--import-mode=importlib"]
 markers = [
     "slow: some end-to-end tests are slow and may be skipped in draft PR commits and pre-commit hooks"
 ]
+# tests on sys.path so test modules can import shared helpers (fake_db, test_util's fake bucket),
+# which --import-mode=importlib does not provide by itself
+pythonpath = ["tests"]
 testpaths = ["tests"]

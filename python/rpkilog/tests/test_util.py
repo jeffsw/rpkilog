@@ -17,7 +17,11 @@ import boto3
 import pytest
 from botocore.exceptions import ClientError
 
-from rpkilog.util import list_s3_object_previous, list_s3_summary_files_within_range
+from rpkilog.util import (
+    list_s3_object_previous,
+    list_s3_snapshot_files_within_range,
+    list_s3_summary_files_within_range,
+)
 PREFIX_FSTR = 'test_list_s3_object_previous_{datetime_prefix}'
 FILE_CONTENT = b'The quick brown fox jumps over the lazy dog'
 
@@ -214,4 +218,52 @@ def test_summary_range_wide_uses_single_listing():
     assert found_keys == {
         'summaries/20250720T100145Z.json.bz2',
         'summaries/20991231T000000Z.json.bz2',
+    }
+
+
+# --- list_s3_snapshot_files_within_range: fake-bucket unit tests, no AWS credentials needed ---
+
+def test_snapshot_range_narrow_uses_per_day_requests():
+    bucket = make_fake_bucket([
+        'rpki-20250719T220000Z.tgz',
+        'rpki-20250720T100145Z.tgz',
+        'rpki-20250722T100145Z.tgz',
+    ])
+    found = list_s3_snapshot_files_within_range(
+        bucket=bucket,
+        start_datetime=datetime(2025, 7, 19, tzinfo=timezone.utc),
+        end_datetime=datetime(2025, 7, 20, 23, 59, tzinfo=timezone.utc),
+    )
+    assert bucket.filter_prefixes == ['rpki-20250719T', 'rpki-20250720T']
+    found_keys = set()
+    for obj in found:
+        found_keys.add(obj.key)
+    assert found_keys == {
+        'rpki-20250719T220000Z.tgz',
+        'rpki-20250720T100145Z.tgz',
+    }
+
+
+def test_snapshot_range_wide_uses_single_listing_with_prefix():
+    bucket = make_fake_bucket([
+        'snapshots/rpki-19991231T235900Z.tgz',   # before range
+        'snapshots/rpki-20250720T100145Z.tgz',
+        'snapshots/rpki-20991231T000000Z.tgz',
+        'snapshots/rpki-21000101T000000Z.tgz',   # after range
+        'snapshots/readme.txt',                  # does not begin with the rpki- key prefix
+        'snapshots/rpki-notadate.tgz',           # rpki- prefix but no YYYYMMDDT day part
+    ])
+    found = list_s3_snapshot_files_within_range(
+        bucket=bucket,
+        start_datetime=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        end_datetime=datetime(2099, 12, 31, tzinfo=timezone.utc),
+        prefix='snapshots/',
+    )
+    assert bucket.filter_prefixes == ['snapshots/rpki-']
+    found_keys = set()
+    for obj in found:
+        found_keys.add(obj.key)
+    assert found_keys == {
+        'snapshots/rpki-20250720T100145Z.tgz',
+        'snapshots/rpki-20991231T000000Z.tgz',
     }

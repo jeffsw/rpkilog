@@ -1,12 +1,16 @@
 import io
 import json
 import tarfile
-from datetime import datetime, timezone
+from collections import namedtuple
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from fake_db import FakeDb
+
 from rpkilog.cleanup_policy import CleanupPolicy
+from rpkilog.data_file_source import DataFileSource
 from rpkilog.local_storage_type import LocalStorageType
 from rpkilog.snapshot_file import SnapshotFile
 from rpkilog.snapshot_summary_file import SnapshotSummaryFile
@@ -333,3 +337,139 @@ def test_extract_summary_file_golden(tmp_path):
     data = json.loads(summary.local_filepath_uncompressed.read_bytes())
     assert 'metadata' in data
     assert 'roas' in data
+
+
+# --- archive_file SQL methods (fake db via fake_db.FakeDb; no MariaDB server) ---
+
+ArchiveFileRow = namedtuple('ArchiveFileRow', [
+    'source_id', 'source_url', 'filename_derived_datetime', 'discovered_datetime',
+    'file_type_id', 'our_s3_url', 'our_size_bytes', 'our_sha256', 'our_stored_datetime',
+    'observation_datetime',
+])
+
+JOSEPHINE_TAR_URL = 'https://josephine.sobornost.net/rpkidata/2026/05/01/rpki-20260501T005438Z.tgz'
+JOSEPHINE_DT = datetime(2026, 5, 1, 0, 54, 38, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def josephine_source():
+    """Seed the DataFileSource caches so get_by_id() needs no database; restore on teardown."""
+    source = DataFileSource(
+        id=2, name='josephine.sobornost.net', base_url='https://josephine.sobornost.net/rpkidata/',
+    )
+    DataFileSource._cache_by_id[source.id] = source
+    DataFileSource._cache_by_name[source.name] = source
+    yield source
+    DataFileSource.invalidate_caches()
+
+
+def make_archive_file_row(**overrides) -> ArchiveFileRow:
+    row = ArchiveFileRow(
+        source_id=2,
+        source_url=JOSEPHINE_TAR_URL,
+        filename_derived_datetime=datetime(2026, 5, 1, 0, 54, 38),
+        discovered_datetime=datetime(2026, 5, 1, 1, 0, 0),
+        file_type_id=1,
+        our_s3_url='s3://rpkilog-snapshot/rpki-20260501T005438Z.tgz',
+        our_size_bytes=987654,
+        our_sha256=b'\x00' * 32,
+        our_stored_datetime=datetime(2026, 5, 1, 1, 0, 5),
+        observation_datetime=None,
+    )
+    retval = row._replace(**overrides)
+    return retval
+
+
+def test_utc_naive_converts_aware_offset():
+    aware = datetime(2026, 5, 1, 2, 54, 38, tzinfo=timezone(timedelta(hours=2)))
+    assert SnapshotFile._utc_naive(aware) == datetime(2026, 5, 1, 0, 54, 38)
+
+
+def test_utc_naive_passes_through_naive():
+    naive = datetime(2026, 5, 1, 0, 54, 38)
+    assert SnapshotFile._utc_naive(naive) == naive
+
+
+def test_from_db_row_hydrates_datetimestamp_from_column(josephine_source):
+    snapshot = SnapshotFile.from_db_row(make_archive_file_row())
+    assert snapshot.datetimestamp == JOSEPHINE_DT
+    assert snapshot.source is josephine_source
+    assert snapshot.source_url == JOSEPHINE_TAR_URL
+    assert snapshot.s3_url == 's3://rpkilog-snapshot/rpki-20260501T005438Z.tgz'
+    assert snapshot.s3_stored is True
+    assert snapshot.discovered_datetime == datetime(2026, 5, 1, 1, 0, 0, tzinfo=timezone.utc)
+    assert snapshot.observation_datetime is None
+
+
+def test_from_db_row_falls_back_to_url_parse(josephine_source):
+    snapshot = SnapshotFile.from_db_row(make_archive_file_row(filename_derived_datetime=None))
+    assert snapshot.datetimestamp == JOSEPHINE_DT
+
+
+def test_from_db_row_no_stored_copy(josephine_source):
+    row = make_archive_file_row(our_s3_url=None, our_size_bytes=None, our_sha256=None)
+    snapshot = SnapshotFile.from_db_row(row)
+    assert snapshot.s3_url is None
+    assert snapshot.s3_stored is False
+
+
+def test_from_db_row_seeds_metadata_cache(josephine_source):
+    # sha256/size must come from the row: an UNCACHED snapshot with no s3_url would otherwise
+    # try (and fail) to derive a default S3 URL and download the file
+    snapshot = SnapshotFile.from_db_row(make_archive_file_row())
+    assert snapshot.sha256_digest() == b'\x00' * 32
+    assert snapshot.size_bytes_uncompressed() == 987654
+
+
+def test_db_select_within_range_bounds_and_ingested_alter_statement(josephine_source):
+    db = FakeDb()
+    SnapshotFile.db_select_within_range(
+        db=db,
+        source=josephine_source,
+        datetime_min=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        datetime_max=datetime(2026, 5, 2, tzinfo=timezone.utc),
+        ingested=False,
+    )
+    statement, params = db.executed[0]
+    assert ' AND filename_derived_datetime >= ?' in statement
+    assert ' AND filename_derived_datetime <= ?' in statement
+    assert ' AND observation_datetime IS NULL' in statement
+    assert statement.endswith(' ORDER BY filename_derived_datetime')
+    assert params == (2, datetime(2026, 5, 1), datetime(2026, 5, 2))
+
+    db = FakeDb()
+    SnapshotFile.db_select_within_range(db=db, source=josephine_source, ingested=True)
+    statement, params = db.executed[0]
+    assert 'filename_derived_datetime >= ?' not in statement
+    assert ' AND observation_datetime IS NOT NULL' in statement
+    assert params == (2,)
+
+
+def test_db_select_within_range_naive_bounds_assumed_utc(josephine_source):
+    db = FakeDb()
+    SnapshotFile.db_select_within_range(
+        db=db,
+        source=josephine_source,
+        datetime_min=datetime(2026, 5, 1, 0, 0, 0),
+        datetime_max=datetime(2026, 5, 2, 12, 0, 0),
+    )
+    statement, params = db.executed[0]
+    assert params == (2, datetime(2026, 5, 1, 0, 0, 0), datetime(2026, 5, 2, 12, 0, 0))
+
+
+def test_db_select_within_range_skips_unparseable_source_url(josephine_source):
+    good_row = make_archive_file_row()
+    bad_row = make_archive_file_row(
+        source_url='https://josephine.sobornost.net/rpkidata/README.txt',
+        filename_derived_datetime=None,
+    )
+    db = FakeDb(rows_by_fragment={'FROM archive_file WHERE source_id': [good_row, bad_row]})
+    found = SnapshotFile.db_select_within_range(db=db, source=josephine_source)
+    assert len(found) == 1
+    assert found[0].source_url == JOSEPHINE_TAR_URL
+
+
+def test_db_row_exists_requires_identity():
+    snapshot = SnapshotFile(datetimestamp=JOSEPHINE_DT)
+    with pytest.raises(ValueError):
+        snapshot.db_row_exists(db=FakeDb())

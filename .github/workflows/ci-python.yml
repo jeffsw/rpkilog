@@ -51,6 +51,46 @@ jobs:
       - name: flake8 (mise run lint)
         run: mise run lint
 
+  # Ensure Python mariadb client and our mysql_clear_password plugin are working with real RDS DB.
+  # CI user has no permissions on the database aside from being able to connect.
+  db-connect:
+    name: live RDS IAM-auth connect
+    if: github.repository == 'jeffsw/rpkilog'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # TODO: breaks if RDS is replaced.  Accept an AWS arn argument as alternative to FQDN.
+      RPKILOG_LIVE_DB_HOST: mariadb-1.cr0w6owkoq2o.us-east-1.rds.amazonaws.com
+      RPKILOG_LIVE_DB_SSL_CA: ${{ github.workspace }}/us-east-1-bundle.pem
+      RPKILOG_LIVE_DB_USER: github_ci
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install python/rpkilog[tests]
+      - name: Obtain AWS credentials from repo variables / secrets
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ vars.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Allow this runner through the database Security Group
+        run: rpkilog-database-security-group update --client github-ci
+      - name: Download the RDS CA bundle
+        run: curl -sf https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem
+          -o "$RPKILOG_LIVE_DB_SSL_CA"
+      - name: Connect with an IAM auth token
+        working-directory: python/rpkilog
+        run: pytest tests/test_sqldb_live.py -v
+      - name: Remove this runner's Security Group rules
+        if: always()
+        run: rpkilog-database-security-group remove --client github-ci
+
   # pytest across supported Python versions, with the pytest command defined once in the mise
   # `test` / `test-fast` tasks. flake8 lives in the verify job above, so it isn't repeated here.
   ci-python:
@@ -63,6 +103,7 @@ jobs:
           - "3.12"
           - "3.13"
           - "3.14"
+          - "3.14t"
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -70,6 +111,10 @@ jobs:
         with:
           architecture: x64
           python-version: ${{ matrix.python-version }}
+          # Persist pip's cache (downloads + locally-built wheels) across runs.
+          # Important for python 3.14t as wheels for it are less common.
+          cache: pip
+          cache-dependency-path: python/rpkilog/pyproject.toml
       - name: Set up mise
         uses: jdx/mise-action@v2
       - name: Install dependencies

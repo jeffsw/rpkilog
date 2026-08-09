@@ -1,0 +1,52 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeSecurityGroupsAndRules",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSecurityGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ModifyTaggedSecurityGroups",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/cli_managed": "True"
+        }
+      }
+    },
+    {
+      "Sid": "ModifyRulesInTaggedSecurityGroups",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group-rule/*"
+    },
+    {
+      "Sid": "TagRulesOnCreate",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTags"
+      ],
+      "Resource": "arn:aws:ec2:*:*:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": "AuthorizeSecurityGroupIngress"
+        }
+      }
+    }
+  ]
+}

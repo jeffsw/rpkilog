@@ -10,11 +10,15 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.44.0"
+      version = "~> 6.0"
     }
     linode = {
       source  = "linode/linode"
       version = "~> 3.12.0"
+    }
+    mysql = {
+      source  = "petoju/mysql"
+      version = "~> 3.0.94"
     }
     random = {
       source  = "hashicorp/random"
@@ -80,6 +84,13 @@ provider "aws" {
     }
   }
   region = "us-east-1"
+}
+
+provider "mysql" {
+  endpoint = aws_db_instance.mariadb1.endpoint
+  username = aws_db_instance.mariadb1.username
+  password = jsondecode(data.aws_secretsmanager_secret_version.mariadb1_master.secret_string)["password"]
+  tls      = "skip-verify"
 }
 
 provider "random" {}
@@ -201,10 +212,16 @@ resource "linode_instance_disk" "rpkiclient_root" {
   root_pass = nonsensitive(random_password.rpkiclient.result)
 }
 
+# Get disk size of the specified instance-type
+data "linode_instance_type" "rpkiclient" {
+  id = linode_instance.rpkiclient.type
+}
+
 resource "linode_instance_disk" "rpkiclient_data" {
-  linode_id  = linode_instance.rpkiclient.id
-  label      = "data"
-  size       = linode_instance.rpkiclient.specs.0.disk - linode_instance_disk.rpkiclient_root.size
+  linode_id = linode_instance.rpkiclient.id
+  label     = "data"
+  # if linode updates the available disk space for the instance-type, this could cause a change
+  size       = data.linode_instance_type.rpkiclient.disk - linode_instance_disk.rpkiclient_root.size
   filesystem = "raw"
 }
 

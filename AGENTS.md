@@ -82,6 +82,19 @@ Tests that assert against such a key should compute it from the JSON buildtime, 
 
 ## Reviewing PRs or branches
 
+Reviews should be low-prompt:
+
+- Fetch the change set with `gh pr view` / `gh pr diff` (or `git diff` / `git log` / `git show`
+  locally) — these are allow-listed in `.claude/settings.json`.
+- Read surrounding code for context with the Read/Grep/Glob tools, never shell pipelines
+  (`cat`, `grep`, `sed`, `awk`, `find`) — those trigger permission prompts and are redundant
+  with the dedicated tools.
+- Don't invent ad-hoc lint/format/test commands. Verification is only the mise tasks
+  (`mise run verify*` etc.), which are allow-listed, and GitHub CI runs the same checks.
+  Spend review effort on what those checks cannot catch.
+
+These rules apply to subagents spawned for a review, too.
+
 When identifying issues or suggesting changes, prefer markdown checkboxes instead of bullet points.  For
 non-actionable review comments, bullet points are fine.
 
