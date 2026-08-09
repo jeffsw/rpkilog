@@ -118,10 +118,6 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@v2
       - name: Install dependencies
-        env:
-          # grpcio's source build compiles single-threaded by default; use all 4 vCPUs of the
-          # standard runner when a source build does happen (i.e. on a pip cache miss on 3.14t).
-          GRPC_PYTHON_BUILD_EXT_COMPILER_JOBS: "4"
         run: |
           python -m pip install --upgrade pip
           pip install build
