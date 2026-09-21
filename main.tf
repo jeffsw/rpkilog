@@ -1154,9 +1154,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "rpkilog_artifact" {
     abort_incomplete_multipart_upload {
       days_after_initiation = 2
     }
-    expiration {
-      days = 40
-    }
     status = "Enabled"
   }
   rule {
@@ -1218,9 +1215,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "rpkilog_www" {
     id = "1"
     abort_incomplete_multipart_upload {
       days_after_initiation = 2
-    }
-    expiration {
-      days = 40
     }
     status = "Enabled"
   }
